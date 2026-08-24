@@ -1,0 +1,14 @@
+agent_id: "auto-generated-uuid"
+hostname: "web-server-01"
+server_url: "http://localhost:8080"
+data_dir: "/var/lib/fallbck/agent"
+task_queue: "fallbck-agent-auto-generated-uuid"
+
+temporal:
+  host_port: "localhost:7233"
+  namespace: "default"
+  enable_tls: true
+  ca_cert_path: "/var/lib/fallbck/agent/certs/ca.crt"
+  client_cert_path: "/var/lib/fallbck/agent/certs/client.crt"
+  client_key_path: "/var/lib/fallbck/agent/certs/client.key"
+  insecure_skip_verify: false
