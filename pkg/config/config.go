@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -200,13 +201,33 @@ func DefaultServerConfig() *ServerConfig {
 	}
 }
 
+// SystemAgentDataDir is where packaged installations (systemd/OpenRC services) keep
+// the agent state; the service units point at it explicitly.
+const SystemAgentDataDir = "/var/lib/fallbck/agent"
+
+// DefaultAgentDataDir returns the agent data directory used when none is configured:
+// FALLBCK_AGENT_DATA_DIR if set, the system directory when running as root (the
+// packaged case), otherwise ~/.fallbck/agent for unprivileged use.
+func DefaultAgentDataDir() string {
+	if dir := os.Getenv("FALLBCK_AGENT_DATA_DIR"); dir != "" {
+		return dir
+	}
+	if os.Geteuid() == 0 {
+		return SystemAgentDataDir
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		return filepath.Join(home, ".fallbck", "agent")
+	}
+	return SystemAgentDataDir
+}
+
 // DefaultAgentConfig returns the defaults for fallbck-agent
 func DefaultAgentConfig() *AgentConfig {
 	hostname, _ := os.Hostname()
 	return &AgentConfig{
 		Hostname:  hostname,
 		ServerURL: "http://localhost:8080",
-		DataDir:   "/var/lib/fallbck/agent",
+		DataDir:   DefaultAgentDataDir(),
 		Namespace: "default",
 	}
 }

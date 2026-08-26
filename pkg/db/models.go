@@ -94,8 +94,15 @@ const (
 	RunStatusRunning   RunStatus = "running"
 	RunStatusCompleted RunStatus = "completed"
 	RunStatusFailed    RunStatus = "failed"
-	RunStatusCancelled RunStatus = "cancelled"
+	// RunStatusCancelling: cancellation requested, waiting for the agent to stop
+	RunStatusCancelling RunStatus = "cancelling"
+	RunStatusCancelled  RunStatus = "cancelled"
 )
+
+// IsActive reports whether a run can still be cancelled
+func (s RunStatus) IsActive() bool {
+	return s == RunStatusPending || s == RunStatusRunning
+}
 
 // BackupRun records a single execution of a backup job
 type BackupRun struct {

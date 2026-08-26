@@ -251,6 +251,23 @@ async function triggerJobRun(jobId) {
   }
 }
 
+async function cancelRun(runId) {
+  if (!confirm('Cancel this backup run? The agent will stop uploading and the run is marked cancelled.')) return;
+
+  try {
+    const resp = await apiFetch(`/api/v1/runs/${runId}/cancel`, { method: 'POST' });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to cancel run');
+    }
+    const data = await resp.json();
+    showToast(data.status === 'cancelled' ? 'Run cancelled' : 'Cancellation requested', 'success');
+    setTimeout(() => window.location.reload(), 800);
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
 async function deleteResource(type, id) {
   if (!confirm(`Are you sure you want to delete this ${type}?`)) return;
 

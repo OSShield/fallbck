@@ -90,6 +90,8 @@ func (s *ServerAPI) RegisterRoutes(r chi.Router, admin, agent Middleware) {
 
 			// Runs
 			r.Get("/runs", s.HandleListRuns)
+			r.Get("/runs/{id}", s.HandleGetRun)
+			r.Post("/runs/{id}/cancel", s.HandleCancelRun)
 		})
 	})
 }

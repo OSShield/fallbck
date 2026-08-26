@@ -15,10 +15,11 @@ RUN --mount=type=cache,target=/go/pkg/mod go mod download
 
 COPY . .
 
+ARG FALLBCK_VERSION=0.3.0
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=linux go build -trimpath \
-      -ldflags="-s -w -X main.ServerVersion=0.1.0" \
+      -ldflags="-s -w -X main.ServerVersion=${FALLBCK_VERSION}" \
       -o /bin/fallbck-server ./cmd/fallbck-server
 
 # ---- Runtime stage -----------------------------------------------------------
