@@ -222,7 +222,7 @@ uploads:
       - deb
     mode: archive
     username: "linux_push"
-    target: https://deb.pkg.lv/upload?dist=main&component=all
+    target: https://deb.pkg.lv/upload?dist=all&component=main
     custom_artifact_name: true
 
   - name: "apkpkg"
