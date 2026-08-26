@@ -1,0 +1,84 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+    # Snapshot build (no publishing) on main to keep the packaging working
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Vet
+        run: go vet ./...
+      - name: Unit tests
+        run: go test ./...
+      - name: Integration tests (embedded Temporal on sqlite)
+        run: go test -tags sqlite -count=1 ./pkg/temporal/embedded/ ./pkg/integration/
+
+  release:
+    name: GoReleaser
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # changelog needs history and tags
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Snapshot build (PRs and main)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --snapshot --clean --skip=publish
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Release (tags)
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UPLOAD_DEBPKG_SECRET: ${{ secrets.PKG_UPLOAD_PASSWORD }}
+          UPLOAD_APKPKG_SECRET: ${{ secrets.PKG_UPLOAD_PASSWORD }}
+          UPLOAD_RPMPKG_SECRET: ${{ secrets.PKG_UPLOAD_PASSWORD }}
+
+      - name: Upload snapshot packages
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages-${{ github.sha }}
+          retention-days: 7
+          path: |
+            dist/*.deb
+            dist/*.rpm
+            dist/*.apk
+            dist/*.tar.gz

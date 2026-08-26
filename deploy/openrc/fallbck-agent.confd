@@ -1,0 +1,2 @@
+# /etc/conf.d/fallbck-agent
+# FALLBCK_AGENT_DATA_DIR="/var/lib/fallbck/agent"

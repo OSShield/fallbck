@@ -1,0 +1,34 @@
+[Unit]
+Description=FallBCK backup server (Web UI, API, embedded Temporal, agent gateway)
+Documentation=https://github.com/osshield/fallbck
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=fallbck
+Group=fallbck
+# Settings: /etc/fallbck/server.yaml, overrides via FALLBCK_* in /etc/fallbck/server.env
+EnvironmentFile=-/etc/fallbck/server.env
+ExecStart=/usr/local/bin/fallbck-server --config /etc/fallbck/server.yaml
+Restart=on-failure
+RestartSec=5s
+# Embedded Temporal drains for up to 30s on stop
+TimeoutStopSec=45s
+WorkingDirectory=/var/lib/fallbck/server
+StateDirectory=fallbck/server
+ConfigurationDirectory=fallbck
+LimitNOFILE=65536
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+ReadWritePaths=/var/lib/fallbck/server
+
+[Install]
+WantedBy=multi-user.target

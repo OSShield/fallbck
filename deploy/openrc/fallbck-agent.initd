@@ -1,0 +1,29 @@
+#!/sbin/openrc-run
+# FallBCK backup agent
+
+description="FallBCK backup agent"
+command="/usr/local/bin/fallbck-agent"
+command_args="run --config ${FALLBCK_AGENT_DATA_DIR:-/var/lib/fallbck/agent}/agent.yaml"
+command_background=true
+pidfile="/run/${RC_SVCNAME}.pid"
+directory="/var/lib/fallbck/agent"
+output_log="/var/log/fallbck/agent.log"
+error_log="/var/log/fallbck/agent.log"
+retry="SIGTERM/30"
+
+export FALLBCK_AGENT_DATA_DIR="${FALLBCK_AGENT_DATA_DIR:-/var/lib/fallbck/agent}"
+
+depend() {
+	need net
+}
+
+start_pre() {
+	checkpath --directory --mode 0700 "${FALLBCK_AGENT_DATA_DIR}"
+	checkpath --directory --mode 0750 /var/log/fallbck
+	# Enroll first, or set FALLBCK_AGENT_ENROLLMENT_KEY / FALLBCK_AGENT_SERVER_URL in /etc/fallbck/agent.env
+	if [ -f /etc/fallbck/agent.env ]; then
+		set -a
+		. /etc/fallbck/agent.env
+		set +a
+	fi
+}

@@ -5,6 +5,10 @@ builds:
     main: ./cmd/fallbck-server
     env:
       - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.ServerVersion={{ .Version }}
     goos:
       - linux
     goarch:
@@ -16,6 +20,10 @@ builds:
     main: ./cmd/fallbck-agent
     env:
       - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.AgentVersion={{ .Version }}
     goos:
       - linux
     goarch:
@@ -73,6 +81,75 @@ nfpms:
       - apk
       - rpm
     bindir: /usr/local/bin
+    contents:
+      # systemd (deb / rpm)
+      - src: deploy/systemd/fallbck-server.service
+        dst: /usr/lib/systemd/system/fallbck-server.service
+        packager: deb
+      - src: deploy/systemd/fallbck-server.service
+        dst: /usr/lib/systemd/system/fallbck-server.service
+        packager: rpm
+      # OpenRC (apk)
+      - src: deploy/openrc/fallbck-server.initd
+        dst: /etc/init.d/fallbck-server
+        packager: apk
+        file_info:
+          mode: 0755
+      - src: deploy/openrc/fallbck-server.confd
+        dst: /etc/conf.d/fallbck-server
+        type: config|noreplace
+        packager: apk
+      # configuration
+      - src: deploy/server.yaml.example
+        dst: /etc/fallbck/server.yaml
+        type: config|noreplace
+        file_info:
+          mode: 0640
+          owner: root
+          group: fallbck
+      - src: deploy/packaging/server.env
+        dst: /etc/fallbck/server.env
+        type: config|noreplace
+        file_info:
+          mode: 0640
+          owner: root
+          group: fallbck
+      - src: deploy/caddy/Caddyfile.production.example
+        dst: /usr/share/doc/fallbck-server/Caddyfile.example
+      - src: deploy/nginx.conf.example
+        dst: /usr/share/doc/fallbck-server/nginx.conf.example
+      - dst: /etc/fallbck
+        type: dir
+        file_info:
+          mode: 0755
+      # the fallbck user is created by the preinstall script, so it exists at unpack time
+      - dst: /var/lib/fallbck/server
+        type: dir
+        file_info:
+          mode: 0750
+          owner: fallbck
+          group: fallbck
+      - dst: /var/log/fallbck
+        type: dir
+        file_info:
+          mode: 0750
+          owner: fallbck
+          group: fallbck
+    scripts:
+      preinstall: deploy/packaging/scripts/server-preinstall.sh
+      postinstall: deploy/packaging/scripts/server-postinstall.sh
+      preremove: deploy/packaging/scripts/server-preremove.sh
+      postremove: deploy/packaging/scripts/server-postremove.sh
+    apk:
+      # apk has no pre/post-install argument convention; scripts handle it
+      scripts:
+        preupgrade: deploy/packaging/scripts/server-preinstall.sh
+        postupgrade: deploy/packaging/scripts/server-postinstall.sh
+    rpm:
+      summary: FallBCK backup server
+    deb:
+      fields:
+        Bugs: https://github.com/osshield/fallbck/issues
   
   - id: fallbck-agent
     ids:
@@ -93,12 +170,47 @@ nfpms:
       - apk
       - rpm
     bindir: /usr/local/bin
-
-
-# release:
-#   github:
-#     owner: osshield
-#     name: fallbck
+    contents:
+      - src: deploy/systemd/fallbck-agent.service
+        dst: /usr/lib/systemd/system/fallbck-agent.service
+        packager: deb
+      - src: deploy/systemd/fallbck-agent.service
+        dst: /usr/lib/systemd/system/fallbck-agent.service
+        packager: rpm
+      - src: deploy/openrc/fallbck-agent.initd
+        dst: /etc/init.d/fallbck-agent
+        packager: apk
+        file_info:
+          mode: 0755
+      - src: deploy/openrc/fallbck-agent.confd
+        dst: /etc/conf.d/fallbck-agent
+        type: config|noreplace
+        packager: apk
+      - src: deploy/packaging/agent.env
+        dst: /etc/fallbck/agent.env
+        type: config|noreplace
+        file_info:
+          mode: 0600
+      - dst: /etc/fallbck
+        type: dir
+        file_info:
+          mode: 0755
+      - dst: /var/lib/fallbck/agent
+        type: dir
+        file_info:
+          mode: 0700
+    scripts:
+      postinstall: deploy/packaging/scripts/agent-postinstall.sh
+      preremove: deploy/packaging/scripts/agent-preremove.sh
+      postremove: deploy/packaging/scripts/agent-postremove.sh
+    apk:
+      scripts:
+        postupgrade: deploy/packaging/scripts/agent-postinstall.sh
+    rpm:
+      summary: FallBCK backup agent
+    deb:
+      fields:
+        Bugs: https://github.com/osshield/fallbck/issues
 
 uploads:
   - name: "debpkg"
