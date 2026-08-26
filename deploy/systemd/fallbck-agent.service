@@ -1,0 +1,29 @@
+[Unit]
+Description=FallBCK backup agent
+Documentation=https://github.com/osshield/fallbck
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Runs as root: the agent must read every file it backs up
+# Enroll first:  fallbck-agent enroll --server https://backup.example.com --token <token>
+# or set FALLBCK_AGENT_ENROLLMENT_KEY / FALLBCK_AGENT_SERVER_URL in /etc/fallbck/agent.env
+Environment=FALLBCK_AGENT_DATA_DIR=/var/lib/fallbck/agent
+EnvironmentFile=-/etc/fallbck/agent.env
+ExecStart=/usr/local/bin/fallbck-agent run --config /var/lib/fallbck/agent/agent.yaml
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=30s
+WorkingDirectory=/var/lib/fallbck/agent
+StateDirectory=fallbck/agent
+ConfigurationDirectory=fallbck
+LimitNOFILE=65536
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,3 @@
+# /etc/conf.d/fallbck-server
+# FALLBCK_SERVER_CONFIG="/etc/fallbck/server.yaml"
+# FALLBCK_SERVER_USER="fallbck:fallbck"

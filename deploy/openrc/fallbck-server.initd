@@ -1,0 +1,29 @@
+#!/sbin/openrc-run
+# FallBCK backup server (Web UI, API, embedded Temporal, agent gateway)
+
+description="FallBCK backup server"
+command="/usr/local/bin/fallbck-server"
+command_args="--config ${FALLBCK_SERVER_CONFIG:-/etc/fallbck/server.yaml}"
+command_user="${FALLBCK_SERVER_USER:-fallbck:fallbck}"
+command_background=true
+pidfile="/run/${RC_SVCNAME}.pid"
+directory="/var/lib/fallbck/server"
+output_log="/var/log/fallbck/server.log"
+error_log="/var/log/fallbck/server.log"
+# Embedded Temporal drains for up to 30s on stop
+retry="SIGTERM/45"
+
+depend() {
+	need net
+	after postgresql
+}
+
+start_pre() {
+	checkpath --directory --owner "${command_user}" --mode 0750 /var/lib/fallbck/server
+	checkpath --directory --owner "${command_user}" --mode 0750 /var/log/fallbck
+	if [ -f /etc/fallbck/server.env ]; then
+		set -a
+		. /etc/fallbck/server.env
+		set +a
+	fi
+}

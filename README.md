@@ -47,6 +47,29 @@ fallbck-ctl token create --name web-01
 fallbck-ctl agents list
 ```
 
+## Linux packages
+
+Releases ship `.deb`, `.rpm` and `.apk` packages for `fallbck-server` and `fallbck-agent` (built by [GoReleaser](.goreleaser.yml) from the `Release` GitHub Action on `v*` tags; every push to `main` and every PR produces a snapshot build as a workflow artifact).
+
+| Package | Service | Config |
+|---|---|---|
+| `fallbck-server` | systemd `fallbck-server` (deb/rpm) / OpenRC `fallbck-server` (apk), runs as user `fallbck` | `/etc/fallbck/server.yaml`, secrets in `/etc/fallbck/server.env` |
+| `fallbck-agent` | systemd `fallbck-agent` / OpenRC `fallbck-agent`, runs as root | `/etc/fallbck/agent.env` (optional self-enrollment), state in `/var/lib/fallbck/agent` |
+
+```bash
+# server
+apt install ./fallbck_server_Linux_amd64.deb      # or rpm -i / apk add --allow-untrusted
+$EDITOR /etc/fallbck/server.yaml /etc/fallbck/server.env
+systemctl enable --now fallbck-server              # OpenRC: rc-update add fallbck-server default && rc-service fallbck-server start
+
+# agent
+apt install ./fallbck_agent_Linux_amd64.deb
+fallbck-agent enroll --server https://backup.example.com --token <enrollment token>
+systemctl enable --now fallbck-agent
+```
+
+Publishing to the package repositories needs the `PKG_UPLOAD_PASSWORD` repository secret (the `linux_push` user of `*.pkg.lv`).
+
 ## Development
 
 ```bash
