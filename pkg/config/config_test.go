@@ -7,12 +7,12 @@ import (
 )
 
 func TestDefaultAndEnvironmentOverrides(t *testing.T) {
-	os.Setenv("FALLBCK_HTTP_PORT", "9090")
-	os.Setenv("FALLBCK_DB_URL", "postgres://test:test@localhost:5432/testdb")
-	defer func() {
-		os.Unsetenv("FALLBCK_HTTP_PORT")
-		os.Unsetenv("FALLBCK_DB_URL")
-	}()
+	t.Setenv("FALLBCK_HTTP_PORT", "9090")
+	t.Setenv("FALLBCK_DB_URL", "postgres://test:test@localhost:5432/testdb")
+	t.Setenv("FALLBCK_TEMPORAL_MODE", "external")
+	t.Setenv("FALLBCK_TEMPORAL_HOST", "temporal.internal:7233")
+	t.Setenv("FALLBCK_OIDC_ALLOWED_GROUPS", "admins, ops")
+	t.Setenv("FALLBCK_AUTH_INSECURE_DISABLE", "true")
 
 	cfg, err := LoadServerConfig("")
 	if err != nil {
@@ -25,6 +25,21 @@ func TestDefaultAndEnvironmentOverrides(t *testing.T) {
 	if cfg.Database.URL != "postgres://test:test@localhost:5432/testdb" {
 		t.Errorf("Expected overridden DB URL, got %s", cfg.Database.URL)
 	}
+	if cfg.Temporal.Embedded.DatabaseURL != cfg.Database.URL {
+		t.Errorf("embedded temporal DB URL should default to the app DB URL, got %s", cfg.Temporal.Embedded.DatabaseURL)
+	}
+	if cfg.Temporal.Mode != TemporalModeExternal || cfg.Temporal.External.HostPort != "temporal.internal:7233" {
+		t.Errorf("unexpected temporal config %+v", cfg.Temporal)
+	}
+	if cfg.Temporal.External.Namespace != "default" {
+		t.Errorf("external namespace should mirror temporal.namespace, got %q", cfg.Temporal.External.Namespace)
+	}
+	if len(cfg.Auth.OIDC.AllowedGroups) != 2 || cfg.Auth.OIDC.AllowedGroups[1] != "ops" {
+		t.Errorf("unexpected allowed groups %v", cfg.Auth.OIDC.AllowedGroups)
+	}
+	if !cfg.Auth.InsecureDisable {
+		t.Error("expected insecure_disable from env")
+	}
 }
 
 func TestConfigFileLoading(t *testing.T) {
@@ -34,11 +49,20 @@ func TestConfigFileLoading(t *testing.T) {
 	yamlData := `
 http_port: 8888
 public_url: "https://backup.example.com"
-jwt_secret: "my-custom-secret"
+jwt_secret: "my-custom-secret-that-is-long-enough-123456"
+auth:
+  oidc:
+    issuer: "https://idp.example.com"
+    client_id: "fallbck"
+    client_secret: "s3cret"
 temporal:
-  host_port: "temporal.internal:7233"
+  mode: embedded
   namespace: "production"
-  enable_tls: true
+  embedded:
+    port_base: 17233
+    retention: 240h
+  ui:
+    enabled: false
 `
 	if err := os.WriteFile(configFile, []byte(yamlData), 0644); err != nil {
 		t.Fatalf("Failed to write test config file: %v", err)
@@ -52,13 +76,61 @@ temporal:
 	if cfg.HTTPPort != 8888 {
 		t.Errorf("Expected HTTPPort 8888, got %d", cfg.HTTPPort)
 	}
-	if cfg.PublicURL != "https://backup.example.com" {
-		t.Errorf("Expected PublicURL https://backup.example.com, got %s", cfg.PublicURL)
+	if cfg.PublicURL != "https://backup.example.com" || !cfg.PublicURLIsHTTPS() {
+		t.Errorf("Expected https PublicURL, got %s", cfg.PublicURL)
 	}
-	if cfg.Temporal.HostPort != "temporal.internal:7233" {
-		t.Errorf("Expected Temporal host temporal.internal:7233, got %s", cfg.Temporal.HostPort)
+	if cfg.Temporal.Embedded.PortBase != 17233 || cfg.Temporal.Embedded.Retention.Hours() != 240 {
+		t.Errorf("unexpected embedded config %+v", cfg.Temporal.Embedded)
 	}
-	if !cfg.Temporal.EnableTLS {
-		t.Errorf("Expected Temporal TLS enabled")
+	if cfg.Temporal.UI.Enabled {
+		t.Error("ui should be disabled by file")
+	}
+	if cfg.ProxyURL() != "https://backup.example.com/pbs-proxy" {
+		t.Errorf("ProxyURL = %s", cfg.ProxyURL())
+	}
+	if err := cfg.Validate(false); err != nil {
+		t.Errorf("valid config rejected: %v", err)
+	}
+}
+
+func TestValidate(t *testing.T) {
+	cfg := DefaultServerConfig()
+	if err := cfg.Validate(false); err == nil {
+		t.Error("defaults without OIDC must fail validation")
+	}
+	cfg.Auth.InsecureDisable = true
+	if err := cfg.Validate(false); err == nil {
+		t.Error("insecure_disable without --dev must fail")
+	}
+	if err := cfg.Validate(true); err != nil {
+		t.Errorf("insecure_disable with --dev should pass: %v", err)
+	}
+	cfg.Temporal.Mode = "sidecar"
+	if err := cfg.Validate(true); err == nil {
+		t.Error("unknown temporal mode must fail")
+	}
+	cfg.Temporal.Mode = TemporalModeExternal
+	cfg.Temporal.External.HostPort = ""
+	if err := cfg.Validate(true); err == nil {
+		t.Error("external mode without host_port must fail")
+	}
+}
+
+func TestAgentConfigSaveLoad(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.yaml")
+	cfg := &AgentConfig{AgentID: "a", ServerURL: "https://backup.example.com", TaskQueue: "q", Namespace: "default", AuthToken: "secret"}
+	if err := cfg.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	info, _ := os.Stat(path)
+	if info.Mode().Perm() != 0o600 {
+		t.Errorf("agent.yaml should be 0600, got %v", info.Mode().Perm())
+	}
+	loaded, err := LoadAgentConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.AuthToken != "secret" || loaded.TaskQueue != "q" || loaded.ServerURL != "https://backup.example.com" {
+		t.Errorf("round trip mismatch: %+v", loaded)
 	}
 }

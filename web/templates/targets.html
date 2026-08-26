@@ -1,0 +1,119 @@
+{{define "content"}}
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+  <div>
+    <p style="color: var(--text-muted); font-size: 14px;">Configure Proxmox Backup Server (PBS) datastores for deduplicated chunk storage.</p>
+  </div>
+  <button class="btn btn-primary" onclick="openModal('modal-add-target')">
+    <svg style="width: 16px; height: 16px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+    Add PBS Target
+  </button>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h3 class="card-title">Configured PBS Targets ({{len .Targets}})</h3>
+  </div>
+  <div class="table-container">
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Endpoint</th>
+          <th>Datastore</th>
+          <th>Namespace</th>
+          <th>TLS Verify</th>
+          <th style="text-align: right;">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{if .Targets}}
+          {{range .Targets}}
+          <tr>
+            <td><strong>{{.Name}}</strong></td>
+            <td><span class="badge badge-info">{{.TargetType}} (V2)</span></td>
+            <td style="font-family: var(--font-mono); font-size: 13px;">{{.Endpoint}}</td>
+            <td><code>{{.Datastore}}</code></td>
+            <td>{{if .Namespace}}<code>{{.Namespace}}</code>{{else}}<span style="color: var(--text-dim);">root</span>{{end}}</td>
+            <td>
+              {{if .TLSVerify}}
+                <span class="badge badge-success">Verified</span>
+              {{else}}
+                <span class="badge badge-warning">Skip Verify</span>
+              {{end}}
+            </td>
+            <td style="text-align: right;">
+              <button class="btn btn-secondary btn-sm" style="color: var(--danger-text);" onclick="deleteResource('targets', '{{.ID}}')">Delete</button>
+            </td>
+          </tr>
+          {{end}}
+        {{else}}
+          <tr>
+            <td colspan="7">
+              <div class="empty-state">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/></svg>
+                <p>No PBS backup targets configured.</p>
+                <button class="btn btn-primary btn-sm" onclick="openModal('modal-add-target')">Add your first PBS Target</button>
+              </div>
+            </td>
+          </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Add Target Modal -->
+<div id="modal-add-target" class="modal-backdrop">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h3>Add Proxmox Backup Server Target</h3>
+      <button class="close-btn" onclick="closeModal('modal-add-target')">&times;</button>
+    </div>
+    <form onsubmit="submitTargetForm(event)">
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Target Display Name</label>
+          <input type="text" name="name" class="form-control" placeholder="e.g. Primary PBS Cluster" required>
+        </div>
+
+        <div class="form-group">
+          <label>PBS Endpoint URL</label>
+          <input type="url" name="endpoint" class="form-control" placeholder="https://pbs.yourdomain.com:8007" required>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+          <div class="form-group">
+            <label>Datastore Name</label>
+            <input type="text" name="datastore" class="form-control" placeholder="backup-store1" required>
+          </div>
+          <div class="form-group">
+            <label>Namespace (Optional)</label>
+            <input type="text" name="namespace" class="form-control" placeholder="e.g. production">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>PBS API Token</label>
+          <input type="password" name="auth_token" class="form-control" placeholder="PBSAPIToken=user@pbs!fallbck=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" required>
+          <span class="form-text">Encrypted on the server. Agents never receive this token directly.</span>
+        </div>
+
+        <div class="form-group">
+          <label>TLS Cert Fingerprint (Optional for self-signed PBS)</label>
+          <input type="text" name="fingerprint" class="form-control" placeholder="SHA256:xx:xx:xx...">
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <input type="checkbox" id="tls_verify" name="tls_verify" checked>
+          <label for="tls_verify" style="font-size: 13px; font-weight: 500;">Verify TLS Certificates</label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('modal-add-target')">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save Target</button>
+      </div>
+    </form>
+  </div>
+</div>
+{{end}}

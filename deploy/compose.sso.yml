@@ -1,0 +1,86 @@
+# Override that fronts the stack with Caddy (TLS, internal CA) and adds dex as an OIDC
+# provider, so admin login works like production:
+#
+#   docker compose -f docker-compose.yml -f compose.sso.yml up -d --build
+#   open https://fallbck.localhost   (accept Caddy's local CA; user admin@example.com / password)
+#
+# *.localhost resolves to 127.0.0.1 in browsers and systemd-resolved, and the caddy
+# container carries the same hostname on the compose network, so browser and server
+# agree on the OIDC issuer URL https://fallbck.localhost/dex.
+
+services:
+  server:
+    depends_on:
+      postgres:
+        condition: service_healthy
+      caddy:
+        condition: service_healthy
+      caddy-ca:
+        condition: service_completed_successfully
+      dex:
+        condition: service_started
+    command: []
+    environment:
+      - FALLBCK_PUBLIC_URL=https://fallbck.localhost
+      - FALLBCK_AUTH_INSECURE_DISABLE=false
+      - FALLBCK_OIDC_ISSUER=https://fallbck.localhost/dex
+      - FALLBCK_OIDC_CLIENT_ID=fallbck
+      - FALLBCK_OIDC_CLIENT_SECRET=fallbck-dev-secret
+      - FALLBCK_OIDC_SCOPES=openid,profile,email,groups
+      # Trust Caddy's internal CA for the OIDC issuer (exported by the caddy-ca service)
+      - SSL_CERT_FILE=/ca/root.crt
+    volumes:
+      - caddy_ca:/ca:ro
+    ports: !reset []
+
+  # Caddy keeps its PKI root-only (0700); this one-shot job publishes the root
+  # certificate into a small volume the non-root server user can read.
+  caddy-ca:
+    image: alpine:3.20
+    container_name: fallbck-caddy-ca
+    depends_on:
+      caddy:
+        condition: service_healthy
+    command: ["sh", "-c", "cp /data/caddy/pki/authorities/local/root.crt /ca/root.crt && chmod 644 /ca/root.crt && echo exported Caddy root CA"]
+    volumes:
+      - caddy_data:/data:ro
+      - caddy_ca:/ca
+    networks:
+      - fallbck-net
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: fallbck-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    healthcheck:
+      # The internal CA exists once Caddy has started; the server trusts it at boot
+      test: ["CMD", "test", "-f", "/data/caddy/pki/authorities/local/root.crt"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    networks:
+      fallbck-net:
+        aliases:
+          - fallbck.localhost
+
+  dex:
+    image: ghcr.io/dexidp/dex:v2.41.1
+    container_name: fallbck-dex
+    restart: unless-stopped
+    command: ["dex", "serve", "/etc/dex/config.yaml"]
+    volumes:
+      - ./dex/config.yaml:/etc/dex/config.yaml:ro
+    networks:
+      - fallbck-net
+
+volumes:
+  caddy_data:
+  caddy_config:
+  caddy_ca:

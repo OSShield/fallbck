@@ -1,0 +1,134 @@
+{{define "content"}}
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+  <div>
+    <p style="color: var(--text-muted); font-size: 14px;">Manage host backup agents enrolled across your infrastructure.</p>
+  </div>
+  <button class="btn btn-primary" onclick="openAddAgentModal()">
+    <svg style="width: 16px; height: 16px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+    Add New Agent
+  </button>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h3 class="card-title">Enrolled Agents ({{len .Agents}})</h3>
+  </div>
+  <div class="table-container">
+    <table>
+      <thead>
+        <tr>
+          <th>Status</th>
+          <th>Hostname</th>
+          <th>IP Address</th>
+          <th>Platform</th>
+          <th>Task Queue</th>
+          <th>Last Seen</th>
+          <th style="text-align: right;">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{if .Agents}}
+          {{range .Agents}}
+          <tr>
+            <td>
+              {{if eq .Status "online"}}
+                <span class="badge badge-success"><span class="badge-dot"></span> Online</span>
+              {{else if eq .Status "busy"}}
+                <span class="badge badge-warning"><span class="badge-dot"></span> Backing up</span>
+              {{else}}
+                <span class="badge badge-neutral"><span class="badge-dot"></span> Offline</span>
+              {{end}}
+            </td>
+            <td><strong>{{.Hostname}}</strong></td>
+            <td style="font-family: var(--font-mono); font-size: 13px;">{{if .IPAddress}}{{.IPAddress}}{{else}}-{{end}}</td>
+            <td>
+              <span class="badge badge-neutral">{{.OS}}/{{.Arch}}</span>
+              <span style="font-size: 11px; color: var(--text-muted); margin-left: 4px;">{{.Version}}</span>
+            </td>
+            <td style="font-family: var(--font-mono); font-size: 12px; color: var(--text-muted);">{{.TaskQueue}}</td>
+            <td style="color: var(--text-muted); font-size: 13px;">
+              {{if .LastSeenAt}}{{formatTime .LastSeenAt}}{{else}}Never{{end}}
+            </td>
+            <td style="text-align: right;">
+              <button class="btn btn-secondary btn-sm" style="color: var(--danger-text);" onclick="deleteResource('agents', '{{.ID}}')">Delete</button>
+            </td>
+          </tr>
+          {{end}}
+        {{else}}
+          <tr>
+            <td colspan="7">
+              <div class="empty-state">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"/></svg>
+                <p>No agents registered yet.</p>
+                <button class="btn btn-primary btn-sm" onclick="openAddAgentModal()">Add your first Agent</button>
+              </div>
+            </td>
+          </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Add Agent Guided Installation Wizard Modal -->
+<div id="modal-add-agent" class="modal-backdrop">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h3>Guided Agent Installation</h3>
+      <button class="close-btn" onclick="closeModal('modal-add-agent')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size: 14px; color: var(--text-muted);">
+        Follow the instructions below to install and pair a new backup agent with FallBCK.
+      </p>
+
+      <div class="wizard-steps">
+        <div id="tab-linux" class="step-tab active" onclick="switchWizardTab('linux')">Linux (One-liner)</div>
+        <div id="tab-cli" class="step-tab" onclick="switchWizardTab('cli')">Binary CLI</div>
+        <div id="tab-windows" class="step-tab" onclick="switchWizardTab('windows')">Windows (PowerShell)</div>
+      </div>
+
+      <div class="form-group">
+        <label>Run this command on the target machine:</label>
+        <div class="code-block" id="agent-install-cmd">
+          Generating command...
+        </div>
+        <button class="btn btn-secondary btn-sm" style="align-self: flex-start; margin-top: 6px;" onclick="copyToClipboard('agent-install-cmd')">
+          <svg style="width: 14px; height: 14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"/></svg>
+          Copy Command
+        </button>
+      </div>
+
+      <div style="background-color: var(--bg-subtle); padding: 14px; border-radius: var(--radius-sm); font-size: 13px; color: var(--text-muted);">
+        <strong>What happens during enrollment:</strong>
+        <ol style="margin-left: 18px; margin-top: 6px; display: flex; flex-direction: column; gap: 4px;">
+          <li>Agent contacts the server and validates the single-use token.</li>
+          <li>Server provisions a dedicated Temporal task queue and issues signed mTLS certificates.</li>
+          <li>Agent starts its background Temporal activity worker to receive backup jobs.</li>
+        </ol>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-add-agent')">Close</button>
+      <button class="btn btn-primary" onclick="window.location.reload()">I Have Enrolled the Agent</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let currentWizardOS = 'linux';
+
+function openAddAgentModal() {
+  openModal('modal-add-agent');
+  prepareAgentWizard(currentWizardOS);
+}
+
+function switchWizardTab(os) {
+  currentWizardOS = os;
+  document.querySelectorAll('.wizard-steps .step-tab').forEach(t => t.classList.remove('active'));
+  const activeTab = document.getElementById(`tab-${os}`);
+  if (activeTab) activeTab.classList.add('active');
+  prepareAgentWizard(os);
+}
+</script>
+{{end}}

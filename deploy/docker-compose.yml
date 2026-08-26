@@ -1,11 +1,30 @@
+# FallBCK local / single-host stack.
+#
+#   docker compose up -d                                   # postgres + server (admin auth DISABLED, dev only)
+#   docker compose --profile agent up -d                   # ... plus an example agent (needs an enrollment token, see below)
+#   docker compose -f docker-compose.yml -f compose.sso.yml up -d
+#                                                          # ... behind Caddy (TLS) with dex as OIDC provider:
+#                                                          #     https://fallbck.localhost  (admin@example.com / password)
+#
+# The server embeds Temporal and the Temporal Web UI; there is no separate Temporal
+# container any more. Everything (Web UI, REST API, PBS proxy, agent gRPC) is served on
+# one plaintext h2c port (8080) that a TLS-terminating reverse proxy should front.
+#
+# Run from the deploy/ directory (or pass -f deploy/docker-compose.yml). Images are built
+# from the repository root with Dockerfile.server / Dockerfile.agent.
+
 services:
+  # -------------------------------------------------------------------------
+  # 1. PostgreSQL (application DB + Temporal's `temporal` / `temporal_visibility`,
+  #    created by the server on first start; the compose user is a superuser)
+  # -------------------------------------------------------------------------
   postgres:
     image: postgres:16-alpine
     container_name: fallbck-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: fallbck
-      POSTGRES_PASSWORD: fallbck_password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fallbck_password}
       POSTGRES_DB: fallbck
     ports:
       - "5432:5432"
@@ -16,38 +35,95 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - fallbck-net
 
-  temporal:
-    image: temporalio/auto-setup:1.24.2
-    container_name: fallbck-temporal
+  # -------------------------------------------------------------------------
+  # 2. FallBCK server: Web UI + API + PBS proxy + embedded Temporal + agent gateway
+  # -------------------------------------------------------------------------
+  server:
+    image: oci.fi/fallbck/server:latest
+    build:
+      context: ..
+      dockerfile: Dockerfile.server
+    container_name: fallbck-server
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
+    # --dev permits FALLBCK_AUTH_INSECURE_DISABLE; drop it (and set OIDC) for real use
+    command: ["--dev"]
     environment:
-      - DB=postgresql
-      - DB_PORT=5432
-      - POSTGRES_USER=fallbck
-      - POSTGRES_PWD=fallbck_password
-      - POSTGRES_SEEDS=postgres
-      - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/development-sql.yaml
-      - DEFAULT_NAMESPACE=default
+      - FALLBCK_HTTP_PORT=8080
+      - FALLBCK_HTTP_BIND=0.0.0.0
+      - FALLBCK_PUBLIC_URL=${FALLBCK_PUBLIC_URL:-http://localhost:8080}
+      - FALLBCK_JWT_SECRET=${FALLBCK_JWT_SECRET:-change-me-in-production-fallbck-secret-key-32bytes}
+      - FALLBCK_DATA_DIR=/var/lib/fallbck/server
+      - FALLBCK_DB_URL=postgres://fallbck:${POSTGRES_PASSWORD:-fallbck_password}@postgres:5432/fallbck?sslmode=disable
+      - FALLBCK_TEMPORAL_MODE=embedded
+      - FALLBCK_TEMPORAL_NAMESPACE=default
+      # Development only: no admin login. compose.sso.yml turns this off and configures OIDC.
+      - FALLBCK_AUTH_INSECURE_DISABLE=${FALLBCK_AUTH_INSECURE_DISABLE:-true}
+      - FALLBCK_OIDC_ISSUER=${FALLBCK_OIDC_ISSUER:-}
+      - FALLBCK_OIDC_CLIENT_ID=${FALLBCK_OIDC_CLIENT_ID:-}
+      - FALLBCK_OIDC_CLIENT_SECRET=${FALLBCK_OIDC_CLIENT_SECRET:-}
     ports:
-      - "7233:7233"
+      - "8080:8080"
     volumes:
-      - ./temporal/dynamicconfig:/etc/temporal/config/dynamicconfig
+      - server_data:/var/lib/fallbck/server
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:8080/api/v1/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    networks:
+      - fallbck-net
 
-  temporal-ui:
-    image: temporalio/ui:2.27.0
-    container_name: fallbck-temporal-ui
+  # -------------------------------------------------------------------------
+  # 3. FallBCK backup agent (example host worker container, opt-in profile)
+  #
+  # An agent must be enrolled with a one-time token before it can run, so this
+  # service is behind the "agent" profile. To use it:
+  #
+  #   1. Create an enrollment token (Web UI -> Enrollment Tokens, or with an API key:
+  #        FALLBCK_API_KEY=fbk_... fallbck-ctl token create
+  #      or, while auth is disabled:
+  #        curl -s -X POST http://localhost:8080/api/v1/tokens -H 'Content-Type: application/json' -d '{"name":"compose-agent"}')
+  #   2. Start the agent with the raw token; it enrolls itself on first start and
+  #      persists agent.yaml (with its bearer token) in the agent_data volume:
+  #        FALLBCK_AGENT_ENROLLMENT_KEY=<raw_token> docker compose --profile agent up -d
+  #
+  # The agent talks to http://server:8080 for everything (REST + Temporal gRPC over h2c).
+  # -------------------------------------------------------------------------
+  agent:
+    image: oci.fi/fallbck/file-agent:latest
+    build:
+      context: ..
+      dockerfile: Dockerfile.agent
+    container_name: fallbck-agent
     restart: unless-stopped
+    profiles:
+      - agent
     depends_on:
-      - temporal
+      server:
+        condition: service_healthy
     environment:
-      - TEMPORAL_ADDRESS=temporal:7233
-      - TEMPORAL_CORS_ORIGINS=http://localhost:3000,http://localhost:8080
-    ports:
-      - "8088:8080"
+      - FALLBCK_AGENT_SERVER_URL=http://server:8080
+      - FALLBCK_AGENT_ENROLLMENT_KEY=${FALLBCK_AGENT_ENROLLMENT_KEY:-}
+      - FALLBCK_AGENT_DATA_DIR=/var/lib/fallbck/agent
+    volumes:
+      - agent_data:/var/lib/fallbck/agent
+      - sample_backup_data:/backup-data
+    networks:
+      - fallbck-net
 
 volumes:
   postgres_data:
+  server_data:
+  agent_data:
+  sample_backup_data:
+
+networks:
+  fallbck-net:
+    driver: bridge

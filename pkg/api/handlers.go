@@ -5,69 +5,92 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/osshield/fallbck/pkg/auth"
-	"github.com/osshield/fallbck/pkg/certs"
 	"github.com/osshield/fallbck/pkg/config"
 	"github.com/osshield/fallbck/pkg/db"
 	"go.temporal.io/sdk/client"
 )
 
-// ServerAPI holds database, Temporal client, config, and PKI for servicing HTTP requests
+// ServerAPI holds database, Temporal client, config and token services for HTTP requests
 type ServerAPI struct {
 	DB           *db.DB
 	Temporal     client.Client
 	Config       *config.ServerConfig
-	CA           *certs.CertificateAuthority
 	TokenManager *auth.TokenManager
+	// Verifier is used to invalidate cached agent state on revocation (may be nil)
+	Verifier *auth.AgentVerifier
 }
 
 // NewServerAPI initializes the API service
-func NewServerAPI(database *db.DB, temporalClient client.Client, cfg *config.ServerConfig, ca *certs.CertificateAuthority, tm *auth.TokenManager) *ServerAPI {
+func NewServerAPI(database *db.DB, temporalClient client.Client, cfg *config.ServerConfig, tm *auth.TokenManager, verifier *auth.AgentVerifier) *ServerAPI {
 	return &ServerAPI{
 		DB:           database,
 		Temporal:     temporalClient,
 		Config:       cfg,
-		CA:           ca,
 		TokenManager: tm,
+		Verifier:     verifier,
 	}
 }
 
-// RegisterRoutes registers all API routes onto the Chi router
-func (s *ServerAPI) RegisterRoutes(r chi.Router) {
+// Middleware is a chi-compatible middleware
+type Middleware = func(http.Handler) http.Handler
+
+// RegisterRoutes registers all API routes onto the Chi router. admin protects the
+// administrative API, agent protects agent-authenticated endpoints.
+func (s *ServerAPI) RegisterRoutes(r chi.Router, admin, agent Middleware) {
 	r.Route("/api/v1", func(r chi.Router) {
+		// Public
 		r.Get("/health", s.HandleHealth)
-
-		// Agent Enrollment & Heartbeat
 		r.Post("/agents/enroll", s.HandleAgentEnroll)
-		r.Post("/agents/heartbeat", s.HandleAgentHeartbeat)
-		r.Get("/agents", s.HandleListAgents)
-		r.Get("/agents/{id}", s.HandleGetAgent)
-		r.Delete("/agents/{id}", s.HandleDeleteAgent)
 
-		// Tokens
-		r.Post("/tokens", s.HandleCreateToken)
-		r.Get("/tokens", s.HandleListTokens)
+		// Agent-authenticated
+		r.Group(func(r chi.Router) {
+			r.Use(agent)
+			r.Post("/agents/heartbeat", s.HandleAgentHeartbeat)
+			r.Post("/agents/token/rotate", s.HandleRotateAgentToken)
+		})
 
-		// Targets
-		r.Post("/targets", s.HandleCreateTarget)
-		r.Get("/targets", s.HandleListTargets)
-		r.Get("/targets/{id}", s.HandleGetTarget)
-		r.Delete("/targets/{id}", s.HandleDeleteTarget)
+		// Administrative
+		r.Group(func(r chi.Router) {
+			r.Use(admin)
 
-		// Jobs
-		r.Post("/jobs", s.HandleCreateJob)
-		r.Get("/jobs", s.HandleListJobs)
-		r.Get("/jobs/{id}", s.HandleGetJob)
-		r.Delete("/jobs/{id}", s.HandleDeleteJob)
-		r.Post("/jobs/{id}/run", s.HandleTriggerJob)
+			r.Get("/auth/me", s.HandleMe)
 
-		// Runs
-		r.Get("/runs", s.HandleListRuns)
+			r.Get("/agents", s.HandleListAgents)
+			r.Get("/agents/{id}", s.HandleGetAgent)
+			r.Delete("/agents/{id}", s.HandleDeleteAgent)
+
+			// Enrollment tokens
+			r.Post("/tokens", s.HandleCreateToken)
+			r.Get("/tokens", s.HandleListTokens)
+
+			// API keys
+			r.Post("/apikeys", s.HandleCreateAPIKey)
+			r.Get("/apikeys", s.HandleListAPIKeys)
+			r.Delete("/apikeys/{id}", s.HandleRevokeAPIKey)
+
+			// Targets
+			r.Post("/targets", s.HandleCreateTarget)
+			r.Get("/targets", s.HandleListTargets)
+			r.Get("/targets/{id}", s.HandleGetTarget)
+			r.Delete("/targets/{id}", s.HandleDeleteTarget)
+
+			// Jobs
+			r.Post("/jobs", s.HandleCreateJob)
+			r.Get("/jobs", s.HandleListJobs)
+			r.Get("/jobs/{id}", s.HandleGetJob)
+			r.Delete("/jobs/{id}", s.HandleDeleteJob)
+			r.Post("/jobs/{id}/run", s.HandleTriggerJob)
+
+			// Runs
+			r.Get("/runs", s.HandleListRuns)
+		})
 	})
 }
 
@@ -81,7 +104,8 @@ func (s *ServerAPI) HandleHealth(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, resp)
 }
 
-// HandleAgentEnroll processes an agent enrollment request with a one-time token
+// HandleAgentEnroll processes an agent enrollment request with a one-time token and
+// issues the agent its bearer token.
 func (s *ServerAPI) HandleAgentEnroll(w http.ResponseWriter, r *http.Request) {
 	var req EnrollRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -106,7 +130,7 @@ func (s *ServerAPI) HandleAgentEnroll(w http.ResponseWriter, r *http.Request) {
 	agentID := uuid.New()
 	taskQueue := fmt.Sprintf("fallbck-agent-%s", agentID.String())
 
-	// Client IP detection
+	// Client IP detection (RealIP middleware already applied X-Forwarded-For)
 	ip := req.IPAddress
 	if ip == "" {
 		ip = r.RemoteAddr
@@ -135,32 +159,33 @@ func (s *ServerAPI) HandleAgentEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Issue client mTLS certificate if CA is available
-	var clientCertPEM, clientKeyPEM, caCertPEM string
-	if s.CA != nil {
-		kp, err := s.CA.IssueClientCert(agentID.String(), 365) // 1 year cert
-		if err != nil {
-			slog.Error("Failed to generate client mTLS certificate", "error", err)
-			s.writeError(w, http.StatusInternalServerError, "Failed to issue agent certificates")
-			return
-		}
-		clientCertPEM = string(kp.CertPEM)
-		clientKeyPEM = string(kp.KeyPEM)
-		caCertPEM = string(s.CA.CACertPEM)
+	const initialTokenVersion = 1
+	authToken, expires, err := s.TokenManager.CreateAgentToken(agentID, taskQueue, initialTokenVersion, s.Config.AgentTokens.TTL)
+	if err != nil {
+		slog.Error("Failed to issue agent token", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "Failed to issue agent credentials")
+		return
 	}
 
-	proxyURL := fmt.Sprintf("%s:%d/pbs-proxy", s.Config.PublicURL, s.Config.ProxyPort)
+	var caPEM string
+	if s.Config.AgentCABundlePath != "" {
+		data, err := os.ReadFile(s.Config.AgentCABundlePath)
+		if err != nil {
+			slog.Warn("Failed to read agent CA bundle", "path", s.Config.AgentCABundlePath, "error", err)
+		} else {
+			caPEM = string(data)
+		}
+	}
 
 	resp := EnrollResponse{
-		AgentID:           agentID,
-		TaskQueue:         taskQueue,
-		CACertPEM:         caCertPEM,
-		ClientCertPEM:     clientCertPEM,
-		ClientKeyPEM:      clientKeyPEM,
-		TemporalHost:      s.Config.Temporal.HostPort,
-		TemporalNamespace: s.Config.Temporal.Namespace,
-		TemporalTLS:       s.Config.Temporal.EnableTLS,
-		ProxyURL:          proxyURL,
+		AgentID:        agentID,
+		TaskQueue:      taskQueue,
+		Namespace:      s.Config.Temporal.Namespace,
+		AuthToken:      authToken,
+		TokenExpiresAt: expires,
+		ServerURL:      strings.TrimRight(s.Config.PublicURL, "/"),
+		ServerCAPEM:    caPEM,
+		ProxyURL:       s.Config.ProxyURL(),
 	}
 
 	slog.Info("Successfully enrolled new agent", "agent_id", agentID, "hostname", req.Hostname, "token_name", token.Name)
@@ -175,12 +200,22 @@ func (s *ServerAPI) HandleAgentHeartbeat(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	claims := auth.AgentFrom(r.Context())
+	if claims == nil {
+		s.writeError(w, http.StatusUnauthorized, "agent token required")
+		return
+	}
+	if req.AgentID != uuid.Nil && req.AgentID != claims.AgentID {
+		s.writeError(w, http.StatusForbidden, "agent_id does not match the authenticated agent")
+		return
+	}
+
 	status := db.AgentStatusOnline
 	if req.Status != "" {
 		status = db.AgentStatus(req.Status)
 	}
 
-	if err := s.DB.UpdateAgentHeartbeat(r.Context(), req.AgentID, status); err != nil {
+	if err := s.DB.UpdateAgentHeartbeat(r.Context(), claims.AgentID, status); err != nil {
 		s.writeError(w, http.StatusInternalServerError, "Failed to update heartbeat")
 		return
 	}
@@ -231,6 +266,9 @@ func (s *ServerAPI) HandleDeleteAgent(w http.ResponseWriter, r *http.Request) {
 	if err := s.DB.DeleteAgent(r.Context(), id); err != nil {
 		s.writeError(w, http.StatusInternalServerError, "Failed to delete agent")
 		return
+	}
+	if s.Verifier != nil {
+		s.Verifier.Invalidate(id)
 	}
 
 	s.writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})

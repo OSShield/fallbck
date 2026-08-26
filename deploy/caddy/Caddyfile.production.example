@@ -1,0 +1,18 @@
+# Production reverse proxy example (Caddy 2). Caddy obtains a Let's Encrypt certificate
+# for the hostname automatically. Point FallBCK's public_url at https://backup.example.com.
+#
+# Requirements for any reverse proxy in front of fallbck-server:
+#   * forward gRPC (agents) as well as HTTP to the backend over h2c on the same port
+#   * keep idle/read timeouts above 90s: agents hold 70s long-poll RPCs open
+#   * pass the /temporal/ prefix through untouched
+backup.example.com {
+	encode gzip
+
+	reverse_proxy fallbck-server:8080 {
+		transport http {
+			versions h2c 2
+			read_timeout 0
+		}
+		flush_interval -1
+	}
+}

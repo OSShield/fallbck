@@ -1,0 +1,50 @@
+# syntax=docker/dockerfile:1
+# fallbck-server: Web UI + API + PBS proxy + embedded Temporal + agent gateway.
+# The embedded Temporal server makes this a large binary (~175 MB); BuildKit cache
+# mounts keep rebuilds fast.
+
+# ---- Build stage -------------------------------------------------------------
+FROM golang:1.26-alpine AS builder
+
+WORKDIR /src
+
+RUN apk add --no-cache git ca-certificates tzdata
+
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
+
+COPY . .
+
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath \
+      -ldflags="-s -w -X main.ServerVersion=0.1.0" \
+      -o /bin/fallbck-server ./cmd/fallbck-server
+
+# ---- Runtime stage -----------------------------------------------------------
+FROM alpine:3.20
+
+RUN apk add --no-cache ca-certificates tzdata curl
+
+RUN addgroup -S fallbck && adduser -S -G fallbck -u 10001 fallbck && \
+    mkdir -p /var/lib/fallbck/server /etc/fallbck && \
+    chown -R fallbck:fallbck /var/lib/fallbck /etc/fallbck
+
+COPY --from=builder /bin/fallbck-server /usr/local/bin/fallbck-server
+
+USER fallbck
+
+ENV FALLBCK_HTTP_PORT=8080 \
+    FALLBCK_HTTP_BIND=0.0.0.0 \
+    FALLBCK_DATA_DIR=/var/lib/fallbck/server \
+    FALLBCK_PUBLIC_URL=http://localhost:8080
+
+# Single plaintext h2c port: Web UI, REST API, PBS proxy, agent gRPC. Put a TLS proxy in front.
+EXPOSE 8080
+
+VOLUME ["/var/lib/fallbck/server"]
+
+HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=6 \
+  CMD curl -fs http://localhost:8080/api/v1/health || exit 1
+
+ENTRYPOINT ["/usr/local/bin/fallbck-server"]

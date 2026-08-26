@@ -8,15 +8,20 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/osshield/fallbck/pkg/auth"
-	"github.com/osshield/fallbck/pkg/certs"
 	"github.com/osshield/fallbck/pkg/config"
 )
 
-func TestHealthEndpoint(t *testing.T) {
-	api := NewServerAPI(nil, nil, config.DefaultServerConfig(), nil, auth.NewTokenManager("test-secret"))
+func passthrough(next http.Handler) http.Handler { return next }
 
+func newTestRouter() *chi.Mux {
+	api := NewServerAPI(nil, nil, config.DefaultServerConfig(), auth.NewTokenManager("test-secret-key-must-be-very-long-123456"), nil)
 	r := chi.NewRouter()
-	api.RegisterRoutes(r)
+	api.RegisterRoutes(r, passthrough, passthrough)
+	return r
+}
+
+func TestHealthEndpoint(t *testing.T) {
+	r := newTestRouter()
 
 	req, err := http.NewRequest(http.MethodGet, "/api/v1/health", nil)
 	if err != nil {
@@ -41,12 +46,7 @@ func TestHealthEndpoint(t *testing.T) {
 }
 
 func TestEnrollmentRequiresToken(t *testing.T) {
-	tempDir := t.TempDir()
-	ca, _ := certs.LoadOrCreateCA(tempDir+"/ca.crt", tempDir+"/ca.key")
-	api := NewServerAPI(nil, nil, config.DefaultServerConfig(), ca, auth.NewTokenManager("test-secret"))
-
-	r := chi.NewRouter()
-	api.RegisterRoutes(r)
+	r := newTestRouter()
 
 	req, err := http.NewRequest(http.MethodPost, "/api/v1/agents/enroll", httptest.NewRecorder().Body)
 	if err != nil {
@@ -58,5 +58,32 @@ func TestEnrollmentRequiresToken(t *testing.T) {
 
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("Expected status 400 for empty body, got %d", rr.Code)
+	}
+}
+
+func TestAdminMiddlewareIsApplied(t *testing.T) {
+	api := NewServerAPI(nil, nil, config.DefaultServerConfig(), auth.NewTokenManager("test-secret-key-must-be-very-long-123456"), nil)
+	r := chi.NewRouter()
+	deny := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusUnauthorized) })
+	}
+	api.RegisterRoutes(r, deny, deny)
+
+	for _, path := range []string{"/api/v1/agents", "/api/v1/tokens", "/api/v1/apikeys", "/api/v1/jobs", "/api/v1/auth/me"} {
+		rr := httptest.NewRecorder()
+		r.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, nil))
+		if rr.Code != http.StatusUnauthorized {
+			t.Errorf("%s: expected admin middleware to apply, got %d", path, rr.Code)
+		}
+	}
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/api/v1/agents/heartbeat", nil))
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("heartbeat: expected agent middleware to apply, got %d", rr.Code)
+	}
+	rr = httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/v1/health", nil))
+	if rr.Code != http.StatusOK {
+		t.Errorf("health must stay public, got %d", rr.Code)
 	}
 }
