@@ -97,7 +97,7 @@ nfpms:
 
 release:
   github:
-    owner: clysec
+    owner: osshield
     name: fallbck
 
 uploads:
