@@ -86,21 +86,29 @@ func (s *ServerActivities) PrepareBackupSession(ctx context.Context, jobID uuid.
 		return nil, fmt.Errorf("failed to generate backup ticket: %w", err)
 	}
 
-	// Create Run Record in DB
-	runID := uuid.New()
-	run := &db.BackupRun{
-		ID:         runID,
-		JobID:      job.ID,
-		AgentID:    agent.ID,
-		TargetID:   target.ID,
-		WorkflowID: info.WorkflowExecution.ID,
-		RunID:      info.WorkflowExecution.RunID,
-		Status:     db.RunStatusRunning,
-		StartTime:  &now,
-	}
-
-	if err := s.DB.CreateRun(ctx, run); err != nil {
-		slog.Warn("Failed to create run record in database", "error", err)
+	// Run record: the API creates a pending row when it starts the workflow; adopt it
+	// (so cancellation and finalisation update the row the user sees), otherwise create one.
+	var runID uuid.UUID
+	if existing, err := s.DB.GetRunByWorkflowID(ctx, info.WorkflowExecution.ID); err == nil {
+		runID = existing.ID
+		if err := s.DB.MarkRunStarted(ctx, runID, info.WorkflowExecution.RunID, now); err != nil {
+			slog.Warn("Failed to mark run as started", "error", err, "run_id", runID)
+		}
+	} else {
+		runID = uuid.New()
+		run := &db.BackupRun{
+			ID:         runID,
+			JobID:      job.ID,
+			AgentID:    agent.ID,
+			TargetID:   target.ID,
+			WorkflowID: info.WorkflowExecution.ID,
+			RunID:      info.WorkflowExecution.RunID,
+			Status:     db.RunStatusRunning,
+			StartTime:  &now,
+		}
+		if err := s.DB.CreateRun(ctx, run); err != nil {
+			slog.Warn("Failed to create run record in database", "error", err)
+		}
 	}
 
 	proxyURL := s.Config.ProxyURL()

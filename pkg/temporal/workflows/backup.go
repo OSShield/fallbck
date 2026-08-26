@@ -63,14 +63,25 @@ func BackupJobWorkflow(ctx workflow.Context, jobID uuid.UUID) (*fbtemporal.Backu
 	var execResult fbtemporal.BackupExecutionResult
 
 	execErr := workflow.ExecuteActivity(agentCtx, agentActs.ExecuteFilesystemBackup, &session).Get(agentCtx, &execResult)
-	if execErr != nil {
+	switch {
+	case execErr == nil:
+	case sdktemporal.IsCanceledError(execErr) || ctx.Err() != nil:
+		// Operator cancelled the run: the agent activity has been told to stop
+		logger.Info("Backup run cancelled", "job_id", jobID)
+		execResult.Status = db.RunStatusCancelled
+		execResult.ErrorMessage = "cancelled by operator"
+	default:
 		logger.Error("Agent backup activity failed", "error", execErr)
 		execResult.Status = db.RunStatusFailed
 		execResult.ErrorMessage = execErr.Error()
 	}
 
-	// 3. Finalize Run Status on Server
-	finalizeErr := workflow.ExecuteActivity(serverCtx, serverActs.FinalizeBackupRun, &session, &execResult).Get(serverCtx, nil)
+	// 3. Finalize Run Status on Server. Runs on a disconnected context so it still
+	// executes after a cancellation.
+	disconnected, cancelFinalize := workflow.NewDisconnectedContext(ctx)
+	defer cancelFinalize()
+	finalizeCtx := workflow.WithActivityOptions(disconnected, serverActivityOpts)
+	finalizeErr := workflow.ExecuteActivity(finalizeCtx, serverActs.FinalizeBackupRun, &session, &execResult).Get(finalizeCtx, nil)
 	if finalizeErr != nil {
 		logger.Warn("Failed to finalize backup run in database", "error", finalizeErr)
 	}

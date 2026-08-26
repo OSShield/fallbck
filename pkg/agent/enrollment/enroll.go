@@ -28,8 +28,7 @@ const ConfigFileName = "agent.yaml"
 // token, and writes agent.yaml (and an optional server CA bundle) into dataDir.
 func EnrollAgent(ctx context.Context, serverURL, token, dataDir string) (*config.AgentConfig, error) {
 	if dataDir == "" {
-		home, _ := os.UserHomeDir()
-		dataDir = filepath.Join(home, ".fallbck", "agent")
+		dataDir = config.DefaultAgentDataDir()
 	}
 	serverURL = strings.TrimRight(serverURL, "/")
 

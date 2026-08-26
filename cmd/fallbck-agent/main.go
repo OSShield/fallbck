@@ -41,7 +41,7 @@ func main() {
 	enrollCmd := flag.NewFlagSet("enroll", flag.ExitOnError)
 	enrollServer := enrollCmd.String("server", "http://localhost:8080", "FallBCK server URL")
 	enrollToken := enrollCmd.String("token", "", "One-time enrollment token")
-	enrollDir := enrollCmd.String("data-dir", "", "Agent data directory")
+	enrollDir := enrollCmd.String("data-dir", "", "Agent data directory (default: $FALLBCK_AGENT_DATA_DIR, "+config.SystemAgentDataDir+" as root, else ~/.fallbck/agent)")
 
 	runCmd := flag.NewFlagSet("run", flag.ExitOnError)
 	runConfig := runCmd.String("config", "", "Path to agent YAML configuration file")
@@ -77,6 +77,11 @@ func main() {
 		fmt.Printf("  Task Queue: %s\n", cfg.TaskQueue)
 		fmt.Printf("  Server:     %s\n", cfg.ServerURL)
 		fmt.Printf("  Config:     %s\n", filepath.Join(cfg.DataDir, enrollment.ConfigFileName))
+		if cfg.DataDir == config.SystemAgentDataDir {
+			fmt.Println("\nStart the service:  systemctl enable --now fallbck-agent   (OpenRC: rc-update add fallbck-agent default && rc-service fallbck-agent start)")
+		} else {
+			fmt.Printf("\nRun the agent:      fallbck-agent run --config %s\n", filepath.Join(cfg.DataDir, enrollment.ConfigFileName))
+		}
 
 	case "run", "daemon":
 		_ = runCmd.Parse(os.Args[2:])
@@ -126,16 +131,14 @@ func main() {
 	}
 }
 
-// findDefaultConfig returns the first existing agent.yaml among the conventional locations
+// findDefaultConfig returns the first existing agent.yaml among the conventional
+// locations: the default data dir (env / system dir as root / home), then the others.
 func findDefaultConfig() string {
-	var candidates []string
-	if dir := os.Getenv("FALLBCK_AGENT_DATA_DIR"); dir != "" {
-		candidates = append(candidates, filepath.Join(dir, enrollment.ConfigFileName))
-	}
+	candidates := []string{filepath.Join(config.DefaultAgentDataDir(), enrollment.ConfigFileName)}
+	candidates = append(candidates, filepath.Join(config.SystemAgentDataDir, enrollment.ConfigFileName))
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
 		candidates = append(candidates, filepath.Join(home, ".fallbck", "agent", enrollment.ConfigFileName))
 	}
-	candidates = append(candidates, filepath.Join(config.DefaultAgentConfig().DataDir, enrollment.ConfigFileName))
 
 	for _, path := range candidates {
 		if _, err := os.Stat(path); err == nil {

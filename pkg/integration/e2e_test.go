@@ -7,6 +7,7 @@ package integration
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net"
 	"net/http"
@@ -23,9 +24,11 @@ import (
 	"github.com/osshield/fallbck/pkg/temporal/activities"
 	"github.com/osshield/fallbck/pkg/temporal/embedded"
 	"github.com/osshield/fallbck/pkg/temporal/workflows"
+	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/worker"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
@@ -47,11 +50,29 @@ func (s *agentStore) GetAgentAuthState(_ context.Context, id uuid.UUID) (*db.Age
 // fakeAgentActivities stands in for the filesystem backup on the agent side
 type fakeAgentActivities struct {
 	executed chan *fbtemporal.BackupSessionInfo
+	// block makes the activity heartbeat until its context is cancelled (cancellation test)
+	block   bool
+	started chan struct{}
 }
 
 func (f *fakeAgentActivities) ExecuteFilesystemBackup(ctx context.Context, session *fbtemporal.BackupSessionInfo) (*fbtemporal.BackupExecutionResult, error) {
 	activity.RecordHeartbeat(ctx, "working")
 	f.executed <- session
+	if f.block {
+		select {
+		case f.started <- struct{}{}:
+		default:
+		}
+		// Like the real engine: keep heartbeating, stop when the server cancels us
+		for {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(200 * time.Millisecond):
+				activity.RecordHeartbeat(ctx, "still working")
+			}
+		}
+	}
 	return &fbtemporal.BackupExecutionResult{
 		Status:        db.RunStatusCompleted,
 		BytesScanned:  4096,
@@ -247,5 +268,58 @@ func TestBackupWorkflowThroughGateway(t *testing.T) {
 	case <-stolen:
 		t.Error("intruder agent was able to execute an activity on a foreign queue")
 	default:
+	}
+
+	// 6. Cancellation: a long-running backup is cancelled by the operator. The agent
+	// learns about it through its heartbeat, stops, and the run finalises as cancelled.
+	agentWorker.Stop()
+	blocking := &fakeAgentActivities{executed: make(chan *fbtemporal.BackupSessionInfo, 1), block: true, started: make(chan struct{}, 1)}
+	cancelWorker := worker.New(agentClient, agentQueue, worker.Options{DisableWorkflowWorker: true})
+	cancelWorker.RegisterActivityWithOptions(blocking.ExecuteFilesystemBackup, activity.RegisterOptions{Name: "ExecuteFilesystemBackup"})
+	if err := cancelWorker.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer cancelWorker.Stop()
+
+	cancelJob := uuid.New()
+	cancelRun, err := serverClient.ExecuteWorkflow(ctx, client.StartWorkflowOptions{
+		ID:        "backup-job-" + cancelJob.String(),
+		TaskQueue: fbtemporal.ServerTaskQueue,
+	}, workflows.BackupJobWorkflow, cancelJob)
+	if err != nil {
+		t.Fatalf("ExecuteWorkflow (cancel scenario): %v", err)
+	}
+	select {
+	case <-blocking.started:
+	case <-time.After(30 * time.Second):
+		t.Fatal("agent activity did not start")
+	}
+	if err := serverClient.CancelWorkflow(ctx, cancelRun.GetID(), cancelRun.GetRunID()); err != nil {
+		t.Fatalf("CancelWorkflow: %v", err)
+	}
+	var cancelled fbtemporal.BackupExecutionResult
+	err = cancelRun.Get(ctx, &cancelled)
+	if err == nil {
+		t.Fatalf("expected the workflow to end cancelled, got result %+v", cancelled)
+	}
+	var canceledErr *temporal.CanceledError
+	if !errors.As(err, &canceledErr) {
+		t.Fatalf("expected CanceledError, got %v", err)
+	}
+	// The workflow's result payload is not available on cancellation; confirm via history
+	// that FinalizeBackupRun ran after the cancel request.
+	finalized := false
+	iter := serverClient.GetWorkflowHistory(ctx, cancelRun.GetID(), cancelRun.GetRunID(), false, enumspb.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
+	for iter.HasNext() {
+		ev, err := iter.Next()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if a := ev.GetActivityTaskScheduledEventAttributes(); a != nil && a.GetActivityType().GetName() == "FinalizeBackupRun" {
+			finalized = true
+		}
+	}
+	if !finalized {
+		t.Error("FinalizeBackupRun was not scheduled after cancellation")
 	}
 }
