@@ -1,0 +1,18 @@
+# Development reverse proxy for the compose "sso" override.
+# Terminates TLS with Caddy's internal CA and forwards HTTP/1.1, HTTP/2 and gRPC to the
+# FallBCK server over h2c. /dex/* goes to the dex OIDC provider.
+fallbck.localhost {
+	tls internal
+
+	handle /dex/* {
+		reverse_proxy dex:5556
+	}
+
+	handle {
+		reverse_proxy server:8080 {
+			transport http {
+				versions h2c 2
+			}
+		}
+	}
+}

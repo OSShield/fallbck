@@ -1,0 +1,33 @@
+{{define "login"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{.Title}} | FallBCK</title>
+  <link rel="stylesheet" href="/static/css/app.css">
+  <script src="/static/js/app.js" defer></script>
+</head>
+<body>
+  <div style="min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px;">
+    <div class="card" style="width: 100%; max-width: 420px; text-align: center;">
+      <div class="logo-badge" style="margin: 0 auto 16px;">FB</div>
+      <h1 style="margin-bottom: 4px;">FallBCK</h1>
+      <p style="color: var(--text-dim); margin-bottom: 24px;">Backup Platform — administrator sign-in</p>
+
+      {{if .Error}}
+      <div class="alert alert-error" style="margin-bottom: 16px;">{{.Error}}</div>
+      {{end}}
+
+      {{if .NoOIDC}}
+      <div class="alert alert-error">Single sign-on is not configured on this server. Set <code>auth.oidc.*</code> in the server configuration.</div>
+      {{else}}
+      <a class="btn btn-primary" style="width: 100%; display: inline-block;" href="/auth/login?next={{.Next}}">Sign in with single sign-on</a>
+      {{end}}
+
+      <p style="margin-top: 24px; font-size: 11px; color: var(--text-dim);">v{{.Version}}</p>
+    </div>
+  </div>
+</body>
+</html>
+{{end}}

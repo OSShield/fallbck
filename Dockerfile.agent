@@ -1,0 +1,41 @@
+# syntax=docker/dockerfile:1
+# fallbck-agent: backup worker that talks to the FallBCK server (REST + Temporal gRPC via
+# the server's gateway) through a single server URL.
+
+# ---- Build stage -------------------------------------------------------------
+FROM golang:1.26-alpine AS builder
+
+WORKDIR /src
+
+RUN apk add --no-cache git ca-certificates tzdata
+
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
+
+COPY . .
+
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath \
+      -ldflags="-s -w -X main.AgentVersion=0.1.0" \
+      -o /bin/fallbck-agent ./cmd/fallbck-agent
+
+# ---- Runtime stage -----------------------------------------------------------
+FROM alpine:3.20
+
+RUN apk add --no-cache ca-certificates tzdata
+
+RUN addgroup -S fallbck && adduser -S -G fallbck -u 10002 fallbck && \
+    mkdir -p /var/lib/fallbck/agent /backup-data && \
+    chown -R fallbck:fallbck /var/lib/fallbck /backup-data
+
+COPY --from=builder /bin/fallbck-agent /usr/local/bin/fallbck-agent
+
+USER fallbck
+
+ENV FALLBCK_AGENT_DATA_DIR=/var/lib/fallbck/agent
+
+VOLUME ["/var/lib/fallbck/agent", "/backup-data"]
+
+ENTRYPOINT ["/usr/local/bin/fallbck-agent"]
+CMD ["run"]

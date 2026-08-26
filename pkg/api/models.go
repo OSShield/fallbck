@@ -16,17 +16,24 @@ type EnrollRequest struct {
 	IPAddress string `json:"ip_address,omitempty"`
 }
 
-// EnrollResponse contains the credentials and configuration needed for the agent to start
+// EnrollResponse contains the credentials and configuration needed for the agent to start.
+// Everything the agent talks to (HTTP API, PBS proxy, Temporal gRPC) lives behind ServerURL.
 type EnrollResponse struct {
-	AgentID           uuid.UUID `json:"agent_id"`
-	TaskQueue         string    `json:"task_queue"`
-	CACertPEM         string    `json:"ca_cert_pem"`
-	ClientCertPEM     string    `json:"client_cert_pem"`
-	ClientKeyPEM      string    `json:"client_key_pem"`
-	TemporalHost      string    `json:"temporal_host"`
-	TemporalNamespace string    `json:"temporal_namespace"`
-	TemporalTLS       bool      `json:"temporal_tls"`
-	ProxyURL          string    `json:"proxy_url"`
+	AgentID        uuid.UUID `json:"agent_id"`
+	TaskQueue      string    `json:"task_queue"`
+	Namespace      string    `json:"namespace"`
+	AuthToken      string    `json:"auth_token"`
+	TokenExpiresAt time.Time `json:"token_expires_at"`
+	ServerURL      string    `json:"server_url"`
+	// ServerCAPEM optionally carries a private CA bundle the agent must trust for ServerURL
+	ServerCAPEM string `json:"server_ca_pem,omitempty"`
+	ProxyURL    string `json:"proxy_url"`
+}
+
+// RotateTokenResponse carries a freshly issued agent token
+type RotateTokenResponse struct {
+	AuthToken      string    `json:"auth_token"`
+	TokenExpiresAt time.Time `json:"token_expires_at"`
 }
 
 // CreateTokenRequest is used by the admin UI/CLI to create an agent enrollment token
@@ -52,9 +59,24 @@ type HeartbeatRequest struct {
 	Version string    `json:"version"`
 }
 
-// BackupTicketResponse contains a signed short-lived ticket for proxy chunk uploads
-type BackupTicketResponse struct {
-	Ticket    string `json:"ticket"`
-	ProxyURL  string `json:"proxy_url"`
-	ExpiresAt int64  `json:"expires_at"`
+// CreateAPIKeyRequest creates an admin API key for fallbck-ctl / automation
+type CreateAPIKeyRequest struct {
+	Name      string     `json:"name"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+}
+
+// CreateAPIKeyResponse returns the raw key exactly once
+type CreateAPIKeyResponse struct {
+	ID        uuid.UUID  `json:"id"`
+	Name      string     `json:"name"`
+	RawKey    string     `json:"raw_key"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+}
+
+// MeResponse describes the authenticated admin principal
+type MeResponse struct {
+	Kind    string `json:"kind"`
+	Subject string `json:"subject"`
+	Email   string `json:"email,omitempty"`
+	Name    string `json:"name,omitempty"`
 }

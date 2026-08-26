@@ -1,0 +1,112 @@
+version: 2
+
+builds:
+  - id: server
+    main: ./cmd/fallbck-server
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    binary: fallbck-server
+
+  - id: agent
+    main: ./cmd/fallbck-agent
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    binary: fallbck-agent
+
+archives:
+  - format: tar.gz
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+
+nfpms:
+  - id: fallbck-server
+    package_name: "fallbck-server"
+    description: "fallbck-server - Backup server"
+    vendor: "clysec"
+    maintainer: clysec
+    file_name_template: >-
+      {{ .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}amd64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    formats:
+      - deb
+      - apk
+      - rpm
+    bindir: /usr/local/bin
+  
+  - id: fallbck-agent
+    package_name: "fallbck-agent"
+    description: "fallbck-agent - Backup agent"
+    vendor: "clysec"
+    maintainer: clysec
+    file_name_template: >-
+      {{ .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}amd64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    formats:
+      - deb
+      - apk
+      - rpm
+    bindir: /usr/local/bin
+
+
+release:
+  github:
+    owner: clysec
+    name: sshjump
+
+uploads:
+  - name: "debpkg"
+    method: "PUT"
+    exts:
+      - deb
+    mode: archive
+    username: "linux_push"
+    target: https://deb.pkg.lv/upload?repo=main
+    custom_artifact_name: true
+
+  - name: "apkpkg"
+    method: "PUT"
+    exts:
+      - apk
+    mode: archive
+    username: "linux_push"
+    target: https://alpine.pkg.lv/upload?distribution=all&component=main
+    custom_artifact_name: true
+
+  - name: "rpmpkg"
+    method: "PUT"
+    exts:
+      - rpm
+    mode: archive
+    username: "linux_push"
+    target: https://rpm.pkg.lv/upload?repo=all
+    custom_artifact_name: true

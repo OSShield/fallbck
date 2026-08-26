@@ -14,6 +14,19 @@ import (
 
 var (
 	ErrInvalidTicket = errors.New("invalid or expired backup ticket")
+	ErrInvalidToken  = errors.New("invalid or expired token")
+)
+
+// Issuer is the `iss` claim on every JWT minted by the server
+const Issuer = "fallbck-server"
+
+// Audiences separate the JWT types that share the server signing secret so that a
+// token of one kind can never be presented as another.
+const (
+	AudienceBackupTicket = "fallbck-ticket"
+	AudienceAgent        = "fallbck-agent"
+	AudienceSession      = "fallbck-session"
+	AudienceLoginState   = "fallbck-login"
 )
 
 // GenerateSecureToken creates a cryptographically secure random token string and its SHA256 hash
@@ -38,18 +51,19 @@ func HashToken(rawToken string) string {
 
 // BackupTicketClaims defines the claims embedded in a short-lived backup session ticket
 type BackupTicketClaims struct {
-	JobID       uuid.UUID `json:"job_id"`
-	AgentID     uuid.UUID `json:"agent_id"`
-	TargetID    uuid.UUID `json:"target_id"`
-	Datastore   string    `json:"datastore"`
-	Namespace   string    `json:"namespace"`
-	BackupType  string    `json:"backup_type"` // e.g. "host"
-	BackupID    string    `json:"backup_id"`   // e.g. "agent-123"
-	BackupTime  int64     `json:"backup_time"` // unix timestamp
+	JobID      uuid.UUID `json:"job_id"`
+	AgentID    uuid.UUID `json:"agent_id"`
+	TargetID   uuid.UUID `json:"target_id"`
+	Datastore  string    `json:"datastore"`
+	Namespace  string    `json:"namespace"`
+	BackupType string    `json:"backup_type"` // e.g. "host"
+	BackupID   string    `json:"backup_id"`   // e.g. "agent-123"
+	BackupTime int64     `json:"backup_time"` // unix timestamp
 	jwt.RegisteredClaims
 }
 
-// TokenManager signs and validates short-lived backup session tickets
+// TokenManager signs and validates every JWT the server issues (backup tickets, agent
+// tokens, admin sessions, login state) with a single HS256 secret, separated by audience.
 type TokenManager struct {
 	secretKey []byte
 }
@@ -61,19 +75,45 @@ func NewTokenManager(secret string) *TokenManager {
 	}
 }
 
-// CreateBackupTicket generates a signed JWT ticket valid for the specified duration (e.g. 2 hours)
-func (tm *TokenManager) CreateBackupTicket(claims BackupTicketClaims, ttl time.Duration) (string, error) {
+// registered builds the standard claims for a token of the given audience and lifetime
+func registered(subject, audience string, ttl time.Duration) jwt.RegisteredClaims {
 	now := time.Now().UTC()
-	claims.RegisteredClaims = jwt.RegisteredClaims{
-		Issuer:    "fallbck-server",
-		Subject:   claims.AgentID.String(),
+	return jwt.RegisteredClaims{
+		Issuer:    Issuer,
+		Subject:   subject,
+		Audience:  jwt.ClaimStrings{audience},
 		IssuedAt:  jwt.NewNumericDate(now),
 		ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
 		NotBefore: jwt.NewNumericDate(now.Add(-1 * time.Minute)),
 	}
+}
 
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	signed, err := token.SignedString(tm.secretKey)
+// sign signs claims with the shared secret
+func (tm *TokenManager) sign(claims jwt.Claims) (string, error) {
+	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(tm.secretKey)
+}
+
+// parse verifies signature, algorithm, issuer, audience and time claims into claims
+func (tm *TokenManager) parse(tokenString, audience string, claims jwt.Claims) error {
+	token, err := jwt.ParseWithClaims(tokenString, claims,
+		func(token *jwt.Token) (interface{}, error) { return tm.secretKey, nil },
+		jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
+		jwt.WithIssuer(Issuer),
+		jwt.WithAudience(audience),
+	)
+	if err != nil {
+		return err
+	}
+	if !token.Valid {
+		return errors.New("token is not valid")
+	}
+	return nil
+}
+
+// CreateBackupTicket generates a signed JWT ticket valid for the specified duration (e.g. 2 hours)
+func (tm *TokenManager) CreateBackupTicket(claims BackupTicketClaims, ttl time.Duration) (string, error) {
+	claims.RegisteredClaims = registered(claims.AgentID.String(), AudienceBackupTicket, ttl)
+	signed, err := tm.sign(claims)
 	if err != nil {
 		return "", fmt.Errorf("failed to sign backup ticket: %w", err)
 	}
@@ -82,21 +122,9 @@ func (tm *TokenManager) CreateBackupTicket(claims BackupTicketClaims, ttl time.D
 
 // ValidateBackupTicket parses and verifies a short-lived backup ticket
 func (tm *TokenManager) ValidateBackupTicket(ticketString string) (*BackupTicketClaims, error) {
-	token, err := jwt.ParseWithClaims(ticketString, &BackupTicketClaims{}, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-		}
-		return tm.secretKey, nil
-	})
-
-	if err != nil {
+	claims := &BackupTicketClaims{}
+	if err := tm.parse(ticketString, AudienceBackupTicket, claims); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidTicket, err)
 	}
-
-	claims, ok := token.Claims.(*BackupTicketClaims)
-	if !ok || !token.Valid {
-		return nil, ErrInvalidTicket
-	}
-
 	return claims, nil
 }

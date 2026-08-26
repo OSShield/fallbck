@@ -17,6 +17,41 @@ import (
 
 var ControlVersion = "0.1.0"
 
+// apiKey is the admin API key (FALLBCK_API_KEY), created in the Web UI under API Keys
+var apiKey = os.Getenv("FALLBCK_API_KEY")
+
+// apiRequest performs an authenticated request against the server API
+func apiRequest(method, url string, body []byte) (*http.Response, error) {
+	var reader io.Reader
+	if body != nil {
+		reader = bytes.NewReader(body)
+	}
+	req, err := http.NewRequest(method, url, reader)
+	if err != nil {
+		return nil, err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		resp.Body.Close()
+		return nil, fmt.Errorf("unauthorized: set FALLBCK_API_KEY to an API key created in the Web UI (API Keys page)")
+	}
+	return resp, nil
+}
+
+func apiGet(url string) (*http.Response, error) { return apiRequest(http.MethodGet, url, nil) }
+func apiPost(url string, body []byte) (*http.Response, error) {
+	return apiRequest(http.MethodPost, url, body)
+}
+
 func main() {
 	serverURL := os.Getenv("FALLBCK_SERVER_URL")
 	if serverURL == "" {
@@ -61,7 +96,8 @@ Resources:
   runs      list backup executions
 
 Environment Variables:
-  FALLBCK_SERVER_URL   Server endpoint (default: http://localhost:8080)`)
+  FALLBCK_SERVER_URL   Server endpoint (default: http://localhost:8080)
+  FALLBCK_API_KEY      Admin API key (create one in the Web UI under API Keys)`)
 }
 
 func handleTokenCommands(serverURL string, args []string) {
@@ -84,7 +120,7 @@ func handleTokenCommands(serverURL string, args []string) {
 			ExpiresAt: time.Now().Add(time.Duration(*days) * 24 * time.Hour),
 		}
 		b, _ := json.Marshal(reqBody)
-		resp, err := http.Post(fmt.Sprintf("%s/api/v1/tokens", serverURL), "application/json", bytes.NewReader(b))
+		resp, err := apiPost(fmt.Sprintf("%s/api/v1/tokens", serverURL), b)
 		if err != nil {
 			fmt.Printf("Error: %v\n", err)
 			return
@@ -103,7 +139,7 @@ func handleTokenCommands(serverURL string, args []string) {
 		fmt.Printf("  fallbck-agent enroll --server %s --token %s\n", serverURL, tokenResp.RawToken)
 
 	case "list":
-		resp, err := http.Get(fmt.Sprintf("%s/api/v1/tokens", serverURL))
+		resp, err := apiGet(fmt.Sprintf("%s/api/v1/tokens", serverURL))
 		if err != nil {
 			fmt.Printf("Error: %v\n", err)
 			return
@@ -133,7 +169,7 @@ func handleAgentCommands(serverURL string, args []string) {
 
 	switch args[0] {
 	case "list":
-		resp, err := http.Get(fmt.Sprintf("%s/api/v1/agents", serverURL))
+		resp, err := apiGet(fmt.Sprintf("%s/api/v1/agents", serverURL))
 		if err != nil {
 			fmt.Printf("Error: %v\n", err)
 			return
@@ -165,7 +201,7 @@ func handleTargetCommands(serverURL string, args []string) {
 
 	switch args[0] {
 	case "list":
-		resp, err := http.Get(fmt.Sprintf("%s/api/v1/targets", serverURL))
+		resp, err := apiGet(fmt.Sprintf("%s/api/v1/targets", serverURL))
 		if err != nil {
 			fmt.Printf("Error: %v\n", err)
 			return
@@ -193,7 +229,7 @@ func handleJobCommands(serverURL string, args []string) {
 
 	switch args[0] {
 	case "list":
-		resp, err := http.Get(fmt.Sprintf("%s/api/v1/jobs", serverURL))
+		resp, err := apiGet(fmt.Sprintf("%s/api/v1/jobs", serverURL))
 		if err != nil {
 			fmt.Printf("Error: %v\n", err)
 			return
@@ -222,7 +258,7 @@ func handleJobCommands(serverURL string, args []string) {
 			return
 		}
 		jobID := args[1]
-		resp, err := http.Post(fmt.Sprintf("%s/api/v1/jobs/%s/run", serverURL, jobID), "application/json", nil)
+		resp, err := apiPost(fmt.Sprintf("%s/api/v1/jobs/%s/run", serverURL, jobID), nil)
 		if err != nil {
 			fmt.Printf("Error: %v\n", err)
 			return
@@ -234,7 +270,7 @@ func handleJobCommands(serverURL string, args []string) {
 }
 
 func handleRunCommands(serverURL string, args []string) {
-	resp, err := http.Get(fmt.Sprintf("%s/api/v1/runs", serverURL))
+	resp, err := apiGet(fmt.Sprintf("%s/api/v1/runs", serverURL))
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return

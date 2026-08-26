@@ -1,11 +1,27 @@
+# fallbck-server configuration. Every key can also be set via FALLBCK_* environment
+# variables (see pkg/config/config.go). The server listens on ONE plaintext h2c port and
+# expects a TLS-terminating reverse proxy in front (see deploy/caddy, deploy/nginx.conf.example).
+
 http_port: 8080
 http_bind: "0.0.0.0"
-public_url: "http://localhost:8080"
-jwt_secret: "super-secret-key-change-in-production-must-be-long"
+public_url: "https://backup.example.com"          # the reverse proxy's URL (OIDC redirect, agents)
+jwt_secret: "super-secret-key-change-in-production-must-be-32-plus-chars"
 data_dir: "/var/lib/fallbck/server"
-ca_cert_path: "/var/lib/fallbck/server/certs/ca.crt"
-ca_key_path: "/var/lib/fallbck/server/certs/ca.key"
-proxy_port: 8443
+# agent_ca_bundle_path: "/etc/fallbck/proxy-ca.pem"   # only for private CAs on public_url
+
+auth:
+  oidc:
+    issuer: "https://idp.example.com/realms/infra"
+    client_id: "fallbck"
+    client_secret: "..."
+    scopes: [openid, profile, email, groups]
+    allowed_groups: ["backup-admins"]            # optional
+    allowed_emails: []                           # optional
+  session_ttl: 12h
+  insecure_disable: false                        # dev only, requires --dev
+
+agent_tokens:
+  ttl: 8760h                                     # agents rotate automatically before expiry
 
 database:
   url: "postgres://fallbck:fallbck_password@localhost:5432/fallbck?sslmode=disable"
@@ -14,7 +30,21 @@ database:
   auto_migrate: true
 
 temporal:
-  host_port: "localhost:7233"
-  namespace: "default"
-  enable_tls: false
-  connect_timeout: 10s
+  mode: embedded                                 # embedded | external
+  namespace: default
+  embedded:
+    bind_ip: 127.0.0.1
+    port_base: 7233                              # loopback only; +1..+6 for the other services
+    database_url: ""                             # default: database.url with db temporal / temporal_visibility
+    history_shards: 4                            # IMMUTABLE after first start
+    retention: 72h
+    cluster_name: fallbck                        # IMMUTABLE; set to e.g. "active" to adopt DBs from temporalio/auto-setup
+  external:                                      # used when mode: external
+    host_port: "temporal.internal:7233"
+    enable_tls: true
+    ca_cert_path: "/etc/fallbck/temporal-ca.crt"
+    client_cert_path: "/etc/fallbck/temporal-client.crt"
+    client_key_path: "/etc/fallbck/temporal-client.key"
+  ui:
+    enabled: true                                # embedded Temporal Web UI under /temporal/
+    port: 8233                                   # loopback

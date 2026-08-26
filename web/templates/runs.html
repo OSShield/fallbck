@@ -1,0 +1,70 @@
+{{define "content"}}
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+  <div>
+    <p style="color: var(--text-muted); font-size: 14px;">Audit trail and execution logs for backup jobs.</p>
+  </div>
+  <button class="btn btn-secondary" onclick="window.location.reload()">
+    <svg style="width: 14px; height: 14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+    Refresh
+  </button>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h3 class="card-title">Backup Executions ({{len .Runs}})</h3>
+  </div>
+  <div class="table-container">
+    <table>
+      <thead>
+        <tr>
+          <th>Status</th>
+          <th>Job Name</th>
+          <th>Agent Host</th>
+          <th>Protected Data</th>
+          <th>Uploaded to PBS</th>
+          <th>Deduplication</th>
+          <th>PBS Snapshot ID</th>
+          <th>Started</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{if .Runs}}
+          {{range .Runs}}
+          <tr>
+            <td>
+              {{if eq .Status "completed"}}
+                <span class="badge badge-success"><span class="badge-dot"></span> Completed</span>
+              {{else if eq .Status "running"}}
+                <span class="badge badge-warning"><span class="badge-dot"></span> Running</span>
+              {{else if eq .Status "failed"}}
+                <span class="badge badge-danger"><span class="badge-dot"></span> Failed</span>
+              {{else}}
+                <span class="badge badge-neutral"><span class="badge-dot"></span> {{.Status}}</span>
+              {{end}}
+            </td>
+            <td><strong>{{.JobName}}</strong></td>
+            <td>{{.AgentName}}</td>
+            <td>{{formatBytes .BytesScanned}}</td>
+            <td>{{formatBytes .BytesUploaded}}</td>
+            <td><span class="badge badge-info">{{printf "%.2f" .DedupRatio}}x</span></td>
+            <td style="font-family: var(--font-mono); font-size: 12px; color: var(--text-muted);">
+              {{if .PBSSnapshotID}}{{.PBSSnapshotID}}{{else}}-{{end}}
+            </td>
+            <td style="color: var(--text-muted); font-size: 13px;">{{formatTime .CreatedAt}}</td>
+          </tr>
+          {{end}}
+        {{else}}
+          <tr>
+            <td colspan="8">
+              <div class="empty-state">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                <p>No backup runs found.</p>
+              </div>
+            </td>
+          </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</div>
+{{end}}

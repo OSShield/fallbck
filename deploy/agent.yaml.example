@@ -1,14 +1,13 @@
+# fallbck-agent configuration (written by `fallbck-agent enroll`; edit rarely).
+# The agent reaches everything — REST API, PBS proxy and Temporal gRPC — through server_url.
 agent_id: "auto-generated-uuid"
 hostname: "web-server-01"
-server_url: "http://localhost:8080"
+server_url: "https://backup.example.com"
 data_dir: "/var/lib/fallbck/agent"
 task_queue: "fallbck-agent-auto-generated-uuid"
-
-temporal:
-  host_port: "localhost:7233"
-  namespace: "default"
-  enable_tls: true
-  ca_cert_path: "/var/lib/fallbck/agent/certs/ca.crt"
-  client_cert_path: "/var/lib/fallbck/agent/certs/client.crt"
-  client_key_path: "/var/lib/fallbck/agent/certs/client.key"
-  insecure_skip_verify: false
+namespace: "default"
+auth_token: "eyJ..."                 # bearer token issued at enrollment (file must be 0600)
+token_expires_at: 2027-08-25T00:00:00Z
+# server_ca_cert_path: "/var/lib/fallbck/agent/server-ca.crt"   # private CA for server_url
+# insecure_skip_verify: false
+# enrollment_key: ""                 # set (or FALLBCK_AGENT_ENROLLMENT_KEY) to self-enroll on first start

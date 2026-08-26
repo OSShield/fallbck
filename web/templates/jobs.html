@@ -1,0 +1,161 @@
+{{define "content"}}
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+  <div>
+    <p style="color: var(--text-muted); font-size: 14px;">Define backup plans, source paths, schedules, and retention policies.</p>
+  </div>
+  <button class="btn btn-primary" onclick="openModal('modal-add-job')">
+    <svg style="width: 16px; height: 16px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+    Create Backup Job
+  </button>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h3 class="card-title">Configured Backup Jobs ({{len .Jobs}})</h3>
+  </div>
+  <div class="table-container">
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Agent</th>
+          <th>PBS Target</th>
+          <th>Backup Paths</th>
+          <th>Schedule</th>
+          <th>Status</th>
+          <th style="text-align: right;">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{if .Jobs}}
+          {{range .Jobs}}
+          <tr>
+            <td><strong>{{.Name}}</strong></td>
+            <td><span class="badge badge-neutral">{{.AgentName}}</span></td>
+            <td>{{.TargetName}}</td>
+            <td>
+              {{range .BackupPaths}}
+                <code style="display: inline-block; margin-right: 4px; font-size: 12px;">{{.}}</code>
+              {{end}}
+            </td>
+            <td>
+              {{if .ScheduleCron}}
+                <span class="badge badge-info">{{.ScheduleCron}}</span>
+              {{else}}
+                <span style="color: var(--text-muted); font-size: 13px;">Manual Only</span>
+              {{end}}
+            </td>
+            <td>
+              {{if .Enabled}}
+                <span class="badge badge-success"><span class="badge-dot"></span> Active</span>
+              {{else}}
+                <span class="badge badge-neutral">Disabled</span>
+              {{end}}
+            </td>
+            <td style="text-align: right; display: flex; justify-content: flex-end; gap: 8px;">
+              <button class="btn btn-primary btn-sm" onclick="triggerJobRun('{{.ID}}')">Run Now</button>
+              <button class="btn btn-secondary btn-sm" style="color: var(--danger-text);" onclick="deleteResource('jobs', '{{.ID}}')">Delete</button>
+            </td>
+          </tr>
+          {{end}}
+        {{else}}
+          <tr>
+            <td colspan="7">
+              <div class="empty-state">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                <p>No backup jobs defined yet.</p>
+                <button class="btn btn-primary btn-sm" onclick="openModal('modal-add-job')">Create your first Job</button>
+              </div>
+            </td>
+          </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Add Job Modal -->
+<div id="modal-add-job" class="modal-backdrop">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h3>Create Backup Job</h3>
+      <button class="close-btn" onclick="closeModal('modal-add-job')">&times;</button>
+    </div>
+    <form onsubmit="submitJobForm(event)">
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Job Name</label>
+          <input type="text" name="name" class="form-control" placeholder="e.g. Daily Web Server & DB Backup" required>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+          <div class="form-group">
+            <label>Select Agent Host</label>
+            <select name="agent_id" class="form-control" required>
+              <option value="">-- Choose Agent --</option>
+              {{range .Agents}}
+                <option value="{{.ID}}">{{.Hostname}} ({{.OS}})</option>
+              {{end}}
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Select PBS Target</label>
+            <select name="target_id" class="form-control" required>
+              <option value="">-- Choose Target --</option>
+              {{range .Targets}}
+                <option value="{{.ID}}">{{.Name}} [{{.Datastore}}]</option>
+              {{end}}
+            </select>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Directories to Back Up (one per line)</label>
+          <textarea name="backup_paths" class="form-control" rows="3" placeholder="/etc&#10;/var/www&#10;/home/data" required></textarea>
+        </div>
+
+        <div class="form-group">
+          <label>Exclude Patterns / Paths (Optional, one per line)</label>
+          <textarea name="exclude_paths" class="form-control" rows="2" placeholder="*.tmp&#10;/var/cache&#10;node_modules"></textarea>
+        </div>
+
+        <div class="form-group">
+          <label>Schedule (Cron expression or leave blank for manual)</label>
+          <input type="text" name="schedule_cron" class="form-control" placeholder="0 2 * * * (Every night at 2 AM)">
+        </div>
+
+        <div style="background-color: var(--bg-subtle); padding: 14px; border-radius: var(--radius-sm);">
+          <label style="font-weight: 600; font-size: 13px; margin-bottom: 8px; display: block;">Retention Rules (Proxmox Backup Server)</label>
+          <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 12px;">
+            <div>
+              <label style="font-size: 12px; color: var(--text-muted);">Keep Last</label>
+              <input type="number" name="keep_last" class="form-control" value="7" min="1">
+            </div>
+            <div>
+              <label style="font-size: 12px; color: var(--text-muted);">Keep Daily</label>
+              <input type="number" name="keep_daily" class="form-control" value="7" min="0">
+            </div>
+            <div>
+              <label style="font-size: 12px; color: var(--text-muted);">Keep Weekly</label>
+              <input type="number" name="keep_weekly" class="form-control" value="4" min="0">
+            </div>
+            <div>
+              <label style="font-size: 12px; color: var(--text-muted);">Keep Monthly</label>
+              <input type="number" name="keep_monthly" class="form-control" value="12" min="0">
+            </div>
+          </div>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <input type="checkbox" id="job_enabled" name="enabled" checked>
+          <label for="job_enabled" style="font-size: 13px; font-weight: 500;">Enable automated schedule</label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('modal-add-job')">Cancel</button>
+        <button type="submit" class="btn btn-primary">Create Job</button>
+      </div>
+    </form>
+  </div>
+</div>
+{{end}}
