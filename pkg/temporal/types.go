@@ -13,14 +13,20 @@ const (
 
 // BackupSessionInfo carries all configuration needed for a worker to execute a backup
 type BackupSessionInfo struct {
-	JobID           uuid.UUID          `json:"job_id"`
-	AgentID         uuid.UUID          `json:"agent_id"`
-	TargetID        uuid.UUID          `json:"target_id"`
-	AgentTaskQueue  string             `json:"agent_task_queue"`
-	ProxyURL        string             `json:"proxy_url"`
-	Ticket          string             `json:"ticket"`
-	Datastore       string             `json:"datastore"`
-	Namespace       string             `json:"namespace"`
+	JobID          uuid.UUID `json:"job_id"`
+	AgentID        uuid.UUID `json:"agent_id"`
+	TargetID       uuid.UUID `json:"target_id"`
+	AgentTaskQueue string    `json:"agent_task_queue"`
+	ProxyURL       string    `json:"proxy_url"`
+	Ticket         string    `json:"ticket"`
+	Datastore      string    `json:"datastore"`
+	Namespace      string    `json:"namespace"`
+	// Snapshot identity the server opens on PBS (also bound into the ticket)
+	BackupType string `json:"backup_type"`
+	BackupID   string `json:"backup_id"`
+	BackupTime int64  `json:"backup_time"`
+	// PxarFormat is "v1" or "v2" (target setting)
+	PxarFormat      string             `json:"pxar_format"`
 	BackupPaths     []string           `json:"backup_paths"`
 	ExcludePaths    []string           `json:"exclude_paths"`
 	RetentionPolicy db.RetentionPolicy `json:"retention_policy"`

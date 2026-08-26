@@ -43,6 +43,12 @@ type EnrollmentToken struct {
 	CreatedAt  time.Time `json:"created_at" db:"created_at"`
 }
 
+// pxar archive formats a target accepts
+const (
+	PxarFormatV1 = "v1" // single stream + catalog; browsable everywhere
+	PxarFormatV2 = "v2" // split metadata/payload streams; PBS 3.2+
+)
+
 // BackupTarget represents a remote backup repository such as Proxmox Backup Server
 type BackupTarget struct {
 	ID                 uuid.UUID `json:"id" db:"id"`
@@ -54,8 +60,18 @@ type BackupTarget struct {
 	AuthTokenEncrypted string    `json:"-" db:"auth_token_encrypted"`
 	Fingerprint        string    `json:"fingerprint" db:"fingerprint"`
 	TLSVerify          bool      `json:"tls_verify" db:"tls_verify"`
+	PxarFormat         string    `json:"pxar_format" db:"pxar_format"`
 	CreatedAt          time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt          time.Time `json:"updated_at" db:"updated_at"`
+
+	// HasToken reports whether an API token is stored (the token itself is never returned)
+	HasToken bool `json:"has_token" db:"-"`
+}
+
+// Sanitize fills derived, API-safe fields
+func (t *BackupTarget) Sanitize() *BackupTarget {
+	t.HasToken = t.AuthTokenEncrypted != ""
+	return t
 }
 
 // RetentionPolicy defines backup retention counts

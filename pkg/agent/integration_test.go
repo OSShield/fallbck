@@ -1,165 +1,159 @@
 package agent_test
 
 import (
-	"io"
+	"context"
+	"net"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"sync"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/osshield/fallbck/pkg/auth"
-	"github.com/osshield/fallbck/pkg/config"
 	"github.com/osshield/fallbck/pkg/db"
+	"github.com/osshield/fallbck/pkg/gateway"
 	"github.com/osshield/fallbck/pkg/proxy"
+	"github.com/osshield/fallbck/pkg/proxy/pbstest"
 	"github.com/osshield/fallbck/pkg/temporal"
 	"github.com/osshield/fallbck/pkg/temporal/activities"
-	"github.com/osshield/fallbck/pkg/temporal/workflows"
-	"github.com/stretchr/testify/mock"
-	"go.temporal.io/sdk/testsuite"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
+type staticVerifier struct{ claims *auth.AgentClaims }
+
+func (s staticVerifier) Verify(_ context.Context, bearer string) (*auth.AgentClaims, error) {
+	if bearer == "Bearer agent-token" {
+		return s.claims, nil
+	}
+	return nil, auth.ErrInvalidToken
+}
+
+type oneTarget struct{ target *db.BackupTarget }
+
+func (o oneTarget) GetTargetByID(_ context.Context, id uuid.UUID) (*db.BackupTarget, error) {
+	if id == o.target.ID {
+		return o.target, nil
+	}
+	return nil, db.ErrNotFound
+}
+
+type tokenCreds struct{}
+
+func (tokenCreds) GetRequestMetadata(context.Context, ...string) (map[string]string, error) {
+	return map[string]string{"authorization": "Bearer agent-token"}, nil
+}
+func (tokenCreds) RequireTransportSecurity() bool { return false }
+
+// TestEndToEndBackupFlow runs the real agent activity: the server side (gateway +
+// tunnel) opens a session on a fake PBS with the target's token, and the agent streams
+// a real pxar archive through it with gopbs.
 func TestEndToEndBackupFlow(t *testing.T) {
-	// 1. Mock Proxmox Backup Server (Upstream)
-	var mu sync.Mutex
-	receivedChunks := make(map[string][]byte)
-	var receivedAuthHeader string
+	fake := pbstest.New(t)
+	fake.ExpectAuthorization = "PBSAPIToken=backup@pbs!fallbck=secret"
 
-	mockPBS := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		defer mu.Unlock()
-
-		receivedAuthHeader = r.Header.Get("Authorization")
-		digest := r.URL.Query().Get("digest")
-		body, _ := io.ReadAll(r.Body)
-
-		if digest != "" {
-			receivedChunks[digest] = body
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"data":{"status":"ok"}}`))
-	}))
-	defer mockPBS.Close()
-
-	// 2. Setup Security & Proxy
-	secret := "secret-jwt-key-32-bytes-long-1234"
-	tm := auth.NewTokenManager(secret)
-
-	pbsProxy := proxy.NewPBSProxy(nil, tm)
-	proxyServer := httptest.NewServer(http.HandlerFunc(pbsProxy.HandleProxyRequest))
-	defer proxyServer.Close()
-
-	// 3. Create Test Directory Structure to Backup
-	backupDir := t.TempDir()
-	file1 := filepath.Join(backupDir, "app.conf")
-	file2 := filepath.Join(backupDir, "data.bin")
-	_ = os.WriteFile(file1, []byte("database_host = 10.0.0.1\nport = 5432\n"), 0644)
-	_ = os.WriteFile(file2, []byte("Binary payload test content for deduplication and chunk verification"), 0644)
-
-	// 4. IDs & Session
-	jobID := uuid.New()
-	agentID := uuid.New()
-	targetID := uuid.New()
-
-	// Register mock target in proxy cache
-	pbsProxy.SetTarget(&db.BackupTarget{
-		ID:                 targetID,
-		Name:               "Mock PBS Target",
-		TargetType:         "pbs",
-		Endpoint:           mockPBS.URL,
-		Datastore:          "backup-store",
-		Namespace:          "production",
-		AuthTokenEncrypted: "PBSAPIToken=root@pam!dev=secret",
-		TLSVerify:          false,
-	})
-
-	claims := auth.BackupTicketClaims{
-		JobID:      jobID,
-		AgentID:    agentID,
-		TargetID:   targetID,
-		Datastore:  "backup-store",
-		Namespace:  "production",
-		BackupType: "host",
-		BackupID:   "test-host",
-		BackupTime: time.Now().Unix(),
+	tm := auth.NewTokenManager("secret-jwt-key-32-bytes-long-1234")
+	agentID, targetID, jobID := uuid.New(), uuid.New(), uuid.New()
+	target := &db.BackupTarget{
+		ID: targetID, Name: "fake-pbs", Endpoint: fake.URL(), Datastore: "backup-store", Namespace: "prod",
+		AuthTokenEncrypted: "PBSAPIToken=backup@pbs!fallbck=secret", Fingerprint: fake.Fingerprint(), PxarFormat: db.PxarFormatV1,
 	}
 
+	// Server: gateway (agent auth) + tunnel on an h2c listener
+	gw := gateway.New(nil, staticVerifier{&auth.AgentClaims{AgentID: agentID, TaskQueue: "q"}}, "default", nil)
+	proxy.NewBackupTunnel(tm, oneTarget{target}, nil).Register(gw)
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: h2c.NewHandler(gw.Handler(http.NotFoundHandler()), &http2.Server{}), ReadHeaderTimeout: 5 * time.Second}
+	go func() { _ = srv.Serve(l) }()
+	defer func() { gw.GracefulStop(); _ = srv.Close() }()
+
+	// What PrepareBackupSession would produce
+	now := time.Now().UTC()
+	claims := auth.BackupTicketClaims{
+		JobID: jobID, AgentID: agentID, TargetID: targetID, Datastore: target.Datastore, Namespace: target.Namespace,
+		BackupType: "host", BackupID: "web-01", BackupTime: now.Unix(),
+	}
 	ticket, err := tm.CreateBackupTicket(claims, 2*time.Hour)
 	if err != nil {
-		t.Fatalf("CreateBackupTicket failed: %v", err)
+		t.Fatal(err)
+	}
+
+	backupDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(backupDir, "app.conf"), []byte("[app]\nname=fallbck\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	payload := make([]byte, 3*1024*1024)
+	for i := range payload {
+		payload[i] = byte(i % 251)
+	}
+	if err := os.WriteFile(filepath.Join(backupDir, "data.bin"), payload, 0o644); err != nil {
+		t.Fatal(err)
 	}
 
 	session := &temporal.BackupSessionInfo{
-		JobID:          jobID,
-		AgentID:        agentID,
-		TargetID:       targetID,
-		AgentTaskQueue: "fallbck-agent-test-queue",
-		ProxyURL:       proxyServer.URL,
-		Ticket:         ticket,
-		Datastore:      "backup-store",
-		Namespace:      "production",
-		BackupPaths:    []string{backupDir},
-		ExcludePaths:   []string{"*.tmp"},
-		WorkflowID:     "backup-workflow-e2e",
-		RunID:          "run-e2e-1",
-		BackupRunID:    uuid.New(),
+		JobID: jobID, AgentID: agentID, TargetID: targetID, AgentTaskQueue: "q",
+		Ticket: ticket, Datastore: target.Datastore, Namespace: target.Namespace,
+		BackupType: claims.BackupType, BackupID: claims.BackupID, BackupTime: claims.BackupTime,
+		PxarFormat: target.PxarFormat, BackupPaths: []string{backupDir}, BackupRunID: uuid.New(),
 	}
 
-	// 5. Test with Temporal Workflow Test Environment
-	testSuite := &testsuite.WorkflowTestSuite{}
-	env := testSuite.NewTestWorkflowEnvironment()
-
-	serverConfig := config.DefaultServerConfig()
-	serverActs := activities.NewServerActivities(nil, serverConfig, tm)
-	agentActs := activities.NewAgentActivities()
-
-	// Register actual activities
-	env.RegisterActivity(serverActs.PrepareBackupSession)
-	env.RegisterActivity(agentActs.ExecuteFilesystemBackup)
-	env.RegisterActivity(serverActs.FinalizeBackupRun)
-	env.RegisterActivity(serverActs.PruneJob)
-
-	// Execute Workflow with custom session returned by PrepareBackupSession mock
-	env.OnActivity(serverActs.PrepareBackupSession, mock.Anything, jobID).Return(session, nil)
-
-	env.ExecuteWorkflow(workflows.BackupJobWorkflow, jobID)
-
-	if !env.IsWorkflowCompleted() {
-		t.Fatal("E2E Backup workflow failed to complete")
-	}
-
-	var result temporal.BackupExecutionResult
-	err = env.GetWorkflowResult(&result)
+	// Agent: tunnel connection with its bearer token, then the real activity
+	conn, err := grpc.NewClient(l.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithPerRPCCredentials(tokenCreds{}))
 	if err != nil {
-		t.Fatalf("Workflow finished with error: %v", err)
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	acts := activities.NewAgentActivities()
+	acts.Tunnel = conn
+
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	result, err := runActivity(ctx, acts, session)
+	if err != nil {
+		t.Fatalf("ExecuteFilesystemBackup: %v", err)
+	}
+	if result.Status != db.RunStatusCompleted || result.ChunkCount == 0 || result.BytesScanned < int64(len(payload)) {
+		t.Errorf("unexpected result %+v", result)
+	}
+	if !strings.HasPrefix(result.SnapshotID, "host/web-01/") {
+		t.Errorf("snapshot id %q", result.SnapshotID)
 	}
 
-	// 6. Assertions
-	if result.Status != db.RunStatusCompleted {
-		t.Errorf("Expected status Completed, got %s (Error: %s)", result.Status, result.ErrorMessage)
+	// The fake PBS saw one session, opened with the target's token and the ticket's identity
+	ups := fake.Upgrades()
+	if len(ups) != 1 {
+		t.Fatalf("expected 1 PBS session, got %d", len(ups))
 	}
-
-	if result.BytesScanned <= 0 {
-		t.Errorf("Expected BytesScanned > 0, got %d", result.BytesScanned)
+	q := ups[0].URL.Query()
+	if q.Get("store") != "backup-store" || q.Get("ns") != "prod" || q.Get("backup-id") != "web-01" {
+		t.Errorf("session scoped incorrectly: %s", ups[0].URL.RawQuery)
 	}
-
-	if result.ChunkCount != 2 {
-		t.Errorf("Expected 2 chunks scanned & processed, got %d", result.ChunkCount)
+	if fake.Finished() != 1 {
+		t.Error("session was not finished")
 	}
-
-	mu.Lock()
-	defer mu.Unlock()
-
-	if len(receivedChunks) != 2 {
-		t.Errorf("Expected 2 chunks received upstream by mock PBS, got %d", len(receivedChunks))
+	idx := fake.Indexes()
+	for _, name := range []string{"catalog.pcat1.didx"} {
+		if _, ok := idx[name]; !ok {
+			t.Errorf("index %s missing", name)
+		}
 	}
-
-	if receivedAuthHeader != "PBSAPIToken=root@pam!dev=secret" {
-		t.Errorf("Expected upstream auth header 'PBSAPIToken=root@pam!dev=secret', got '%s'", receivedAuthHeader)
+	pxarFound := false
+	for name := range idx {
+		if strings.HasSuffix(name, ".pxar.didx") {
+			pxarFound = true
+		}
+	}
+	if !pxarFound {
+		t.Errorf("no pxar index uploaded: %v", idx)
+	}
+	if _, ok := fake.Blobs()["index.json.blob"]; !ok {
+		t.Error("manifest missing")
 	}
 }

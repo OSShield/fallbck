@@ -2,22 +2,27 @@ package activities
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
+	"net"
 
 	"github.com/osshield/fallbck/pkg/agent/backup"
 	"github.com/osshield/fallbck/pkg/db"
+	"github.com/osshield/fallbck/pkg/proxy"
 	"github.com/osshield/fallbck/pkg/temporal"
+	"github.com/osshield/gopbs/pbs"
 	"go.temporal.io/sdk/activity"
+	"google.golang.org/grpc"
 )
 
 // AgentActivities provides activities executed on the client backup agent host
 type AgentActivities struct {
-	// ServerURL is the FallBCK server URL this agent is configured to talk to.
-	// When set, the PBS proxy is reached through it instead of the server-advertised
-	// public URL, which may not be routable from the agent's network (e.g. containers).
-	ServerURL string
+	// Tunnel is the agent's gRPC connection to the FallBCK server (carrying its bearer
+	// token); PBS backup sessions are opened through it.
+	Tunnel grpc.ClientConnInterface
+	// Workers bounds concurrent chunk uploads (0 = default)
+	Workers int
 }
 
 // NewAgentActivities creates a new AgentActivities instance
@@ -25,38 +30,35 @@ func NewAgentActivities() *AgentActivities {
 	return &AgentActivities{}
 }
 
-// proxyURL resolves the PBS proxy base URL for a backup session
-func (a *AgentActivities) proxyURL(session *temporal.BackupSessionInfo) string {
-	if a.ServerURL != "" {
-		return strings.TrimRight(a.ServerURL, "/") + "/pbs-proxy"
-	}
-	return session.ProxyURL
-}
-
-// ExecuteFilesystemBackup performs the filesystem backup on the agent host and streams chunks through the proxy
+// ExecuteFilesystemBackup performs the filesystem backup on the agent host, streaming
+// into PBS through the server-side tunnel.
 func (a *AgentActivities) ExecuteFilesystemBackup(ctx context.Context, session *temporal.BackupSessionInfo) (*temporal.BackupExecutionResult, error) {
-	activityInfo := activity.GetInfo(ctx)
-	proxyURL := a.proxyURL(session)
+	info := activity.GetInfo(ctx)
 	slog.Info("Agent activity started: ExecuteFilesystemBackup",
-		"activity_id", activityInfo.ActivityID,
+		"activity_id", info.ActivityID,
 		"job_id", session.JobID,
 		"paths", session.BackupPaths,
-		"proxy_url", proxyURL,
+		"datastore", session.Datastore,
+		"format", session.PxarFormat,
 	)
-
-	engine := backup.NewBackupEngine(proxyURL, session.Ticket, session.Datastore, session.Namespace)
-
-	// Heartbeat callback feeding into Temporal activity progress
-	onProgress := func(currentFile string, scanned, uploaded int64, chunks int) {
-		progress := temporal.BackupHeartbeatProgress{
-			CurrentFile:   currentFile,
-			BytesScanned:  scanned,
-			BytesUploaded: uploaded,
-		}
-		activity.RecordHeartbeat(ctx, progress)
+	if a.Tunnel == nil {
+		return nil, errors.New("agent tunnel connection is not configured")
 	}
 
-	result, err := engine.ExecuteFilesystemBackup(ctx, session.BackupPaths, session.ExcludePaths, onProgress)
+	result, err := backup.Run(ctx, backup.Options{
+		Session: session,
+		Workers: a.Workers,
+		Dial: func(ctx context.Context, _ pbs.SnapshotRef) (net.Conn, error) {
+			return proxy.Dial(ctx, a.Tunnel, session.Ticket)
+		},
+		OnProgress: func(archive string, stats pbs.UploadStats, done bool) {
+			activity.RecordHeartbeat(ctx, temporal.BackupHeartbeatProgress{
+				CurrentFile:   archive,
+				BytesScanned:  int64(stats.Size),
+				BytesUploaded: int64(stats.Size),
+			})
+		},
+	})
 	if err != nil {
 		slog.Error("Agent backup execution failed", "error", err)
 		return &temporal.BackupExecutionResult{
@@ -64,6 +66,5 @@ func (a *AgentActivities) ExecuteFilesystemBackup(ctx context.Context, session *
 			ErrorMessage: fmt.Sprintf("Backup execution failed: %v", err),
 		}, err
 	}
-
 	return result, nil
 }

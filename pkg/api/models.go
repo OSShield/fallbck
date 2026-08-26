@@ -80,3 +80,18 @@ type MeResponse struct {
 	Email   string `json:"email,omitempty"`
 	Name    string `json:"name,omitempty"`
 }
+
+// CreateTargetRequest registers a backup target. AuthToken is the PBS API token
+// ("user@realm!tokenid=secret" or with the PBSAPIToken= prefix); it is stored and
+// used only server-side.
+type CreateTargetRequest struct {
+	Name        string `json:"name"`
+	TargetType  string `json:"target_type"`
+	Endpoint    string `json:"endpoint"`
+	Datastore   string `json:"datastore"`
+	Namespace   string `json:"namespace"`
+	AuthToken   string `json:"auth_token"`
+	Fingerprint string `json:"fingerprint"`
+	TLSVerify   bool   `json:"tls_verify"`
+	PxarFormat  string `json:"pxar_format"`
+}

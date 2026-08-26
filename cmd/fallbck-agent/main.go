@@ -27,6 +27,9 @@ import (
 	"github.com/osshield/fallbck/pkg/temporal/activities"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 var AgentVersion = "0.1.0"
@@ -190,6 +193,15 @@ func (t *tokenStore) Update(token string, expires time.Time) error {
 	return t.cfg.Save(t.configPath)
 }
 
+// agentTokenCredentials attaches the (rotating) agent bearer token to every RPC
+type agentTokenCredentials struct{ store *tokenStore }
+
+func (c agentTokenCredentials) GetRequestMetadata(context.Context, ...string) (map[string]string, error) {
+	return map[string]string{"authorization": "Bearer " + c.store.Token()}, nil
+}
+
+func (agentTokenCredentials) RequireTransportSecurity() bool { return false }
+
 // connectionOptions derives the Temporal gRPC endpoint and TLS settings from ServerURL.
 // The FallBCK server multiplexes gRPC and HTTP on the same port; https → TLS, http → h2c.
 func connectionOptions(cfg *config.AgentConfig) (string, client.ConnectionOptions, error) {
@@ -266,13 +278,29 @@ func runAgent(cfg *config.AgentConfig, configPath string) {
 	defer temporalClient.Close()
 	slog.Info("Connected to FallBCK server gateway", "endpoint", hostPort)
 
+	// Second connection to the same endpoint for PBS backup tunnels (authenticated with
+	// the agent token like the Temporal traffic)
+	transportCreds := credentials.NewTLS(connOpts.TLS)
+	if connOpts.TLSDisabled {
+		transportCreds = insecure.NewCredentials()
+	}
+	tunnelConn, err := grpc.NewClient(hostPort,
+		grpc.WithTransportCredentials(transportCreds),
+		grpc.WithPerRPCCredentials(agentTokenCredentials{store: store}),
+	)
+	if err != nil {
+		slog.Error("Failed to create tunnel connection", "error", err)
+		os.Exit(1)
+	}
+	defer tunnelConn.Close()
+
 	// Activity-only worker on the agent's private task queue
 	w := worker.New(temporalClient, cfg.TaskQueue, worker.Options{
 		DisableWorkflowWorker: true,
 		Identity:              fmt.Sprintf("fallbck-agent@%s", cfg.Hostname),
 	})
 	agentActs := activities.NewAgentActivities()
-	agentActs.ServerURL = cfg.ServerURL
+	agentActs.Tunnel = tunnelConn
 	w.RegisterActivity(agentActs)
 
 	if err := w.Start(); err != nil {

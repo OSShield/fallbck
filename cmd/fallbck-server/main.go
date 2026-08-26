@@ -250,9 +250,11 @@ func main() {
 		serverAPI.RegisterRoutes(r, adminAuth.RequireAdmin, requireAgent)
 	})
 
-	// PBS proxy streams large chunk uploads: no request timeout
-	pbsProxy := proxy.NewPBSProxy(database, tokenManager)
-	pbsProxy.RegisterRoutes(r)
+	// PBS backup tunnel: the server opens each agent's PBS session with the target's
+	// API token, scoped by the backup ticket, and pipes it over the agent gateway.
+	if agentGateway != nil {
+		proxy.NewBackupTunnel(tokenManager, database, logger).Register(agentGateway)
+	}
 
 	uiHandler := web.NewUIHandler(database, cfg, web.Deps{
 		TokenManager: tokenManager,

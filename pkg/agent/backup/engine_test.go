@@ -2,80 +2,109 @@ package backup
 
 import (
 	"context"
-	"net/http"
-	"net/http/httptest"
+	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/osshield/fallbck/pkg/db"
+	"github.com/osshield/fallbck/pkg/proxy"
+	"github.com/osshield/fallbck/pkg/proxy/pbstest"
+	"github.com/osshield/fallbck/pkg/temporal"
+	"github.com/osshield/gopbs/pbs"
 )
 
-func TestFilesystemBackupEngine(t *testing.T) {
-	// Create mock PBS proxy server
-	uploadedChunks := 0
-	mockProxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		uploadedChunks++
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"data":{"digest":"ok"}}`))
-	}))
-	defer mockProxy.Close()
-
-	// Create test directory with files
-	tempDir := t.TempDir()
-	testFile1 := filepath.Join(tempDir, "file1.txt")
-	testFile2 := filepath.Join(tempDir, "file2.log")
-	subDir := filepath.Join(tempDir, "subdir")
-	_ = os.MkdirAll(subDir, 0755)
-	testFile3 := filepath.Join(subDir, "file3.data")
-
-	_ = os.WriteFile(testFile1, []byte("Hello FallBCK Backup World!"), 0644)
-	_ = os.WriteFile(testFile2, []byte("This is a log file that should be excluded"), 0644)
-	_ = os.WriteFile(testFile3, []byte("Subdirectory test content with some more bytes to chunk"), 0644)
-
-	engine := NewBackupEngine(mockProxy.URL, "test-ticket", "datastore1", "ns1")
-
-	var heartbeats int
-	onProgress := func(currentFile string, scanned, uploaded int64, chunks int) {
-		heartbeats++
+func makeTree(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "app.conf"), []byte("[app]\nkey=value\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
-
-	result, err := engine.ExecuteFilesystemBackup(context.Background(), []string{tempDir}, []string{"*.log"}, onProgress)
-	if err != nil {
-		t.Fatalf("ExecuteFilesystemBackup failed: %v", err)
+	if err := os.MkdirAll(filepath.Join(dir, "data"), 0o755); err != nil {
+		t.Fatal(err)
 	}
-
-	if result.Status != db.RunStatusCompleted {
-		t.Errorf("Expected status Completed, got %s", result.Status)
+	big := make([]byte, 5*1024*1024)
+	for i := range big {
+		big[i] = byte(i * 7)
 	}
-
-	if result.BytesScanned <= 0 {
-		t.Errorf("Expected BytesScanned > 0, got %d", result.BytesScanned)
+	if err := os.WriteFile(filepath.Join(dir, "data", "blob.bin"), big, 0o644); err != nil {
+		t.Fatal(err)
 	}
+	return dir
+}
 
-	if result.ChunkCount != 2 { // file1.txt and file3.data (file2.log was excluded)
-		t.Errorf("Expected 2 chunks for 2 non-excluded files, got %d", result.ChunkCount)
-	}
-
-	if result.SnapshotID == "" {
-		t.Error("Expected non-empty snapshot ID")
-	}
-
-	if uploadedChunks != 2 {
-		t.Errorf("Expected 2 uploaded chunks to mock proxy, got %d", uploadedChunks)
+// directDial plays the server's role: open the PBS session straight on the fake
+func directDial(fake *pbstest.Server, session *temporal.BackupSessionInfo) func(context.Context, pbs.SnapshotRef) (net.Conn, error) {
+	target := &db.BackupTarget{Endpoint: fake.URL(), Fingerprint: fake.Fingerprint(), AuthTokenEncrypted: "root@pam!t=s"}
+	return func(ctx context.Context, ref pbs.SnapshotRef) (net.Conn, error) {
+		return proxy.OpenBackupSession(ctx, target, proxy.SessionParams{
+			Datastore: session.Datastore, Namespace: session.Namespace,
+			BackupType: session.BackupType, BackupID: session.BackupID, BackupTime: session.BackupTime,
+		})
 	}
 }
 
-func TestExcludePatternMatching(t *testing.T) {
-	excludes := []string{"*.log", "/var/cache", "node_modules"}
+func TestRunFormats(t *testing.T) {
+	for _, format := range []string{db.PxarFormatV1, db.PxarFormatV2} {
+		t.Run(format, func(t *testing.T) {
+			fake := pbstest.New(t)
+			dir := makeTree(t)
+			session := &temporal.BackupSessionInfo{
+				Datastore: "store1", BackupType: "host", BackupID: "node6", BackupTime: time.Now().Unix(),
+				PxarFormat: format, BackupPaths: []string{dir},
+			}
+			var progressCalls int
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
 
-	if !isExcluded("/path/to/test.log", excludes) {
-		t.Errorf("Expected *.log to match /path/to/test.log")
+			res, err := Run(ctx, Options{
+				Session:     session,
+				Dial:        directDial(fake, session),
+				ArchiveName: "root",
+				OnProgress:  func(string, pbs.UploadStats, bool) { progressCalls++ },
+			})
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if res.Status != db.RunStatusCompleted || res.ChunkCount == 0 || res.BytesScanned < 5*1024*1024 {
+				t.Errorf("unexpected result %+v", res)
+			}
+			if !strings.HasPrefix(res.SnapshotID, "host/node6/") {
+				t.Errorf("snapshot id %q", res.SnapshotID)
+			}
+			if progressCalls == 0 {
+				t.Error("no progress reported")
+			}
+			if fake.Finished() != 1 {
+				t.Errorf("finished sessions = %d", fake.Finished())
+			}
+			indexes := fake.Indexes()
+			want := []string{"root.pxar.didx", "catalog.pcat1.didx"}
+			if format == db.PxarFormatV2 {
+				want = []string{"root.mpxar.didx", "root.ppxar.didx"}
+			}
+			for _, name := range want {
+				idx, ok := indexes[name]
+				if !ok || !idx.Closed || idx.ChunkCount == 0 {
+					t.Errorf("index %s missing or not closed: %+v", name, idx)
+				}
+			}
+			if _, ok := fake.Blobs()["index.json.blob"]; !ok {
+				t.Error("manifest not uploaded")
+			}
+		})
 	}
-	if !isExcluded("/project/node_modules/package.json", excludes) {
-		t.Errorf("Expected node_modules to match /project/node_modules/package.json")
+}
+
+func TestRunValidation(t *testing.T) {
+	ctx := context.Background()
+	if _, err := Run(ctx, Options{}); err == nil {
+		t.Error("nil session must fail")
 	}
-	if isExcluded("/path/to/valid.txt", excludes) {
-		t.Errorf("Expected valid.txt not to be excluded")
+	s := &temporal.BackupSessionInfo{BackupPaths: []string{"/definitely/missing/path"}, BackupType: "host", BackupID: "x", BackupTime: 1}
+	if _, err := Run(ctx, Options{Session: s, Dial: func(context.Context, pbs.SnapshotRef) (net.Conn, error) { return nil, nil }}); err == nil {
+		t.Error("missing path must fail before opening a session")
 	}
 }

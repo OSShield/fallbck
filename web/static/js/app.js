@@ -163,9 +163,10 @@ async function submitTargetForm(e) {
     endpoint: formData.get('endpoint'),
     datastore: formData.get('datastore'),
     namespace: formData.get('namespace') || '',
-    auth_token_encrypted: formData.get('auth_token') || '',
+    auth_token: formData.get('auth_token') || '',
     fingerprint: formData.get('fingerprint') || '',
-    tls_verify: formData.get('tls_verify') === 'on'
+    tls_verify: formData.get('tls_verify') === 'on',
+    pxar_format: formData.get('pxar_format') || 'v1'
   };
 
   try {
