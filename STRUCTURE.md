@@ -17,7 +17,7 @@ Everything is served on one plaintext HTTP/2 (h2c) port on the server, meant to 
 | `/api/v1/*` | administrators, `fallbck-ctl`, automation | session cookie or API key (`Authorization: Bearer fbk_…`) |
 | `POST /api/v1/agents/enroll` | new agents | one-time enrollment token |
 | `POST /api/v1/agents/heartbeat`, `…/token/rotate` | agents | agent bearer token (JWT) |
-| `/pbs-proxy/*` | agents during a backup | short-lived backup ticket (JWT) |
+| gRPC `fallbck.pbs.v1.BackupTunnel` | agents during a backup | agent bearer token + short-lived backup ticket (JWT) |
 | gRPC (`Content-Type: application/grpc`) | agents (Temporal SDK workers) | agent bearer token, via the gateway |
 
 ## Agent gateway
@@ -33,7 +33,15 @@ Agents are Temporal activity workers, but they never reach Temporal directly. gR
 A simple web UI with a light/dark theme choice, and functions for managing agents (along with guided instructions on installation and registration), enrollment tokens and API keys. The embedded Temporal Web UI is reachable under `/temporal/` for signed-in administrators.
 
 ## Backup targets
-The primary backup target is going to be Proxmox Backup Server, with the help of the Proxmox Backup Server Go library (https://github.com/osshield/gopbs). Use the V2 format for backups.
+The primary backup target is Proxmox Backup Server, driven by the Proxmox Backup Server Go library [gopbs](https://github.com/osshield/gopbs) (pxar v1 and v2 archives; the format is chosen per target).
+
+### How a backup reaches PBS
+1. `PrepareBackupSession` (server) mints a **backup ticket**: a short-lived JWT naming the agent, target, datastore, namespace and the snapshot identity (`host/<hostname>/<time>`).
+2. The agent opens a gRPC byte stream to the server's public port (`pkg/proxy`, service `fallbck.pbs.v1.BackupTunnel`) presenting its agent token and the ticket.
+3. The server validates both, loads the target, connects to PBS with the target's **API token** (TLS chain verification or certificate fingerprint pin), performs the `proxmox-backup-protocol-v1` upgrade for exactly the snapshot named in the ticket, and pipes bytes between PBS and the agent.
+4. The agent hands that stream to gopbs (`pbs.Config.DialSession`), which chunks, deduplicates and uploads the pxar archive, catalog and manifest, then finishes the snapshot.
+
+Agents never see PBS credentials or choose the datastore/namespace/snapshot; the server does not parse the backup protocol, it only transports it. Prune runs server-side through the PBS REST API. Restore is done with PBS's own tools (GUI / `proxmox-backup-client`) since the snapshots are standard pxar.
 
 ## Code map
 | Package | Purpose |
@@ -47,6 +55,7 @@ The primary backup target is going to be Proxmox Backup Server, with the help of
 | `pkg/temporal/ui` | embedded Temporal Web UI (loopback ui-server, proxied under `/temporal/`) |
 | `pkg/temporal` | SDK client helpers, server worker, workflows and activities |
 | `pkg/api`, `web` | REST API and server-rendered Web UI |
-| `pkg/proxy` | PBS proxy (`/pbs-proxy/*`) |
+| `pkg/proxy` | PBS backup-session tunnel (gRPC byte stream, server-side protocol upgrade, TLS pinning); `pbstest` fake PBS for tests |
+| `pkg/agent/backup` | agent backup engine on top of gopbs |
 | `pkg/db` | pgx pool, versioned migrations, repositories |
 | `pkg/integration` | end-to-end test: embedded Temporal + gateway + agent worker (`go test -tags sqlite`) |

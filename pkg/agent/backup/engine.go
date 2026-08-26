@@ -1,224 +1,129 @@
+// Package backup runs filesystem backups from the agent into Proxmox Backup Server
+// with gopbs, over a session the FallBCK server opened on the agent's behalf.
 package backup
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
+	"errors"
 	"fmt"
-	"io"
 	"log/slog"
-	"net/http"
+	"net"
 	"os"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/osshield/fallbck/pkg/db"
 	"github.com/osshield/fallbck/pkg/temporal"
+	"github.com/osshield/gopbs"
+	"github.com/osshield/gopbs/archive"
+	"github.com/osshield/gopbs/pbs"
 )
 
-const (
-	DefaultChunkSize = 4 * 1024 * 1024 // 4 MB chunk size (PBS standard chunk size target)
-)
-
-// BackupEngine executes filesystem backup operations and streams chunks to PBS Proxy
-type BackupEngine struct {
-	ProxyURL   string
-	Ticket     string
-	Datastore  string
-	Namespace  string
-	HTTPClient *http.Client
+// Options for one backup run
+type Options struct {
+	// Session carries the snapshot identity, format and paths from the server
+	Session *temporal.BackupSessionInfo
+	// Dial returns a connection on which the PBS backup session is already open
+	// (proxy.Dial through the FallBCK server)
+	Dial func(ctx context.Context, ref pbs.SnapshotRef) (net.Conn, error)
+	// Workers is the number of concurrent chunk uploads (0 = gopbs default)
+	Workers int
+	// ArchiveName names the pxar archive inside the snapshot (default: gopbs default)
+	ArchiveName string
+	// OnProgress receives upload progress per archive
+	OnProgress func(archive string, stats pbs.UploadStats, done bool)
 }
 
-// NewBackupEngine creates a new backup engine for an active session
-func NewBackupEngine(proxyURL, ticket, datastore, namespace string) *BackupEngine {
-	return &BackupEngine{
-		ProxyURL:   strings.TrimRight(proxyURL, "/"),
-		Ticket:     ticket,
-		Datastore:  datastore,
-		Namespace:  namespace,
-		HTTPClient: &http.Client{Timeout: 60 * time.Second},
+// Run executes the backup and maps the outcome to a BackupExecutionResult
+func Run(ctx context.Context, opts Options) (*temporal.BackupExecutionResult, error) {
+	s := opts.Session
+	if s == nil {
+		return nil, errors.New("backup session is required")
 	}
-}
-
-// ProgressFunc callback for periodic status heartbeats
-type ProgressFunc func(currentFile string, bytesScanned, bytesUploaded int64, chunks int)
-
-// ExecuteFilesystemBackup scans backup paths, chunks files, streams to PBS proxy, and builds snapshot manifest
-func (b *BackupEngine) ExecuteFilesystemBackup(ctx context.Context, paths, excludePatterns []string, onProgress ProgressFunc) (*temporal.BackupExecutionResult, error) {
-	startTime := time.Now()
-	slog.Info("Starting filesystem backup execution", "paths", paths, "proxy_url", b.ProxyURL)
-
-	var totalBytesScanned int64 = 0
-	var totalBytesUploaded int64 = 0
-	var chunkCount int = 0
-	uploadedDigests := make(map[string]bool)
-
-	// Buffer for chunking
-	buf := make([]byte, DefaultChunkSize)
-
-	for _, rootPath := range paths {
-		if _, err := os.Stat(rootPath); os.IsNotExist(err) {
-			slog.Warn("Backup source path does not exist, skipping", "path", rootPath)
-			continue
-		}
-
-		err := filepath.Walk(rootPath, func(path string, info os.FileInfo, err error) error {
-			if err != nil {
-				slog.Warn("Error accessing file during backup, skipping", "path", path, "error", err)
-				return nil
-			}
-
-			// Check context cancellation
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
-			}
-
-			// Exclude pattern check
-			if isExcluded(path, excludePatterns) {
-				if info.IsDir() {
-					return filepath.SkipDir
-				}
-				return nil
-			}
-
-			if info.IsDir() {
-				return nil
-			}
-
-			// Regular file processing
-			file, err := os.Open(path)
-			if err != nil {
-				slog.Warn("Failed to open file for backup, skipping", "path", path, "error", err)
-				return nil
-			}
-			defer file.Close()
-
-			fileSize := info.Size()
-			totalBytesScanned += fileSize
-
-			// Read file in chunks
-			for {
-				n, readErr := file.Read(buf)
-				if n > 0 {
-					chunkData := buf[:n]
-					h := sha256.Sum256(chunkData)
-					digest := hex.EncodeToString(h[:])
-
-					chunkCount++
-
-					// Upload chunk if not already uploaded in this session
-					if !uploadedDigests[digest] {
-						err := b.uploadChunk(ctx, digest, chunkData)
-						if err != nil {
-							slog.Warn("Chunk upload to proxy failed, retrying or continuing", "digest", digest, "error", err)
-						} else {
-							totalBytesUploaded += int64(n)
-							uploadedDigests[digest] = true
-						}
-					}
-
-					// Report progress heartbeat
-					if onProgress != nil && chunkCount%10 == 0 {
-						onProgress(path, totalBytesScanned, totalBytesUploaded, chunkCount)
-					}
-				}
-
-				if readErr != nil {
-					if readErr == io.EOF {
-						break
-					}
-					return readErr
-				}
-			}
-
-			return nil
-		})
-
-		if err != nil && err != context.Canceled {
-			slog.Error("Filesystem walk error", "error", err)
+	if opts.Dial == nil {
+		return nil, errors.New("backup session dialer is required")
+	}
+	if len(s.BackupPaths) == 0 {
+		return nil, errors.New("backup job has no paths")
+	}
+	for _, p := range s.BackupPaths {
+		if _, err := os.Lstat(p); err != nil {
+			return nil, fmt.Errorf("backup path %s: %w", p, err)
 		}
 	}
-
-	duration := time.Since(startTime)
-
-	// Calculate Deduplication Ratio
-	var dedupRatio float64 = 1.00
-	if totalBytesUploaded > 0 {
-		dedupRatio = float64(totalBytesScanned) / float64(totalBytesUploaded)
-		if dedupRatio < 1.00 {
-			dedupRatio = 1.00
-		}
-	} else if totalBytesScanned > 0 {
-		dedupRatio = float64(totalBytesScanned) / float64(DefaultChunkSize) // high dedup
+	if len(s.ExcludePaths) > 0 {
+		slog.Warn("Exclude patterns are not applied yet by the pxar archiver; backing up the full paths", "excludes", s.ExcludePaths)
 	}
 
-	hostname, _ := os.Hostname()
-	snapshotID := fmt.Sprintf("host/%s/%s", hostname, startTime.UTC().Format("2006-01-02T15:04:05Z"))
+	format := gopbs.FormatV1
+	if s.PxarFormat == db.PxarFormatV2 {
+		format = gopbs.FormatV2
+	}
+	ref := pbs.SnapshotRef{Type: s.BackupType, ID: s.BackupID}
+	if s.BackupTime > 0 {
+		ref.Time = time.Unix(s.BackupTime, 0).UTC()
+	}
 
-	slog.Info("Filesystem backup completed successfully",
-		"scanned_bytes", totalBytesScanned,
-		"uploaded_bytes", totalBytesUploaded,
-		"chunks", chunkCount,
-		"dedup_ratio", fmt.Sprintf("%.2fx", dedupRatio),
-		"duration", duration,
-	)
+	start := time.Now()
+	slog.Info("Starting PBS backup", "paths", s.BackupPaths, "format", s.PxarFormat, "backup_id", ref.ID, "datastore", s.Datastore, "namespace", s.Namespace)
+
+	result, err := gopbs.Backup(ctx, gopbs.BackupOptions{
+		Client: pbs.Config{
+			DialSession: opts.Dial,
+			Datastore:   s.Datastore,
+			Namespace:   s.Namespace,
+			Workers:     opts.Workers,
+		},
+		Archive:    archive.Options{Name: opts.ArchiveName},
+		Ref:        ref,
+		Format:     format,
+		Paths:      s.BackupPaths,
+		OnProgress: progressAdapter(opts.OnProgress),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	stats := []pbs.UploadStats{result.Archive, result.Payload, result.Catalog}
+	var size, chunks, newChunks uint64
+	for _, st := range stats {
+		size += st.Size
+		chunks += st.ChunkCount
+		newChunks += st.NewChunks
+	}
+	// gopbs reports chunk counts, not uploaded bytes: estimate transferred bytes from
+	// the share of chunks that were new to the server.
+	uploaded := size
+	if chunks > 0 {
+		uploaded = size * newChunks / chunks
+	}
+	dedup := 1.0
+	if uploaded > 0 {
+		dedup = float64(size) / float64(uploaded)
+	} else if size > 0 {
+		dedup = float64(chunks)
+	}
+	for _, w := range result.Warnings {
+		slog.Warn("Backup warning", "path", w.Path, "message", w.Err)
+	}
+
+	snapshot := fmt.Sprintf("%s/%s/%s", result.Ref.Type, result.Ref.ID, result.Ref.Time.UTC().Format("2006-01-02T15:04:05Z"))
+	duration := time.Since(start)
+	slog.Info("PBS backup completed", "snapshot", snapshot, "archive", result.ArchiveName, "size", size, "chunks", chunks, "new_chunks", newChunks, "duration", duration)
 
 	return &temporal.BackupExecutionResult{
 		Status:        db.RunStatusCompleted,
-		BytesScanned:  totalBytesScanned,
-		BytesUploaded: totalBytesUploaded,
-		DedupRatio:    dedupRatio,
-		ChunkCount:    chunkCount,
-		SnapshotID:    snapshotID,
+		BytesScanned:  int64(size),
+		BytesUploaded: int64(uploaded),
+		DedupRatio:    dedup,
+		ChunkCount:    int(chunks),
+		SnapshotID:    snapshot,
 		Duration:      duration,
 	}, nil
 }
 
-func (b *BackupEngine) uploadChunk(ctx context.Context, digest string, data []byte) error {
-	uploadURL := fmt.Sprintf("%s/api2/json/admin/datastore/%s/upload-chunk?digest=%s", b.ProxyURL, b.Datastore, digest)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, bytes.NewReader(data))
-	if err != nil {
-		return err
+func progressAdapter(fn func(string, pbs.UploadStats, bool)) func(gopbs.Progress) {
+	if fn == nil {
+		return nil
 	}
-
-	req.Header.Set("Authorization", "Bearer "+b.Ticket)
-	req.Header.Set("Content-Type", "application/octet-stream")
-
-	resp, err := b.HTTPClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusNoContent {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("proxy returned status %d: %s", resp.StatusCode, string(body))
-	}
-
-	return nil
-}
-
-func isExcluded(path string, patterns []string) bool {
-	base := filepath.Base(path)
-	for _, pattern := range patterns {
-		pattern = strings.TrimSpace(pattern)
-		if pattern == "" {
-			continue
-		}
-		if matched, _ := filepath.Match(pattern, base); matched {
-			return true
-		}
-		if matched, _ := filepath.Match(pattern, path); matched {
-			return true
-		}
-		if strings.Contains(path, pattern) {
-			return true
-		}
-	}
-	return false
+	return func(p gopbs.Progress) { fn(p.Archive, p.Stats, p.Done) }
 }

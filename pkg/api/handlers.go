@@ -340,26 +340,49 @@ func (s *ServerAPI) HandleListTokens(w http.ResponseWriter, r *http.Request) {
 
 // HandleCreateTarget registers a new backup target
 func (s *ServerAPI) HandleCreateTarget(w http.ResponseWriter, r *http.Request) {
-	var target db.BackupTarget
-	if err := json.NewDecoder(r.Body).Decode(&target); err != nil {
+	var req CreateTargetRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
-	if target.Name == "" || target.Endpoint == "" || target.Datastore == "" {
+	if req.Name == "" || req.Endpoint == "" || req.Datastore == "" {
 		s.writeError(w, http.StatusBadRequest, "Name, Endpoint, and Datastore are required")
 		return
 	}
-	if target.TargetType == "" {
-		target.TargetType = "pbs"
+	if req.AuthToken == "" {
+		s.writeError(w, http.StatusBadRequest, "A PBS API token (auth_token) is required")
+		return
+	}
+	if req.TargetType == "" {
+		req.TargetType = "pbs"
+	}
+	switch req.PxarFormat {
+	case "":
+		req.PxarFormat = db.PxarFormatV1
+	case db.PxarFormatV1, db.PxarFormatV2:
+	default:
+		s.writeError(w, http.StatusBadRequest, "pxar_format must be v1 or v2")
+		return
 	}
 
-	if err := s.DB.CreateTarget(r.Context(), &target); err != nil {
+	target := &db.BackupTarget{
+		Name:               req.Name,
+		TargetType:         req.TargetType,
+		Endpoint:           strings.TrimRight(req.Endpoint, "/"),
+		Datastore:          req.Datastore,
+		Namespace:          req.Namespace,
+		AuthTokenEncrypted: strings.TrimSpace(req.AuthToken),
+		Fingerprint:        strings.TrimSpace(req.Fingerprint),
+		TLSVerify:          req.TLSVerify,
+		PxarFormat:         req.PxarFormat,
+	}
+	if err := s.DB.CreateTarget(r.Context(), target); err != nil {
 		s.writeError(w, http.StatusInternalServerError, "Failed to create target")
 		return
 	}
 
-	s.writeJSON(w, http.StatusCreated, target)
+	s.writeJSON(w, http.StatusCreated, target.Sanitize())
 }
 
 // HandleListTargets returns all backup targets
@@ -371,6 +394,9 @@ func (s *ServerAPI) HandleListTargets(w http.ResponseWriter, r *http.Request) {
 	}
 	if targets == nil {
 		targets = []*db.BackupTarget{}
+	}
+	for _, t := range targets {
+		t.Sanitize()
 	}
 	s.writeJSON(w, http.StatusOK, targets)
 }
@@ -390,7 +416,7 @@ func (s *ServerAPI) HandleGetTarget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.writeJSON(w, http.StatusOK, target)
+	s.writeJSON(w, http.StatusOK, target.Sanitize())
 }
 
 // HandleDeleteTarget deletes a target

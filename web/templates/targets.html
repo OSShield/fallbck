@@ -22,6 +22,8 @@
           <th>Endpoint</th>
           <th>Datastore</th>
           <th>Namespace</th>
+          <th>Format</th>
+          <th>Token</th>
           <th>TLS Verify</th>
           <th style="text-align: right;">Actions</th>
         </tr>
@@ -31,10 +33,12 @@
           {{range .Targets}}
           <tr>
             <td><strong>{{.Name}}</strong></td>
-            <td><span class="badge badge-info">{{.TargetType}} (V2)</span></td>
+            <td><span class="badge badge-info">{{.TargetType}}</span></td>
             <td style="font-family: var(--font-mono); font-size: 13px;">{{.Endpoint}}</td>
             <td><code>{{.Datastore}}</code></td>
             <td>{{if .Namespace}}<code>{{.Namespace}}</code>{{else}}<span style="color: var(--text-dim);">root</span>{{end}}</td>
+            <td><span class="badge badge-info">pxar {{if .PxarFormat}}{{.PxarFormat}}{{else}}v1{{end}}</span></td>
+            <td>{{if .HasToken}}<span class="badge badge-success">set</span>{{else}}<span class="badge badge-danger">missing</span>{{end}}</td>
             <td>
               {{if .TLSVerify}}
                 <span class="badge badge-success">Verified</span>
@@ -49,7 +53,7 @@
           {{end}}
         {{else}}
           <tr>
-            <td colspan="7">
+            <td colspan="9">
               <div class="empty-state">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/></svg>
                 <p>No PBS backup targets configured.</p>
@@ -91,6 +95,13 @@
             <label>Namespace (Optional)</label>
             <input type="text" name="namespace" class="form-control" placeholder="e.g. production">
           </div>
+        </div>
+        <div class="form-group">
+          <label>Archive format</label>
+          <select name="pxar_format" class="form-control">
+            <option value="v1" selected>pxar v1 + catalog (browsable everywhere)</option>
+            <option value="v2">pxar v2 split metadata/payload (PBS 3.2+, better dedup)</option>
+          </select>
         </div>
 
         <div class="form-group">

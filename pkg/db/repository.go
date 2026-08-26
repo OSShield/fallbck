@@ -191,25 +191,28 @@ func (d *DB) CreateTarget(ctx context.Context, target *BackupTarget) error {
 	target.UpdatedAt = now
 
 	query := `
-		INSERT INTO backup_targets (id, name, target_type, endpoint, datastore, namespace, auth_token_encrypted, fingerprint, tls_verify, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		INSERT INTO backup_targets (id, name, target_type, endpoint, datastore, namespace, auth_token_encrypted, fingerprint, tls_verify, pxar_format, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		RETURNING id
 	`
+	if target.PxarFormat == "" {
+		target.PxarFormat = PxarFormatV1
+	}
 	return d.Pool.QueryRow(ctx, query,
 		target.ID, target.Name, target.TargetType, target.Endpoint, target.Datastore,
-		target.Namespace, target.AuthTokenEncrypted, target.Fingerprint, target.TLSVerify,
+		target.Namespace, target.AuthTokenEncrypted, target.Fingerprint, target.TLSVerify, target.PxarFormat,
 		target.CreatedAt, target.UpdatedAt,
 	).Scan(&target.ID)
 }
 
 func (d *DB) GetTargetByID(ctx context.Context, id uuid.UUID) (*BackupTarget, error) {
 	query := `
-		SELECT id, name, target_type, endpoint, datastore, namespace, auth_token_encrypted, fingerprint, tls_verify, created_at, updated_at
+		SELECT id, name, target_type, endpoint, datastore, namespace, auth_token_encrypted, fingerprint, tls_verify, pxar_format, created_at, updated_at
 		FROM backup_targets WHERE id = $1
 	`
 	row := d.Pool.QueryRow(ctx, query, id)
 	var t BackupTarget
-	err := row.Scan(&t.ID, &t.Name, &t.TargetType, &t.Endpoint, &t.Datastore, &t.Namespace, &t.AuthTokenEncrypted, &t.Fingerprint, &t.TLSVerify, &t.CreatedAt, &t.UpdatedAt)
+	err := row.Scan(&t.ID, &t.Name, &t.TargetType, &t.Endpoint, &t.Datastore, &t.Namespace, &t.AuthTokenEncrypted, &t.Fingerprint, &t.TLSVerify, &t.PxarFormat, &t.CreatedAt, &t.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -221,7 +224,7 @@ func (d *DB) GetTargetByID(ctx context.Context, id uuid.UUID) (*BackupTarget, er
 
 func (d *DB) ListTargets(ctx context.Context) ([]*BackupTarget, error) {
 	query := `
-		SELECT id, name, target_type, endpoint, datastore, namespace, auth_token_encrypted, fingerprint, tls_verify, created_at, updated_at
+		SELECT id, name, target_type, endpoint, datastore, namespace, auth_token_encrypted, fingerprint, tls_verify, pxar_format, created_at, updated_at
 		FROM backup_targets ORDER BY name ASC
 	`
 	rows, err := d.Pool.Query(ctx, query)
@@ -233,7 +236,7 @@ func (d *DB) ListTargets(ctx context.Context) ([]*BackupTarget, error) {
 	var targets []*BackupTarget
 	for rows.Next() {
 		var t BackupTarget
-		if err := rows.Scan(&t.ID, &t.Name, &t.TargetType, &t.Endpoint, &t.Datastore, &t.Namespace, &t.AuthTokenEncrypted, &t.Fingerprint, &t.TLSVerify, &t.CreatedAt, &t.UpdatedAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.Name, &t.TargetType, &t.Endpoint, &t.Datastore, &t.Namespace, &t.AuthTokenEncrypted, &t.Fingerprint, &t.TLSVerify, &t.PxarFormat, &t.CreatedAt, &t.UpdatedAt); err != nil {
 			return nil, err
 		}
 		targets = append(targets, &t)

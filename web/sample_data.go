@@ -73,6 +73,8 @@ func getSampleTargets() []*db.BackupTarget {
 			Endpoint:    "https://pbs.homelab.local:8007",
 			Datastore:   "backup-store-nvme",
 			Namespace:   "production",
+			PxarFormat:  db.PxarFormatV2,
+			HasToken:    true,
 			Fingerprint: "SHA256:4a:2b:8c:9d:1e:3f:5a:6b:7c:8d:9e:0f:1a:2b:3c:4d:5e:6f:7a:8b:9c:0d:1e:2f:3a:4b:5c:6d:7e:8f:9a:0b",
 			TLSVerify:   true,
 			CreatedAt:   now.Add(-10 * 24 * time.Hour),
