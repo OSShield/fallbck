@@ -95,10 +95,10 @@ nfpms:
     bindir: /usr/local/bin
 
 
-release:
-  github:
-    owner: osshield
-    name: fallbck
+# release:
+#   github:
+#     owner: osshield
+#     name: fallbck
 
 uploads:
   - name: "debpkg"
@@ -110,7 +110,7 @@ uploads:
       - deb
     mode: archive
     username: "linux_push"
-    target: https://deb.pkg.lv/upload?repo=main
+    target: https://deb.pkg.lv/upload?dist=main&component=all
     custom_artifact_name: true
 
   - name: "apkpkg"
@@ -122,7 +122,7 @@ uploads:
       - apk
     mode: archive
     username: "linux_push"
-    target: https://alpine.pkg.lv/upload?distribution=all&component=main
+    target: https://alpine.pkg.lv/upload?repo=all
     custom_artifact_name: true
 
   - name: "rpmpkg"
