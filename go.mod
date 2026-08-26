@@ -11,7 +11,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.10.0
-	github.com/osshield/gopbs v0.1.2
+	github.com/osshield/gopbs v0.1.4
 	github.com/stretchr/testify v1.12.1
 	github.com/temporalio/ui-server/v2 v2.50.1
 	go.temporal.io/api v1.62.8
@@ -213,8 +213,3 @@ require (
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.0 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
-
-// TEMPORARY: gopbs needs pbs.Config.DialSession (branch fallbck-session-dialer in the
-// sibling clone, pending a pull request). Remove this replace and bump the require to the
-// tag that includes it once merged; Docker/CI builds cannot resolve the sibling path.
-replace github.com/osshield/gopbs => ../gopbs-fallbck
