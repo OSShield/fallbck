@@ -2,7 +2,7 @@
 # fallbck-ctl: admin CLI. Authenticate with FALLBCK_API_KEY (created in the Web UI).
 
 # ---- Build stage -------------------------------------------------------------
-FROM golang:1.26-alpine AS builder
+FROM golang:1-alpine AS builder
 
 WORKDIR /src
 
