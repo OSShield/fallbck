@@ -1,7 +1,7 @@
 version: 2
 
 builds:
-  - id: server
+  - id: fallbck-server
     main: ./cmd/fallbck-server
     env:
       - CGO_ENABLED=0
@@ -12,7 +12,7 @@ builds:
       # - arm64
     binary: fallbck-server
 
-  - id: agent
+  - id: fallbck-agent
     main: ./cmd/fallbck-agent
     env:
       - CGO_ENABLED=0
@@ -24,9 +24,22 @@ builds:
     binary: fallbck-agent
 
 archives:
-  - format: tar.gz
+  - id: fallbck-server
+    ids:
+      - fallbck-server
     name_template: >-
-      {{ .ProjectName }}_
+      {{ .ProjectName }}_server_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+  
+  - id: fallbck-agent
+    ids:
+      - fallbck-agent
+    name_template: >-
+      {{ .ProjectName }}_agent_
       {{- title .Os }}_
       {{- if eq .Arch "amd64" }}x86_64
       {{- else if eq .Arch "386" }}i386
@@ -42,6 +55,8 @@ changelog:
 
 nfpms:
   - id: fallbck-server
+    ids:
+      - fallbck-server
     package_name: "fallbck-server"
     description: "fallbck-server - Backup server"
     vendor: "clysec"
@@ -60,6 +75,8 @@ nfpms:
     bindir: /usr/local/bin
   
   - id: fallbck-agent
+    ids:
+      - fallbck-agent
     package_name: "fallbck-agent"
     description: "fallbck-agent - Backup agent"
     vendor: "clysec"
@@ -85,6 +102,9 @@ release:
 
 uploads:
   - name: "debpkg"
+    ids:
+      - fallbck-server
+      - fallbck-agent
     method: "PUT"
     exts:
       - deb
@@ -94,6 +114,9 @@ uploads:
     custom_artifact_name: true
 
   - name: "apkpkg"
+    ids:
+      - fallbck-server
+      - fallbck-agent
     method: "PUT"
     exts:
       - apk
@@ -103,6 +126,9 @@ uploads:
     custom_artifact_name: true
 
   - name: "rpmpkg"
+    ids:
+      - fallbck-server
+      - fallbck-agent
     method: "PUT"
     exts:
       - rpm
