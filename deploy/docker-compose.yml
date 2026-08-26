@@ -46,6 +46,8 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile.server
+      args:
+        FALLBCK_VERSION: ${FALLBCK_VERSION:-0.3.0}
     container_name: fallbck-server
     restart: unless-stopped
     depends_on:
