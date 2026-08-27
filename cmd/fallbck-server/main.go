@@ -42,9 +42,10 @@ func main() {
 	devFlag := flag.Bool("dev", false, "Development mode: permits auth.insecure_disable and UI preview without Postgres/Temporal")
 	flag.Parse()
 
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logLevel := config.LogLevel()
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel}))
 	slog.SetDefault(logger)
-	slog.Info("Starting FallBCK Central Server", "version", ServerVersion)
+	slog.Info("Starting FallBCK Central Server", "version", ServerVersion, "log_level", logLevel.String())
 
 	cfg, err := config.LoadServerConfig(*configPath)
 	if err != nil {
@@ -106,7 +107,12 @@ func main() {
 				ClusterName:   cfg.Temporal.Embedded.ClusterName,
 				DataDir:       cfg.DataDir,
 			}
-			temporalLogger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelWarn}))
+			// Temporal is chatty: warnings only unless debugging
+			temporalLevel := slog.LevelWarn
+			if logLevel <= slog.LevelDebug {
+				temporalLevel = slog.LevelInfo
+			}
+			temporalLogger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: temporalLevel}))
 			if err := embedded.BootstrapSchema(ctx, embCfg, temporalLogger); err != nil {
 				slog.Error("Failed to bootstrap embedded Temporal schema", "error", err)
 				os.Exit(1)

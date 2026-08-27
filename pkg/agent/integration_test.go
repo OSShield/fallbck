@@ -54,7 +54,7 @@ func (tokenCreds) RequireTransportSecurity() bool { return false }
 // a real pxar archive through it with gopbs.
 func TestEndToEndBackupFlow(t *testing.T) {
 	fake := pbstest.New(t)
-	fake.ExpectAuthorization = "PBSAPIToken=backup@pbs!fallbck=secret"
+	fake.ExpectAuthorization = "PBSAPIToken=backup@pbs!fallbck:secret"
 
 	tm := auth.NewTokenManager("secret-jwt-key-32-bytes-long-1234")
 	agentID, targetID, jobID := uuid.New(), uuid.New(), uuid.New()

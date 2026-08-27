@@ -154,6 +154,7 @@ func (t *BackupTunnel) Session(ss grpc.ServerStream) error {
 		return err
 	}
 
+	t.logger.Debug("PBS backup session established, piping bytes", "agent_id", agent.AgentID, "backup_id", params.BackupID)
 	err = pipe(ss, pbsConn)
 	if err != nil {
 		t.logger.Warn("PBS backup session ended with error", "agent_id", agent.AgentID, "error", err)

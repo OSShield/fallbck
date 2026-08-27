@@ -41,7 +41,7 @@ The primary backup target is Proxmox Backup Server, driven by the Proxmox Backup
 3. The server validates both, loads the target, connects to PBS with the target's **API token** (TLS chain verification or certificate fingerprint pin), performs the `proxmox-backup-protocol-v1` upgrade for exactly the snapshot named in the ticket, and pipes bytes between PBS and the agent.
 4. The agent hands that stream to gopbs (`pbs.Config.DialSession`), which chunks, deduplicates and uploads the pxar archive, catalog and manifest, then finishes the snapshot.
 
-Agents never see PBS credentials or choose the datastore/namespace/snapshot; the server does not parse the backup protocol, it only transports it. Prune runs server-side through the PBS REST API. Restore is done with PBS's own tools (GUI / `proxmox-backup-client`) since the snapshots are standard pxar.
+Agents never see PBS credentials or choose the datastore/namespace/snapshot; the server does not parse the backup protocol, it only transports it. Per job, an administrator can enable `direct_pbs`: the agent then obtains the target's endpoint, fingerprint and API token for that run (`GET /api/v1/agents/pbs-credentials`, agent token + backup ticket, only honoured for jobs with the flag) and connects to PBS directly with gopbs. Prune runs server-side through the PBS REST API. Restore is done with PBS's own tools (GUI / `proxmox-backup-client`) since the snapshots are standard pxar.
 
 ## Code map
 | Package | Purpose |

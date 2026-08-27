@@ -219,7 +219,7 @@ func (d *DB) GetTargetByID(ctx context.Context, id uuid.UUID) (*BackupTarget, er
 		}
 		return nil, err
 	}
-	return &t, nil
+	return t.Sanitize(), nil
 }
 
 func (d *DB) ListTargets(ctx context.Context) ([]*BackupTarget, error) {
@@ -239,7 +239,7 @@ func (d *DB) ListTargets(ctx context.Context) ([]*BackupTarget, error) {
 		if err := rows.Scan(&t.ID, &t.Name, &t.TargetType, &t.Endpoint, &t.Datastore, &t.Namespace, &t.AuthTokenEncrypted, &t.Fingerprint, &t.TLSVerify, &t.PxarFormat, &t.CreatedAt, &t.UpdatedAt); err != nil {
 			return nil, err
 		}
-		targets = append(targets, &t)
+		targets = append(targets, t.Sanitize())
 	}
 	return targets, rows.Err()
 }
@@ -276,13 +276,13 @@ func (d *DB) CreateJob(ctx context.Context, job *BackupJob) error {
 	}
 
 	query := `
-		INSERT INTO backup_jobs (id, name, agent_id, target_id, schedule_cron, backup_paths, exclude_paths, retention_policy, enabled, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		INSERT INTO backup_jobs (id, name, agent_id, target_id, schedule_cron, backup_paths, exclude_paths, retention_policy, enabled, direct_pbs, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		RETURNING id
 	`
 	return d.Pool.QueryRow(ctx, query,
 		job.ID, job.Name, job.AgentID, job.TargetID, job.ScheduleCron,
-		backupPathsJSON, excludePathsJSON, retentionJSON, job.Enabled,
+		backupPathsJSON, excludePathsJSON, retentionJSON, job.Enabled, job.DirectPBS,
 		job.CreatedAt, job.UpdatedAt,
 	).Scan(&job.ID)
 }
@@ -290,7 +290,7 @@ func (d *DB) CreateJob(ctx context.Context, job *BackupJob) error {
 func (d *DB) GetJobByID(ctx context.Context, id uuid.UUID) (*BackupJob, error) {
 	query := `
 		SELECT j.id, j.name, j.agent_id, j.target_id, j.schedule_cron, j.backup_paths, j.exclude_paths,
-		       j.retention_policy, j.enabled, j.created_at, j.updated_at,
+		       j.retention_policy, j.enabled, j.direct_pbs, j.created_at, j.updated_at,
 		       a.hostname as agent_name, t.name as target_name
 		FROM backup_jobs j
 		JOIN agents a ON j.agent_id = a.id
@@ -303,7 +303,7 @@ func (d *DB) GetJobByID(ctx context.Context, id uuid.UUID) (*BackupJob, error) {
 	err := row.Scan(
 		&j.ID, &j.Name, &j.AgentID, &j.TargetID, &j.ScheduleCron,
 		&backupPathsRaw, &excludePathsRaw, &retentionRaw,
-		&j.Enabled, &j.CreatedAt, &j.UpdatedAt,
+		&j.Enabled, &j.DirectPBS, &j.CreatedAt, &j.UpdatedAt,
 		&j.AgentName, &j.TargetName,
 	)
 	if err != nil {
@@ -323,7 +323,7 @@ func (d *DB) GetJobByID(ctx context.Context, id uuid.UUID) (*BackupJob, error) {
 func (d *DB) ListJobs(ctx context.Context) ([]*BackupJob, error) {
 	query := `
 		SELECT j.id, j.name, j.agent_id, j.target_id, j.schedule_cron, j.backup_paths, j.exclude_paths,
-		       j.retention_policy, j.enabled, j.created_at, j.updated_at,
+		       j.retention_policy, j.enabled, j.direct_pbs, j.created_at, j.updated_at,
 		       a.hostname as agent_name, t.name as target_name
 		FROM backup_jobs j
 		JOIN agents a ON j.agent_id = a.id
@@ -343,7 +343,7 @@ func (d *DB) ListJobs(ctx context.Context) ([]*BackupJob, error) {
 		if err := rows.Scan(
 			&j.ID, &j.Name, &j.AgentID, &j.TargetID, &j.ScheduleCron,
 			&backupPathsRaw, &excludePathsRaw, &retentionRaw,
-			&j.Enabled, &j.CreatedAt, &j.UpdatedAt,
+			&j.Enabled, &j.DirectPBS, &j.CreatedAt, &j.UpdatedAt,
 			&j.AgentName, &j.TargetName,
 		); err != nil {
 			return nil, err

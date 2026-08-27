@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -21,6 +22,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/osshield/fallbck/pkg/agent/backup"
 	"github.com/osshield/fallbck/pkg/agent/enrollment"
 	"github.com/osshield/fallbck/pkg/api"
 	"github.com/osshield/fallbck/pkg/config"
@@ -49,7 +51,7 @@ func main() {
 	runCmd := flag.NewFlagSet("run", flag.ExitOnError)
 	runConfig := runCmd.String("config", "", "Path to agent YAML configuration file")
 
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: config.LogLevel()}))
 	slog.SetDefault(logger)
 	enrollment.AgentVersion = AgentVersion
 
@@ -301,6 +303,7 @@ func runAgent(cfg *config.AgentConfig, configPath string) {
 	})
 	agentActs := activities.NewAgentActivities()
 	agentActs.Tunnel = tunnelConn
+	agentActs.Credentials = pbsCredentialsFetcher(cfg, store)
 	w.RegisterActivity(agentActs)
 
 	if err := w.Start(); err != nil {
@@ -321,6 +324,46 @@ func runAgent(cfg *config.AgentConfig, configPath string) {
 	slog.Info("Shutting down FallBCK Agent...")
 }
 
+// serverHTTPClient builds the HTTP client for the FallBCK server (trusting a private CA if configured)
+func serverHTTPClient(cfg *config.AgentConfig) *http.Client {
+	httpClient := &http.Client{Timeout: 15 * time.Second}
+	if strings.HasPrefix(strings.ToLower(cfg.ServerURL), "https://") {
+		if _, connOpts, err := connectionOptions(cfg); err == nil && connOpts.TLS != nil {
+			httpClient.Transport = &http.Transport{TLSClientConfig: connOpts.TLS}
+		}
+	}
+	return httpClient
+}
+
+// pbsCredentialsFetcher retrieves PBS connection details for direct-mode jobs
+func pbsCredentialsFetcher(cfg *config.AgentConfig, store *tokenStore) func(ctx context.Context, ticket string) (*backup.DirectOptions, error) {
+	httpClient := serverHTTPClient(cfg)
+	base := strings.TrimRight(cfg.ServerURL, "/")
+	return func(ctx context.Context, ticket string) (*backup.DirectOptions, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/api/v1/agents/pbs-credentials", nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+store.Token())
+		req.Header.Set(api.BackupTicketHeader, ticket)
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("fetching PBS credentials: %w", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+			return nil, fmt.Errorf("server refused PBS credentials: %s: %s", resp.Status, strings.TrimSpace(string(body)))
+		}
+		var creds api.PBSCredentials
+		if err := json.NewDecoder(resp.Body).Decode(&creds); err != nil {
+			return nil, fmt.Errorf("decoding PBS credentials: %w", err)
+		}
+		slog.Debug("Received PBS credentials for direct backup", "endpoint", creds.Endpoint, "datastore", creds.Datastore)
+		return &backup.DirectOptions{Endpoint: creds.Endpoint, Fingerprint: creds.Fingerprint, TLSVerify: creds.TLSVerify, APIToken: creds.APIToken}, nil
+	}
+}
+
 func startHeartbeat(ctx context.Context, cfg *config.AgentConfig, store *tokenStore) {
 	ticker := time.NewTicker(heartbeatInterval)
 	defer ticker.Stop()
@@ -331,12 +374,7 @@ func startHeartbeat(ctx context.Context, cfg *config.AgentConfig, store *tokenSt
 		return
 	}
 
-	httpClient := &http.Client{Timeout: 10 * time.Second}
-	if strings.HasPrefix(strings.ToLower(cfg.ServerURL), "https://") {
-		if _, connOpts, err := connectionOptions(cfg); err == nil && connOpts.TLS != nil {
-			httpClient.Transport = &http.Transport{TLSClientConfig: connOpts.TLS}
-		}
-	}
+	httpClient := serverHTTPClient(cfg)
 	base := strings.TrimRight(cfg.ServerURL, "/")
 
 	do := func(path string, payload any) (*http.Response, error) {

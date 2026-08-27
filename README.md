@@ -35,7 +35,7 @@ fallbck-agent enroll --server https://backup.example.com --token <enrollment tok
 fallbck-agent run
 ```
 
-The agent needs exactly one endpoint: the server's public URL. It receives a bearer token at enrollment, polls its own Temporal task queue through the server's gateway, and uploads through the server's PBS proxy.
+The agent needs exactly one endpoint: the server's public URL. It receives a bearer token at enrollment, polls its own Temporal task queue through the server's gateway, and streams backups into PBS through a session the server opens on its behalf (the agent never holds PBS credentials). A job can instead be set to **direct PBS access** (server-side job option `direct_pbs`): the agent then fetches the target's connection details and API token for that run and talks to PBS itself — useful when the agent has a better path to PBS than the server does.
 
 ## CLI
 
@@ -46,6 +46,12 @@ export FALLBCK_SERVER_URL=https://backup.example.com FALLBCK_API_KEY=fbk_...
 fallbck-ctl token create --name web-01
 fallbck-ctl agents list
 ```
+
+## Troubleshooting
+
+Set `DEBUG=true` (or `FALLBCK_LOG_LEVEL=debug`) on the server or agent for verbose logs. On the server this shows every PBS session handshake — the upgrade request (datastore, snapshot, token id without the secret) and PBS's answer — plus the embedded Temporal's info logs. On the agent it shows tunnel setup and credential fetches.
+
+PBS API tokens must be entered as `user@realm!tokenid:secret` (the `=` spelling from the PBS token dialog is accepted and normalised); the token needs `Datastore.Backup` on the datastore/namespace. A `401 authentication failed` from PBS means the token or secret is wrong; `403` means missing privileges.
 
 ## Linux packages
 

@@ -94,7 +94,10 @@ type BackupJob struct {
 	ExcludePaths    []string        `json:"exclude_paths" db:"exclude_paths"`
 	RetentionPolicy RetentionPolicy `json:"retention_policy" db:"retention_policy"`
 	Enabled         bool            `json:"enabled" db:"enabled"`
-	CreatedAt       time.Time       `json:"created_at" db:"created_at"`
+	// DirectPBS makes the agent talk to PBS itself (credentials handed out per run)
+	// instead of through the server-side tunnel. Server-side setting only.
+	DirectPBS bool      `json:"direct_pbs" db:"direct_pbs"`
+	CreatedAt time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt       time.Time       `json:"updated_at" db:"updated_at"`
 
 	// Joined fields for display

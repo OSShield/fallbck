@@ -130,6 +130,7 @@ func (s *ServerActivities) PrepareBackupSession(ctx context.Context, jobID uuid.
 		BackupID:        claims.BackupID,
 		BackupTime:      claims.BackupTime,
 		PxarFormat:      target.PxarFormat,
+		DirectPBS:       job.DirectPBS,
 		BackupPaths:     job.BackupPaths,
 		ExcludePaths:    job.ExcludePaths,
 		RetentionPolicy: job.RetentionPolicy,

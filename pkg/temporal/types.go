@@ -26,7 +26,10 @@ type BackupSessionInfo struct {
 	BackupID   string `json:"backup_id"`
 	BackupTime int64  `json:"backup_time"`
 	// PxarFormat is "v1" or "v2" (target setting)
-	PxarFormat      string             `json:"pxar_format"`
+	PxarFormat string `json:"pxar_format"`
+	// DirectPBS: the agent fetches PBS credentials with its ticket and connects to PBS
+	// itself instead of through the server tunnel (job setting)
+	DirectPBS       bool               `json:"direct_pbs"`
 	BackupPaths     []string           `json:"backup_paths"`
 	ExcludePaths    []string           `json:"exclude_paths"`
 	RetentionPolicy db.RetentionPolicy `json:"retention_policy"`

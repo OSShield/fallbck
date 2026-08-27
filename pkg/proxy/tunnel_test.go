@@ -62,7 +62,7 @@ type harness struct {
 func newHarness(t *testing.T, mutate func(*db.BackupTarget)) *harness {
 	t.Helper()
 	fake := pbstest.New(t)
-	fake.ExpectAuthorization = "PBSAPIToken=root@pam!fallbck=s3cret"
+	fake.ExpectAuthorization = "PBSAPIToken=root@pam!fallbck:s3cret" // canonical form; the target stores the "=" spelling
 
 	tm := auth.NewTokenManager("test-secret-key-must-be-very-long-123456")
 	agentID, targetID := uuid.New(), uuid.New()
@@ -160,7 +160,7 @@ func TestTunnelCarriesBackupSession(t *testing.T) {
 	if q.Get("store") != "store1" || q.Get("ns") != "ns1" || q.Get("backup-id") != "node6" || q.Get("backup-type") != "host" || q.Get("backup-time") != "1700000000" {
 		t.Errorf("unexpected upgrade query %q", ups[0].URL.RawQuery)
 	}
-	if ups[0].Header.Get("Authorization") != "PBSAPIToken=root@pam!fallbck=s3cret" {
+	if ups[0].Header.Get("Authorization") != "PBSAPIToken=root@pam!fallbck:s3cret" {
 		t.Errorf("token not injected: %q", ups[0].Header.Get("Authorization"))
 	}
 	if _, ok := h.pbs.Blobs()["index.json.blob"]; !ok {

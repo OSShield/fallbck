@@ -114,12 +114,7 @@ func (c *Client) PruneDatastore(ctx context.Context, datastore, namespace, backu
 
 func (c *Client) setAuth(req *http.Request) {
 	if c.APIToken != "" {
-		// PBS format: Authorization: PBSAPIToken=USER@REALM!TOKENID=SECRET
-		if !strings.HasPrefix(c.APIToken, "PBSAPIToken=") {
-			req.Header.Set("Authorization", "PBSAPIToken="+c.APIToken)
-		} else {
-			req.Header.Set("Authorization", c.APIToken)
-		}
+		req.Header.Set("Authorization", AuthorizationHeader(c.APIToken))
 	}
 }
 
