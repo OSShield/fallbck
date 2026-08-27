@@ -11,7 +11,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.10.0
-	github.com/osshield/gopbs v0.1.4
+	github.com/osshield/gopbs v0.1.5
 	github.com/stretchr/testify v1.12.1
 	github.com/temporalio/ui-server/v2 v2.50.1
 	go.temporal.io/api v1.62.8

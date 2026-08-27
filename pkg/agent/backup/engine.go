@@ -77,7 +77,8 @@ func Run(ctx context.Context, opts Options) (*temporal.BackupExecutionResult, er
 		format = gopbs.FormatV2
 	}
 	// A single directory is the archive itself and gopbs names it after the directory;
-	// several paths live under a virtual root that needs a name ("root.pxar" by convention).
+	// several paths live under a virtual root that needs a name ("root.pxar" by convention),
+	// each entry named by ArchiveEntryNames.
 	archiveName := opts.ArchiveName
 	if archiveName == "" && len(s.BackupPaths) > 1 {
 		archiveName = DefaultArchiveName
@@ -111,7 +112,7 @@ func Run(ctx context.Context, opts Options) (*temporal.BackupExecutionResult, er
 		slog.Debug("Connecting to PBS through the server tunnel")
 	}
 
-	result, err := gopbs.Backup(ctx, gopbs.BackupOptions{
+	result, err := runBackup(ctx, gopbs.BackupOptions{
 		Client:     clientCfg,
 		Archive:    archive.Options{Name: archiveName},
 		Ref:        ref,

@@ -9,10 +9,9 @@ import (
 )
 
 // ValidateBackupPaths normalises a job's backup paths and rejects combinations that
-// cannot form one archive: every path must be absolute, exact duplicates are dropped,
-// no path may lie inside another (its data would be archived twice), and — because
-// several paths are placed under a virtual root named by their basename — no two paths
-// may share a basename.
+// cannot form one archive: every path must be absolute, exact duplicates are dropped and
+// no path may lie inside another (its data would be archived twice). Paths sharing a
+// basename are fine; the agent names them after their full path in the archive.
 func ValidateBackupPaths(paths []string) ([]string, error) {
 	seen := map[string]bool{}
 	var cleaned []string
@@ -47,13 +46,5 @@ func ValidateBackupPaths(paths []string) ([]string, error) {
 		}
 	}
 
-	byName := map[string]string{}
-	for _, p := range cleaned {
-		name := filepath.Base(p)
-		if other, dup := byName[name]; dup {
-			return nil, fmt.Errorf("backup paths %s and %s would both be stored as %q at the top of the archive; choose paths with distinct names", other, p, name)
-		}
-		byName[name] = p
-	}
 	return cleaned, nil
 }

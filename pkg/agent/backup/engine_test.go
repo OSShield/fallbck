@@ -151,3 +151,32 @@ func TestRunMultiplePathsGetsDefaultArchiveName(t *testing.T) {
 		t.Errorf("expected root.pxar.didx for a multi-root job, got %v", fake.Indexes())
 	}
 }
+
+func TestRunDuplicateBasenames(t *testing.T) {
+	fake := pbstest.New(t)
+	base := t.TempDir()
+	for _, d := range []string{"etc/mydir", "var/lib/mydir"} {
+		if err := os.MkdirAll(filepath.Join(base, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(base, d, "file.txt"), []byte(d), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	session := &temporal.BackupSessionInfo{
+		Datastore: "store1", BackupType: "host", BackupID: "node6", BackupTime: time.Now().Unix(),
+		PxarFormat:  db.PxarFormatV1,
+		BackupPaths: []string{filepath.Join(base, "etc/mydir"), filepath.Join(base, "var/lib/mydir")},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	if _, err := Run(ctx, Options{Session: session, Dial: directDial(fake, session)}); err != nil {
+		t.Fatalf("Run with duplicate basenames: %v", err)
+	}
+	if fake.Finished() != 1 {
+		t.Error("backup did not finish")
+	}
+	if _, ok := fake.Indexes()["root.pxar.didx"]; !ok {
+		t.Errorf("expected root.pxar.didx, got %v", fake.Indexes())
+	}
+}
