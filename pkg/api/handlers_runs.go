@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -75,4 +76,58 @@ func (s *ServerAPI) HandleCancelRun(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info("Backup run cancellation requested", "run_id", run.ID, "workflow_id", run.WorkflowID, "status", status)
 	s.writeJSON(w, http.StatusOK, map[string]string{"status": string(status), "run_id": run.ID.String()})
+}
+
+// HandleUpdateJob replaces a job's configuration (name, agent, target, paths, schedule,
+// retention, enabled, direct_pbs). The job ID in the path wins over any in the body.
+func (s *ServerAPI) HandleUpdateJob(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "Invalid job ID")
+		return
+	}
+	existing, err := s.DB.GetJobByID(r.Context(), id)
+	if err != nil {
+		s.writeError(w, http.StatusNotFound, "Job not found")
+		return
+	}
+
+	var job db.BackupJob
+	if err := json.NewDecoder(r.Body).Decode(&job); err != nil {
+		s.writeError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	if job.Name == "" || job.AgentID == uuid.Nil || job.TargetID == uuid.Nil {
+		s.writeError(w, http.StatusBadRequest, "Name, AgentID, and TargetID are required")
+		return
+	}
+	if len(job.BackupPaths) == 0 {
+		s.writeError(w, http.StatusBadRequest, "At least one backup path is required")
+		return
+	}
+	if _, err := s.DB.GetAgentByID(r.Context(), job.AgentID); err != nil {
+		s.writeError(w, http.StatusBadRequest, "Agent not found")
+		return
+	}
+	if _, err := s.DB.GetTargetByID(r.Context(), job.TargetID); err != nil {
+		s.writeError(w, http.StatusBadRequest, "Backup target not found")
+		return
+	}
+
+	job.ID = existing.ID
+	job.CreatedAt = existing.CreatedAt
+	if err := s.DB.UpdateJob(r.Context(), &job); err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			s.writeError(w, http.StatusNotFound, "Job not found")
+			return
+		}
+		s.writeError(w, http.StatusInternalServerError, "Failed to update job")
+		return
+	}
+	updated, err := s.DB.GetJobByID(r.Context(), job.ID)
+	if err != nil {
+		s.writeJSON(w, http.StatusOK, job)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, updated)
 }

@@ -2,7 +2,9 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -50,6 +52,37 @@ func (d *DB) SetRunStatus(ctx context.Context, id uuid.UUID, status RunStatus, m
 	tag, err := d.Pool.Exec(ctx,
 		`UPDATE backup_runs SET status = $2, error_message = $3, end_time = COALESCE($4, end_time) WHERE id = $1`,
 		id, status, message, endTime)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// UpdateJob replaces the editable fields of a job
+func (d *DB) UpdateJob(ctx context.Context, job *BackupJob) error {
+	backupPathsJSON, err := json.Marshal(job.BackupPaths)
+	if err != nil {
+		return fmt.Errorf("failed to serialize backup paths: %w", err)
+	}
+	excludePathsJSON, err := json.Marshal(job.ExcludePaths)
+	if err != nil {
+		return fmt.Errorf("failed to serialize exclude paths: %w", err)
+	}
+	retentionJSON, err := json.Marshal(job.RetentionPolicy)
+	if err != nil {
+		return fmt.Errorf("failed to serialize retention policy: %w", err)
+	}
+	job.UpdatedAt = time.Now().UTC()
+	tag, err := d.Pool.Exec(ctx, `
+		UPDATE backup_jobs
+		SET name = $2, agent_id = $3, target_id = $4, schedule_cron = $5, backup_paths = $6,
+		    exclude_paths = $7, retention_policy = $8, enabled = $9, direct_pbs = $10, updated_at = $11
+		WHERE id = $1`,
+		job.ID, job.Name, job.AgentID, job.TargetID, job.ScheduleCron, backupPathsJSON,
+		excludePathsJSON, retentionJSON, job.Enabled, job.DirectPBS, job.UpdatedAt)
 	if err != nil {
 		return err
 	}

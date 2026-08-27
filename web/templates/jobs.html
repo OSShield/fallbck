@@ -3,7 +3,7 @@
   <div>
     <p style="color: var(--text-muted); font-size: 14px;">Define backup plans, source paths, schedules, and retention policies.</p>
   </div>
-  <button class="btn btn-primary" onclick="openModal('modal-add-job')">
+  <button class="btn btn-primary" onclick="newJob()">
     <svg style="width: 16px; height: 16px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
     Create Backup Job
   </button>
@@ -54,6 +54,7 @@
             </td>
             <td style="text-align: right; display: flex; justify-content: flex-end; gap: 8px;">
               <button class="btn btn-primary btn-sm" onclick="triggerJobRun('{{.ID}}')">Run Now</button>
+              <button class="btn btn-secondary btn-sm" onclick="editJob('{{.ID}}')">Edit</button>
               <button class="btn btn-secondary btn-sm" style="color: var(--danger-text);" onclick="deleteResource('jobs', '{{.ID}}')">Delete</button>
             </td>
           </tr>
@@ -64,7 +65,7 @@
               <div class="empty-state">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
                 <p>No backup jobs defined yet.</p>
-                <button class="btn btn-primary btn-sm" onclick="openModal('modal-add-job')">Create your first Job</button>
+                <button class="btn btn-primary btn-sm" onclick="newJob()">Create your first Job</button>
               </div>
             </td>
           </tr>
@@ -78,10 +79,10 @@
 <div id="modal-add-job" class="modal-backdrop">
   <div class="modal-content">
     <div class="modal-header">
-      <h3>Create Backup Job</h3>
+      <h3 id="job-modal-title">Create Backup Job</h3>
       <button class="close-btn" onclick="closeModal('modal-add-job')">&times;</button>
     </div>
-    <form onsubmit="submitJobForm(event)">
+    <form id="job-form" onsubmit="submitJobForm(event)" data-job-id="">
       <div class="modal-body">
         <div class="form-group">
           <label>Job Name</label>
@@ -158,7 +159,7 @@
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" onclick="closeModal('modal-add-job')">Cancel</button>
-        <button type="submit" class="btn btn-primary">Create Job</button>
+        <button type="submit" id="job-submit" class="btn btn-primary">Create Job</button>
       </div>
     </form>
   </div>
