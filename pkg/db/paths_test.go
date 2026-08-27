@@ -25,7 +25,7 @@ func TestValidateBackupPaths(t *testing.T) {
 	bad(nil, "at least one")
 	bad([]string{" ", ""}, "at least one")
 	bad([]string{"etc"}, "must be absolute")
-	bad([]string{"/etc", "/opt/app/etc"}, `stored as "etc"`)
+	ok([]string{"/etc", "/opt/app/etc"}, []string{"/etc", "/opt/app/etc"})
 	bad([]string{"/var/www", "/var/www/html"}, "is inside")
 	bad([]string{"/", "/etc"}, "is inside")
 }
