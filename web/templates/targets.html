@@ -105,8 +105,8 @@
         </div>
 
         <div class="form-group">
-          <label>PBS API Token</label>
-          <input type="password" name="auth_token" class="form-control" placeholder="PBSAPIToken=user@pbs!fallbck=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" required>
+          <label>PBS API Token (user@realm!tokenid:secret — needs Datastore.Backup on the datastore)</label>
+          <input type="password" name="auth_token" class="form-control" placeholder="user@pbs!fallbck:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" required>
           <span class="form-text">Encrypted on the server. Agents never receive this token directly.</span>
         </div>
 

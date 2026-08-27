@@ -69,6 +69,8 @@ services:
       - FALLBCK_OIDC_ISSUER=${FALLBCK_OIDC_ISSUER:-}
       - FALLBCK_OIDC_CLIENT_ID=${FALLBCK_OIDC_CLIENT_ID:-}
       - FALLBCK_OIDC_CLIENT_SECRET=${FALLBCK_OIDC_CLIENT_SECRET:-}
+      # DEBUG=true for verbose logs (PBS session handshakes, Temporal info logs)
+      - DEBUG=${DEBUG:-false}
     ports:
       - "8080:8080"
     volumes:
@@ -114,6 +116,7 @@ services:
       - FALLBCK_AGENT_SERVER_URL=http://server:8080
       - FALLBCK_AGENT_ENROLLMENT_KEY=${FALLBCK_AGENT_ENROLLMENT_KEY:-}
       - FALLBCK_AGENT_DATA_DIR=/var/lib/fallbck/agent
+      - DEBUG=${DEBUG:-false}
     volumes:
       - agent_data:/var/lib/fallbck/agent
       - sample_backup_data:/backup-data

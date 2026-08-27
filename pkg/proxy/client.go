@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"sync"
 	"time"
@@ -24,6 +25,7 @@ func Dial(ctx context.Context, cc grpc.ClientConnInterface, ticket string) (net.
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	ctx = metadata.AppendToOutgoingContext(ctx, TicketMetadataKey, ticket)
+	slog.Debug("Opening PBS backup tunnel", "method", MethodSession)
 	stream, err := cc.NewStream(ctx, &SessionStreamDesc, MethodSession)
 	if err != nil {
 		cancel()
@@ -45,6 +47,7 @@ func Dial(ctx context.Context, cc grpc.ClientConnInterface, ticket string) (net.
 		}
 		return nil, fmt.Errorf("backup tunnel rejected: %w", err)
 	}
+	slog.Debug("PBS backup tunnel established")
 	return &streamConn{stream: stream, cancel: cancel}, nil
 }
 

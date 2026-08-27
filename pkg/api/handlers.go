@@ -14,6 +14,7 @@ import (
 	"github.com/osshield/fallbck/pkg/auth"
 	"github.com/osshield/fallbck/pkg/config"
 	"github.com/osshield/fallbck/pkg/db"
+	"github.com/osshield/fallbck/pkg/pbs"
 	"go.temporal.io/sdk/client"
 )
 
@@ -54,6 +55,7 @@ func (s *ServerAPI) RegisterRoutes(r chi.Router, admin, agent Middleware) {
 			r.Use(agent)
 			r.Post("/agents/heartbeat", s.HandleAgentHeartbeat)
 			r.Post("/agents/token/rotate", s.HandleRotateAgentToken)
+			r.Get("/agents/pbs-credentials", s.HandlePBSCredentials)
 		})
 
 		// Administrative
@@ -354,6 +356,11 @@ func (s *ServerAPI) HandleCreateTarget(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, "A PBS API token (auth_token) is required")
 		return
 	}
+	normalizedToken, err := pbs.NormalizeAPIToken(req.AuthToken)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "Invalid PBS API token: expected user@realm!tokenid:secret (as shown when the token was created)")
+		return
+	}
 	if req.TargetType == "" {
 		req.TargetType = "pbs"
 	}
@@ -372,7 +379,7 @@ func (s *ServerAPI) HandleCreateTarget(w http.ResponseWriter, r *http.Request) {
 		Endpoint:           strings.TrimRight(req.Endpoint, "/"),
 		Datastore:          req.Datastore,
 		Namespace:          req.Namespace,
-		AuthTokenEncrypted: strings.TrimSpace(req.AuthToken),
+		AuthTokenEncrypted: normalizedToken,
 		Fingerprint:        strings.TrimSpace(req.Fingerprint),
 		TLSVerify:          req.TLSVerify,
 		PxarFormat:         req.PxarFormat,

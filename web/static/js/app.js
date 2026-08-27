@@ -213,7 +213,8 @@ async function submitJobForm(e) {
       keep_weekly: parseInt(formData.get('keep_weekly') || '4'),
       keep_monthly: parseInt(formData.get('keep_monthly') || '12'),
     },
-    enabled: formData.get('enabled') === 'on'
+    enabled: formData.get('enabled') === 'on',
+    direct_pbs: formData.get('direct_pbs') === 'on'
   };
 
   try {

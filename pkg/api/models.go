@@ -95,3 +95,17 @@ type CreateTargetRequest struct {
 	TLSVerify   bool   `json:"tls_verify"`
 	PxarFormat  string `json:"pxar_format"`
 }
+
+// PBSCredentials are handed to an agent for a job configured with direct_pbs
+type PBSCredentials struct {
+	Endpoint    string `json:"endpoint"`
+	Datastore   string `json:"datastore"`
+	Namespace   string `json:"namespace"`
+	Fingerprint string `json:"fingerprint"`
+	TLSVerify   bool   `json:"tls_verify"`
+	// APIToken is the canonical user@realm!tokenid:secret
+	APIToken string `json:"api_token"`
+}
+
+// BackupTicketHeader carries the backup ticket on agent HTTP requests
+const BackupTicketHeader = "X-Fallbck-Backup-Ticket"

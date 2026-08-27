@@ -9,22 +9,35 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/osshield/fallbck/pkg/db"
+	fbpbs "github.com/osshield/fallbck/pkg/pbs"
 	"github.com/osshield/fallbck/pkg/temporal"
 	"github.com/osshield/gopbs"
 	"github.com/osshield/gopbs/archive"
 	"github.com/osshield/gopbs/pbs"
 )
 
+// DirectOptions connects the agent straight to PBS (job setting direct_pbs)
+type DirectOptions struct {
+	Endpoint    string
+	Fingerprint string
+	TLSVerify   bool
+	// APIToken in canonical user@realm!tokenid:secret form
+	APIToken string
+}
+
 // Options for one backup run
 type Options struct {
 	// Session carries the snapshot identity, format and paths from the server
 	Session *temporal.BackupSessionInfo
 	// Dial returns a connection on which the PBS backup session is already open
-	// (proxy.Dial through the FallBCK server)
+	// (proxy.Dial through the FallBCK server). Ignored when Direct is set.
 	Dial func(ctx context.Context, ref pbs.SnapshotRef) (net.Conn, error)
+	// Direct, when set, makes gopbs connect to PBS itself with these credentials
+	Direct *DirectOptions
 	// Workers is the number of concurrent chunk uploads (0 = gopbs default)
 	Workers int
 	// ArchiveName names the pxar archive inside the snapshot (default: gopbs default)
@@ -39,8 +52,8 @@ func Run(ctx context.Context, opts Options) (*temporal.BackupExecutionResult, er
 	if s == nil {
 		return nil, errors.New("backup session is required")
 	}
-	if opts.Dial == nil {
-		return nil, errors.New("backup session dialer is required")
+	if opts.Dial == nil && opts.Direct == nil {
+		return nil, errors.New("backup session dialer or direct PBS options are required")
 	}
 	if len(s.BackupPaths) == 0 {
 		return nil, errors.New("backup job has no paths")
@@ -66,13 +79,29 @@ func Run(ctx context.Context, opts Options) (*temporal.BackupExecutionResult, er
 	start := time.Now()
 	slog.Info("Starting PBS backup", "paths", s.BackupPaths, "format", s.PxarFormat, "backup_id", ref.ID, "datastore", s.Datastore, "namespace", s.Namespace)
 
+	clientCfg := pbs.Config{
+		DialSession: opts.Dial,
+		Datastore:   s.Datastore,
+		Namespace:   s.Namespace,
+		Workers:     opts.Workers,
+	}
+	if d := opts.Direct; d != nil {
+		authID, secret, err := fbpbs.SplitAPIToken(d.APIToken)
+		if err != nil {
+			return nil, err
+		}
+		clientCfg.DialSession = nil
+		clientCfg.BaseURL = d.Endpoint
+		clientCfg.Auth = pbs.TokenAuth{AuthID: authID, Secret: secret}
+		clientCfg.Fingerprint = strings.TrimPrefix(strings.TrimPrefix(d.Fingerprint, "SHA256:"), "sha256:")
+		clientCfg.InsecureSkipAll = clientCfg.Fingerprint == "" && !d.TLSVerify
+		slog.Info("Connecting to PBS directly", "endpoint", d.Endpoint, "token_id", authID, "fingerprint_pinned", clientCfg.Fingerprint != "", "tls_verify", d.TLSVerify)
+	} else {
+		slog.Debug("Connecting to PBS through the server tunnel")
+	}
+
 	result, err := gopbs.Backup(ctx, gopbs.BackupOptions{
-		Client: pbs.Config{
-			DialSession: opts.Dial,
-			Datastore:   s.Datastore,
-			Namespace:   s.Namespace,
-			Workers:     opts.Workers,
-		},
+		Client:     clientCfg,
 		Archive:    archive.Options{Name: opts.ArchiveName},
 		Ref:        ref,
 		Format:     format,

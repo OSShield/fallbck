@@ -32,7 +32,7 @@
           <tr>
             <td><strong>{{.Name}}</strong></td>
             <td><span class="badge badge-neutral">{{.AgentName}}</span></td>
-            <td>{{.TargetName}}</td>
+            <td>{{.TargetName}}{{if .DirectPBS}} <span class="badge badge-warning" title="Agent connects to PBS directly">direct</span>{{end}}</td>
             <td>
               {{range .BackupPaths}}
                 <code style="display: inline-block; margin-right: 4px; font-size: 12px;">{{.}}</code>
@@ -122,6 +122,11 @@
         <div class="form-group">
           <label>Schedule (Cron expression or leave blank for manual)</label>
           <input type="text" name="schedule_cron" class="form-control" placeholder="0 2 * * * (Every night at 2 AM)">
+        </div>
+
+        <div class="form-group" style="display: flex; align-items: center; gap: 8px;">
+          <input type="checkbox" id="direct_pbs" name="direct_pbs">
+          <label for="direct_pbs" style="font-size: 13px; font-weight: 500;">Agent connects directly to PBS (bypass the server tunnel; the agent receives the target's API token per run)</label>
         </div>
 
         <div style="background-color: var(--bg-subtle); padding: 14px; border-radius: var(--radius-sm);">

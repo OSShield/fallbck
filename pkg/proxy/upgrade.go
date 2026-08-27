@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -27,6 +28,7 @@ import (
 	"time"
 
 	"github.com/osshield/fallbck/pkg/db"
+	"github.com/osshield/fallbck/pkg/pbs"
 )
 
 // BackupProtocol is the PBS backup protocol identifier
@@ -136,11 +138,7 @@ func DialPBS(ctx context.Context, target *db.BackupTarget) (net.Conn, error) {
 
 // apiTokenHeader normalises the stored token into the PBS Authorization header value
 func apiTokenHeader(token string) string {
-	token = strings.TrimSpace(token)
-	if strings.HasPrefix(token, "PBSAPIToken=") || strings.HasPrefix(token, "PBSAPIToken ") {
-		return token
-	}
-	return "PBSAPIToken=" + token
+	return pbs.AuthorizationHeader(token)
 }
 
 // upgradedConn preserves bytes the response reader consumed past the 101
@@ -188,6 +186,7 @@ func UpgradeBackupSession(ctx context.Context, conn net.Conn, host, apiToken str
 	fmt.Fprintf(&req, "Host: %s\r\n", host)
 	fmt.Fprintf(&req, "Authorization: %s\r\n", apiTokenHeader(apiToken))
 	fmt.Fprintf(&req, "Upgrade: %s\r\nConnection: Upgrade\r\n\r\n", BackupProtocol)
+	slog.Debug("PBS upgrade request", "host", host, "query", query.Encode(), "token_id", pbs.TokenID(apiToken), "protocol", BackupProtocol)
 	if _, err := io.WriteString(conn, req.String()); err != nil {
 		return nil, fmt.Errorf("sending PBS upgrade request: %w", err)
 	}
@@ -200,8 +199,10 @@ func UpgradeBackupSession(ctx context.Context, conn net.Conn, host, apiToken str
 	if resp.StatusCode != http.StatusSwitchingProtocols {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
 		_ = resp.Body.Close()
+		slog.Debug("PBS upgrade refused", "host", host, "status", resp.Status, "body", strings.TrimSpace(string(body)), "www_authenticate", resp.Header.Get("WWW-Authenticate"))
 		return nil, &UpgradeError{Status: resp.StatusCode, Body: strings.TrimSpace(string(body))}
 	}
+	slog.Debug("PBS upgrade accepted", "host", host, "upgrade", resp.Header.Get("Upgrade"))
 	_ = conn.SetDeadline(time.Time{})
 	return &upgradedConn{Conn: conn, r: br}, nil
 }

@@ -23,6 +23,9 @@ type AgentActivities struct {
 	Tunnel grpc.ClientConnInterface
 	// Workers bounds concurrent chunk uploads (0 = default)
 	Workers int
+	// Credentials fetches PBS connection details for jobs in direct mode
+	// (GET /api/v1/agents/pbs-credentials with the run's ticket)
+	Credentials func(ctx context.Context, ticket string) (*backup.DirectOptions, error)
 }
 
 // NewAgentActivities creates a new AgentActivities instance
@@ -40,17 +43,33 @@ func (a *AgentActivities) ExecuteFilesystemBackup(ctx context.Context, session *
 		"paths", session.BackupPaths,
 		"datastore", session.Datastore,
 		"format", session.PxarFormat,
+		"direct_pbs", session.DirectPBS,
 	)
-	if a.Tunnel == nil {
-		return nil, errors.New("agent tunnel connection is not configured")
+	opts := backup.Options{Session: session, Workers: a.Workers}
+	if session.DirectPBS {
+		if a.Credentials == nil {
+			return nil, errors.New("job requires direct PBS access but the agent has no credentials fetcher")
+		}
+		direct, err := a.Credentials(ctx, session.Ticket)
+		if err != nil {
+			slog.Error("Failed to fetch PBS credentials for direct backup", "error", err)
+			return &temporal.BackupExecutionResult{Status: db.RunStatusFailed, ErrorMessage: err.Error()}, err
+		}
+		opts.Direct = direct
+	} else {
+		if a.Tunnel == nil {
+			return nil, errors.New("agent tunnel connection is not configured")
+		}
+		opts.Dial = func(ctx context.Context, _ pbs.SnapshotRef) (net.Conn, error) {
+			return proxy.Dial(ctx, a.Tunnel, session.Ticket)
+		}
 	}
 
 	result, err := backup.Run(ctx, backup.Options{
-		Session: session,
-		Workers: a.Workers,
-		Dial: func(ctx context.Context, _ pbs.SnapshotRef) (net.Conn, error) {
-			return proxy.Dial(ctx, a.Tunnel, session.Ticket)
-		},
+		Session: opts.Session,
+		Workers: opts.Workers,
+		Dial:    opts.Dial,
+		Direct:  opts.Direct,
 		OnProgress: func(archive string, stats pbs.UploadStats, done bool) {
 			activity.RecordHeartbeat(ctx, temporal.BackupHeartbeatProgress{
 				CurrentFile:   archive,

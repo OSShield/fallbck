@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -402,6 +403,23 @@ func (tc *TemporalConfig) BuildTLSConfig() (*tls.Config, error) {
 	}
 
 	return tlsConfig, nil
+}
+
+// LogLevel returns the process log level: FALLBCK_LOG_LEVEL (debug|info|warn|error) or,
+// for quick troubleshooting, DEBUG=true. Defaults to info.
+func LogLevel() slog.Level {
+	if v := strings.ToLower(os.Getenv("DEBUG")); v == "1" || v == "true" || v == "yes" {
+		return slog.LevelDebug
+	}
+	switch strings.ToLower(os.Getenv("FALLBCK_LOG_LEVEL")) {
+	case "debug":
+		return slog.LevelDebug
+	case "warn", "warning":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	}
+	return slog.LevelInfo
 }
 
 // --- environment helpers ---

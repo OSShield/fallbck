@@ -108,3 +108,29 @@ func TestRunValidation(t *testing.T) {
 		t.Error("missing path must fail before opening a session")
 	}
 }
+
+func TestRunDirect(t *testing.T) {
+	fake := pbstest.New(t)
+	fake.ExpectAuthorization = "PBSAPIToken=backup@pbs!fallbck:s3cret"
+	dir := makeTree(t)
+	session := &temporal.BackupSessionInfo{
+		Datastore: "store1", BackupType: "host", BackupID: "node6", BackupTime: time.Now().Unix(),
+		PxarFormat: db.PxarFormatV1, BackupPaths: []string{dir},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	res, err := Run(ctx, Options{
+		Session:     session,
+		ArchiveName: "root",
+		Direct:      &DirectOptions{Endpoint: fake.URL(), Fingerprint: "SHA256:" + fake.Fingerprint(), APIToken: "backup@pbs!fallbck=s3cret"},
+	})
+	if err != nil {
+		t.Fatalf("Run direct: %v", err)
+	}
+	if res.Status != db.RunStatusCompleted || fake.Finished() != 1 {
+		t.Errorf("direct backup did not complete: %+v finished=%d", res, fake.Finished())
+	}
+	if q := fake.Upgrades()[0].URL.Query(); q.Get("store") != "store1" || q.Get("backup-id") != "node6" {
+		t.Errorf("unexpected upgrade query %s", fake.Upgrades()[0].URL.RawQuery)
+	}
+}
