@@ -58,9 +58,11 @@ func Run(ctx context.Context, opts Options) (*temporal.BackupExecutionResult, er
 	if opts.Dial == nil && opts.Direct == nil {
 		return nil, errors.New("backup session dialer or direct PBS options are required")
 	}
-	if len(s.BackupPaths) == 0 {
-		return nil, errors.New("backup job has no paths")
+	paths, err := db.ValidateBackupPaths(s.BackupPaths)
+	if err != nil {
+		return nil, err
 	}
+	s.BackupPaths = paths
 	for _, p := range s.BackupPaths {
 		if _, err := os.Lstat(p); err != nil {
 			return nil, fmt.Errorf("backup path %s: %w", p, err)
