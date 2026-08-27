@@ -101,10 +101,12 @@ func (s *ServerAPI) HandleUpdateJob(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, "Name, AgentID, and TargetID are required")
 		return
 	}
-	if len(job.BackupPaths) == 0 {
-		s.writeError(w, http.StatusBadRequest, "At least one backup path is required")
+	paths, err := db.ValidateBackupPaths(job.BackupPaths)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	job.BackupPaths = paths
 	if _, err := s.DB.GetAgentByID(r.Context(), job.AgentID); err != nil {
 		s.writeError(w, http.StatusBadRequest, "Agent not found")
 		return

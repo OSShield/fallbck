@@ -456,6 +456,12 @@ func (s *ServerAPI) HandleCreateJob(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, "Name, AgentID, and TargetID are required")
 		return
 	}
+	paths, err := db.ValidateBackupPaths(job.BackupPaths)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	job.BackupPaths = paths
 
 	if err := s.DB.CreateJob(r.Context(), &job); err != nil {
 		s.writeError(w, http.StatusInternalServerError, "Failed to create job")
