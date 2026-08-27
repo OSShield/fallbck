@@ -20,6 +20,9 @@ import (
 	"github.com/osshield/gopbs/pbs"
 )
 
+// DefaultArchiveName is used for jobs with more than one backup path
+const DefaultArchiveName = "root"
+
 // DirectOptions connects the agent straight to PBS (job setting direct_pbs)
 type DirectOptions struct {
 	Endpoint    string
@@ -71,6 +74,12 @@ func Run(ctx context.Context, opts Options) (*temporal.BackupExecutionResult, er
 	if s.PxarFormat == db.PxarFormatV2 {
 		format = gopbs.FormatV2
 	}
+	// A single directory is the archive itself and gopbs names it after the directory;
+	// several paths live under a virtual root that needs a name ("root.pxar" by convention).
+	archiveName := opts.ArchiveName
+	if archiveName == "" && len(s.BackupPaths) > 1 {
+		archiveName = DefaultArchiveName
+	}
 	ref := pbs.SnapshotRef{Type: s.BackupType, ID: s.BackupID}
 	if s.BackupTime > 0 {
 		ref.Time = time.Unix(s.BackupTime, 0).UTC()
@@ -102,7 +111,7 @@ func Run(ctx context.Context, opts Options) (*temporal.BackupExecutionResult, er
 
 	result, err := gopbs.Backup(ctx, gopbs.BackupOptions{
 		Client:     clientCfg,
-		Archive:    archive.Options{Name: opts.ArchiveName},
+		Archive:    archive.Options{Name: archiveName},
 		Ref:        ref,
 		Format:     format,
 		Paths:      s.BackupPaths,
