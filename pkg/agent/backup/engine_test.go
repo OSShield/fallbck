@@ -134,3 +134,20 @@ func TestRunDirect(t *testing.T) {
 		t.Errorf("unexpected upgrade query %s", fake.Upgrades()[0].URL.RawQuery)
 	}
 }
+
+func TestRunMultiplePathsGetsDefaultArchiveName(t *testing.T) {
+	fake := pbstest.New(t)
+	dirA, dirB := makeTree(t), makeTree(t)
+	session := &temporal.BackupSessionInfo{
+		Datastore: "store1", BackupType: "host", BackupID: "node6", BackupTime: time.Now().Unix(),
+		PxarFormat: db.PxarFormatV1, BackupPaths: []string{dirA, filepath.Join(dirB, "data")},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	if _, err := Run(ctx, Options{Session: session, Dial: directDial(fake, session)}); err != nil {
+		t.Fatalf("Run with multiple roots: %v", err)
+	}
+	if _, ok := fake.Indexes()["root.pxar.didx"]; !ok {
+		t.Errorf("expected root.pxar.didx for a multi-root job, got %v", fake.Indexes())
+	}
+}
