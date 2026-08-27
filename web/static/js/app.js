@@ -189,10 +189,52 @@ async function submitTargetForm(e) {
   }
 }
 
+// Job modal: shared between "create" and "edit" (data-job-id decides)
+function jobForm() { return document.getElementById('job-form'); }
+
+function newJob() {
+  const form = jobForm();
+  form.reset();
+  form.dataset.jobId = '';
+  document.getElementById('job-modal-title').innerText = 'Create Backup Job';
+  document.getElementById('job-submit').innerText = 'Create Job';
+  openModal('modal-add-job');
+}
+
+async function editJob(jobId) {
+  try {
+    const resp = await apiFetch(`/api/v1/jobs/${jobId}`);
+    if (!resp.ok) throw new Error('Failed to load job');
+    const job = await resp.json();
+    const form = jobForm();
+    form.reset();
+    form.dataset.jobId = job.id;
+    form.elements['name'].value = job.name || '';
+    form.elements['agent_id'].value = job.agent_id || '';
+    form.elements['target_id'].value = job.target_id || '';
+    form.elements['backup_paths'].value = (job.backup_paths || []).join('\n');
+    form.elements['exclude_paths'].value = (job.exclude_paths || []).join('\n');
+    form.elements['schedule_cron'].value = job.schedule_cron || '';
+    form.elements['direct_pbs'].checked = !!job.direct_pbs;
+    form.elements['enabled'].checked = !!job.enabled;
+    const rp = job.retention_policy || {};
+    form.elements['keep_last'].value = rp.keep_last ?? 7;
+    form.elements['keep_daily'].value = rp.keep_daily ?? 7;
+    form.elements['keep_weekly'].value = rp.keep_weekly ?? 4;
+    form.elements['keep_monthly'].value = rp.keep_monthly ?? 12;
+    document.getElementById('job-modal-title').innerText = 'Edit Backup Job';
+    document.getElementById('job-submit').innerText = 'Save Changes';
+    openModal('modal-add-job');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
 async function submitJobForm(e) {
   e.preventDefault();
   const form = e.target;
   const formData = new FormData(form);
+  const jobId = form.dataset.jobId || '';
 
   const pathsRaw = formData.get('backup_paths') || '';
   const backupPaths = pathsRaw.split('\n').map(p => p.trim()).filter(p => p.length > 0);
@@ -218,18 +260,18 @@ async function submitJobForm(e) {
   };
 
   try {
-    const resp = await apiFetch('/api/v1/jobs', {
-      method: 'POST',
+    const resp = await apiFetch(jobId ? `/api/v1/jobs/${jobId}` : '/api/v1/jobs', {
+      method: jobId ? 'PUT' : 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
 
     if (!resp.ok) {
       const errData = await resp.json();
-      throw new Error(errData.error || 'Failed to create job');
+      throw new Error(errData.error || 'Failed to save job');
     }
 
-    showToast('Backup job created successfully!', 'success');
+    showToast(jobId ? 'Backup job updated' : 'Backup job created successfully!', 'success');
     closeModal('modal-add-job');
     setTimeout(() => window.location.reload(), 800);
   } catch (err) {

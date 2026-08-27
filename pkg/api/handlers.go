@@ -87,6 +87,7 @@ func (s *ServerAPI) RegisterRoutes(r chi.Router, admin, agent Middleware) {
 			r.Post("/jobs", s.HandleCreateJob)
 			r.Get("/jobs", s.HandleListJobs)
 			r.Get("/jobs/{id}", s.HandleGetJob)
+			r.Put("/jobs/{id}", s.HandleUpdateJob)
 			r.Delete("/jobs/{id}", s.HandleDeleteJob)
 			r.Post("/jobs/{id}/run", s.HandleTriggerJob)
 
