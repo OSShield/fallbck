@@ -1,0 +1,57 @@
+# syntax=docker/dockerfile:1
+# fallbck-db-agent: database backup worker (PostgreSQL, MySQL/MariaDB, MongoDB) that
+# talks to the FallBCK server (REST + Temporal gRPC via the server's gateway) through a
+# single server URL. The image ships the vendor client tools.
+
+# ---- Build stage -------------------------------------------------------------
+FROM golang:1-alpine AS builder
+
+WORKDIR /src
+
+RUN apk add --no-cache git ca-certificates tzdata
+
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
+
+COPY . .
+
+ARG FALLBCK_VERSION=0.1.0
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath \
+      -ldflags="-s -w -X main.AgentVersion=${FALLBCK_VERSION}" \
+      -o /bin/fallbck-db-agent ./cmd/fallbck-db-agent
+
+# ---- mariadb-binlog ------------------------------------------------------------
+# Alpine ships mariadb-binlog only inside the (large) mariadb server package; take the
+# single binary from it so binary-log fetching works without the server.
+FROM alpine:3.21 AS mariadb-tools
+RUN apk add --no-cache mariadb
+
+# ---- Runtime stage -----------------------------------------------------------
+# Alpine 3.21 ships PostgreSQL 17 client tools (pg_dump must be at least as new as the
+# server it dumps), MariaDB client tools and MongoDB Database Tools 100.x.
+FROM alpine:3.21
+
+RUN apk add --no-cache ca-certificates tzdata \
+      postgresql17-client \
+      mariadb-client \
+      mongodb-tools
+
+COPY --from=mariadb-tools /usr/bin/mariadb-binlog /usr/bin/mariadb-binlog
+RUN ln -s mariadb-binlog /usr/bin/mysqlbinlog && mariadb-binlog --version
+
+RUN addgroup -S fallbck && adduser -S -G fallbck -u 10003 fallbck && \
+    mkdir -p /var/lib/fallbck/db-agent && \
+    chown -R fallbck:fallbck /var/lib/fallbck
+
+COPY --from=builder /bin/fallbck-db-agent /usr/local/bin/fallbck-db-agent
+
+USER fallbck
+
+ENV FALLBCK_AGENT_DATA_DIR=/var/lib/fallbck/db-agent
+
+VOLUME ["/var/lib/fallbck/db-agent"]
+
+ENTRYPOINT ["/usr/local/bin/fallbck-db-agent"]
+CMD ["run"]

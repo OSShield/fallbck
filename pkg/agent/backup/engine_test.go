@@ -13,6 +13,7 @@ import (
 	"github.com/osshield/fallbck/pkg/proxy"
 	"github.com/osshield/fallbck/pkg/proxy/pbstest"
 	"github.com/osshield/fallbck/pkg/temporal"
+	"github.com/osshield/gopbs"
 	"github.com/osshield/gopbs/pbs"
 )
 
@@ -178,5 +179,37 @@ func TestRunDuplicateBasenames(t *testing.T) {
 	}
 	if _, ok := fake.Indexes()["root.pxar.didx"]; !ok {
 		t.Errorf("expected root.pxar.didx, got %v", fake.Indexes())
+	}
+}
+
+func TestRunUploadsBlobs(t *testing.T) {
+	fake := pbstest.New(t)
+	dir := makeTree(t)
+	session := &temporal.BackupSessionInfo{
+		Datastore: "store1", BackupType: "host", BackupID: "db-postgres-db01", BackupTime: time.Now().Unix(),
+		PxarFormat: db.PxarFormatV1, BackupPaths: []string{dir},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	result, err := Run(ctx, Options{
+		Session:     session,
+		Dial:        directDial(fake, session),
+		ArchiveName: "db",
+		Blobs:       []gopbs.Blob{{Name: "fallbck-db.json", Data: []byte(`{"schema_version":1}`)}},
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if result.Status != db.RunStatusCompleted {
+		t.Fatalf("status %s", result.Status)
+	}
+	if _, ok := fake.Indexes()["db.pxar.didx"]; !ok {
+		t.Errorf("archive not named db.pxar.didx: %v", fake.Indexes())
+	}
+	if _, ok := fake.Blobs()["fallbck-db.json.blob"]; !ok {
+		t.Errorf("manifest blob missing: %v", fake.Blobs())
+	}
+	if _, err := Run(ctx, Options{Session: session, Dial: directDial(fake, session), Blobs: []gopbs.Blob{{Name: "index.json"}}}); err == nil {
+		t.Error("reserved blob name accepted")
 	}
 }

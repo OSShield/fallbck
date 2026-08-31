@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/osshield/gopbs"
 	"github.com/osshield/gopbs/archive"
@@ -21,8 +22,12 @@ func runBackup(ctx context.Context, opts gopbs.BackupOptions) (*gopbs.BackupResu
 	if len(opts.Paths) == 0 {
 		return nil, errors.New("nothing to back up")
 	}
-	if len(opts.Blobs) > 0 || len(opts.Streams) > 0 {
-		return nil, errors.New("blobs and streams are not supported by the agent backup engine")
+	if len(opts.Streams) > 0 {
+		return nil, errors.New("streams are not supported by the agent backup engine")
+	}
+	blobNames, err := blobFileNames(opts.Blobs)
+	if err != nil {
+		return nil, err
 	}
 
 	result := &gopbs.BackupResult{}
@@ -138,8 +143,41 @@ func runBackup(ctx context.Context, opts gopbs.BackupOptions) (*gopbs.BackupResu
 		}
 	}
 
+	if len(opts.Blobs) > 0 {
+		enc := pbs.NewBlobEncoder()
+		for i, b := range opts.Blobs {
+			if err := sess.UploadBlob(ctx, enc, blobNames[i], b.Data, true); err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	if err := sess.Finish(ctx); err != nil {
 		return nil, err
 	}
 	return result, nil
+}
+
+// blobFileNames mirrors gopbs: "<name>.blob", no path separators, index.json reserved
+func blobFileNames(blobs []gopbs.Blob) ([]string, error) {
+	names := make([]string, 0, len(blobs))
+	seen := map[string]bool{}
+	for _, b := range blobs {
+		name := b.Name
+		if name == "" || strings.ContainsAny(name, "/\\") {
+			return nil, fmt.Errorf("invalid blob name %q", b.Name)
+		}
+		if !strings.HasSuffix(name, ".blob") {
+			name += ".blob"
+		}
+		if name == "index.json.blob" {
+			return nil, errors.New("blob name index.json is reserved for the snapshot manifest")
+		}
+		if seen[name] {
+			return nil, fmt.Errorf("duplicate blob name %q", name)
+		}
+		seen[name] = true
+		names = append(names, name)
+	}
+	return names, nil
 }

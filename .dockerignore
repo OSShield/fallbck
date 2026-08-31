@@ -4,3 +4,4 @@ bin/
 *.tmp
 *.log
 coverage.*
+dist/

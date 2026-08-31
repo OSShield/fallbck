@@ -435,6 +435,7 @@ set -e
 
 SERVER_URL="%s"
 TOKEN=""
+AGENT="fallbck-agent"
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -444,6 +445,11 @@ while [[ $# -gt 0 ]]; do
       ;;
     --token)
       TOKEN="$2"
+      shift 2
+      ;;
+    --type)
+      # filesystem (default) or database
+      case "$2" in database|db) AGENT="fallbck-db-agent" ;; esac
       shift 2
       ;;
     *)
@@ -457,13 +463,12 @@ if [ -z "$TOKEN" ]; then
   exit 1
 fi
 
-echo "==> Enrolling FallBCK Backup Agent..."
-if command -v fallbck-agent &> /dev/null; then
-  fallbck-agent enroll --server "$SERVER_URL" --token "$TOKEN"
+echo "==> Enrolling $AGENT..."
+if command -v "$AGENT" &> /dev/null; then
+  "$AGENT" enroll --server "$SERVER_URL" --token "$TOKEN"
 else
-  echo "==> Downloading fallbck-agent binary..."
-  # Download agent binary placeholder
-  echo "✓ Please ensure fallbck-agent binary is placed in /usr/local/bin"
+  echo "==> $AGENT is not installed; install the package first (deb/rpm/apk), then re-run this script"
+  exit 1
 fi
 `, serverURL)
 

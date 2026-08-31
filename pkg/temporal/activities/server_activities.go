@@ -3,6 +3,8 @@ package activities
 import (
 	"context"
 	"fmt"
+	"github.com/osshield/fallbck/pkg/dbbackup"
+	sdktemporal "go.temporal.io/sdk/temporal"
 	"log/slog"
 	"time"
 
@@ -84,6 +86,24 @@ func (s *ServerActivities) PrepareBackupSession(ctx context.Context, jobID uuid.
 		BackupID:   agent.Hostname,
 		BackupTime: now.Unix(),
 	}
+	jobType, _ := db.NormalizeAgentType(job.JobType)
+	agentType, _ := db.NormalizeAgentType(agent.AgentType)
+	if jobType != agentType {
+		return nil, sdktemporal.NewNonRetryableApplicationError(
+			fmt.Sprintf("job type %q cannot run on agent %s of type %q", jobType, agent.Hostname, agentType), "job_agent_mismatch", nil)
+	}
+	var sessionSpec *dbbackup.Spec
+	passwordOnServer := false
+	if jobType == db.JobTypeDatabase {
+		if job.DBConfig == nil {
+			return nil, sdktemporal.NewNonRetryableApplicationError("database job has no database configuration", "job_invalid", nil)
+		}
+		claims.BackupID = dbbackup.DefaultBackupID(job.DBConfig)
+		// The spec travels through Temporal history without the password; the agent
+		// fetches it with its ticket when one is stored
+		sessionSpec = job.DBConfig.Redacted()
+		passwordOnServer = job.DBConfig.Password != ""
+	}
 
 	ticket, err := s.TokenManager.CreateBackupTicket(claims, 2*time.Hour)
 	if err != nil {
@@ -118,25 +138,29 @@ func (s *ServerActivities) PrepareBackupSession(ctx context.Context, jobID uuid.
 	proxyURL := s.Config.ProxyURL()
 
 	return &temporal.BackupSessionInfo{
-		JobID:           job.ID,
-		AgentID:         agent.ID,
-		TargetID:        target.ID,
-		AgentTaskQueue:  agent.TaskQueue,
-		ProxyURL:        proxyURL,
-		Ticket:          ticket,
-		Datastore:       target.Datastore,
-		Namespace:       target.Namespace,
-		BackupType:      claims.BackupType,
-		BackupID:        claims.BackupID,
-		BackupTime:      claims.BackupTime,
-		PxarFormat:      target.PxarFormat,
-		DirectPBS:       job.DirectPBS,
-		BackupPaths:     job.BackupPaths,
-		ExcludePaths:    job.ExcludePaths,
-		RetentionPolicy: job.RetentionPolicy,
-		WorkflowID:      info.WorkflowExecution.ID,
-		RunID:           info.WorkflowExecution.RunID,
-		BackupRunID:     runID,
+		JobID:              job.ID,
+		AgentID:            agent.ID,
+		TargetID:           target.ID,
+		AgentTaskQueue:     agent.TaskQueue,
+		ProxyURL:           proxyURL,
+		Ticket:             ticket,
+		Datastore:          target.Datastore,
+		Namespace:          target.Namespace,
+		BackupType:         claims.BackupType,
+		BackupID:           claims.BackupID,
+		BackupTime:         claims.BackupTime,
+		PxarFormat:         target.PxarFormat,
+		DirectPBS:          job.DirectPBS,
+		JobType:            jobType,
+		JobName:            job.Name,
+		DBConfig:           sessionSpec,
+		DBPasswordOnServer: passwordOnServer,
+		BackupPaths:        job.BackupPaths,
+		ExcludePaths:       job.ExcludePaths,
+		RetentionPolicy:    job.RetentionPolicy,
+		WorkflowID:         info.WorkflowExecution.ID,
+		RunID:              info.WorkflowExecution.RunID,
+		BackupRunID:        runID,
 	}, nil
 }
 
@@ -179,22 +203,27 @@ func (s *ServerActivities) PruneJob(ctx context.Context, session *temporal.Backu
 		return fmt.Errorf("failed to fetch target for pruning: %w", err)
 	}
 
-	agent, err := s.DB.GetAgentByID(ctx, session.AgentID)
-	if err != nil {
-		return fmt.Errorf("failed to fetch agent: %w", err)
+	// The prune group is the one the session backed up into (bound into the ticket)
+	backupType, backupID := session.BackupType, session.BackupID
+	if backupID == "" {
+		agent, err := s.DB.GetAgentByID(ctx, session.AgentID)
+		if err != nil {
+			return fmt.Errorf("failed to fetch agent: %w", err)
+		}
+		backupType, backupID = "host", agent.Hostname
 	}
 
 	client := pbs.NewClient(target.Endpoint, target.AuthTokenEncrypted, target.TLSVerify, target.Fingerprint)
 
 	r := session.RetentionPolicy
 	if r.KeepLast > 0 || r.KeepDaily > 0 || r.KeepWeekly > 0 || r.KeepMonthly > 0 {
-		slog.Info("Executing PBS prune job", "datastore", target.Datastore, "backup_id", agent.Hostname)
+		slog.Info("Executing PBS prune job", "datastore", target.Datastore, "backup_type", backupType, "backup_id", backupID)
 		err := client.PruneDatastore(
 			ctx,
 			target.Datastore,
 			target.Namespace,
-			"host",
-			agent.Hostname,
+			backupType,
+			backupID,
 			r.KeepLast,
 			r.KeepDaily,
 			r.KeepWeekly,

@@ -2,6 +2,7 @@
 #
 #   docker compose up -d                                   # postgres + server (admin auth DISABLED, dev only)
 #   docker compose --profile agent up -d                   # ... plus an example agent (needs an enrollment token, see below)
+#   docker compose --profile db-agent up -d                # ... plus a database agent (can back up the stack's own Postgres)
 #   docker compose -f docker-compose.yml -f compose.sso.yml up -d
 #                                                          # ... behind Caddy (TLS) with dex as OIDC provider:
 #                                                          #     https://fallbck.localhost  (admin@example.com / password)
@@ -11,7 +12,7 @@
 # one plaintext h2c port (8080) that a TLS-terminating reverse proxy should front.
 #
 # Run from the deploy/ directory (or pass -f deploy/docker-compose.yml). Images are built
-# from the repository root with Dockerfile.server / Dockerfile.agent.
+# from the repository root with Dockerfile.server / Dockerfile.agent / Dockerfile.db-agent.
 
 services:
   # -------------------------------------------------------------------------
@@ -123,10 +124,42 @@ services:
     networks:
       - fallbck-net
 
+  # -------------------------------------------------------------------------
+  # 4. Database agent (optional, profile "db-agent"): backs up PostgreSQL, MySQL/MariaDB
+  #    and MongoDB with the vendor tools shipped in the image. The profile "postgres"
+  #    below lets a job against postgres:5432 (user fallbck) leave its password blank.
+  # -------------------------------------------------------------------------
+  db-agent:
+    image: oci.fi/fallbck/db-agent:latest
+    build:
+      context: ..
+      dockerfile: Dockerfile.db-agent
+      args:
+        FALLBCK_VERSION: ${FALLBCK_VERSION:-0.3.0}
+    container_name: fallbck-db-agent
+    restart: unless-stopped
+    profiles:
+      - db-agent
+    depends_on:
+      server:
+        condition: service_healthy
+    environment:
+      - FALLBCK_AGENT_SERVER_URL=http://server:8080
+      - FALLBCK_AGENT_ENROLLMENT_KEY=${FALLBCK_DB_AGENT_ENROLLMENT_KEY:-}
+      - FALLBCK_AGENT_DATA_DIR=/var/lib/fallbck/db-agent
+      - FALLBCK_AGENT_DB_PROFILE_POSTGRES_USER=fallbck
+      - FALLBCK_AGENT_DB_PROFILE_POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-fallbck_password}
+      - DEBUG=${DEBUG:-false}
+    volumes:
+      - db_agent_data:/var/lib/fallbck/db-agent
+    networks:
+      - fallbck-net
+
 volumes:
   postgres_data:
   server_data:
   agent_data:
+  db_agent_data:
   sample_backup_data:
 
 networks:

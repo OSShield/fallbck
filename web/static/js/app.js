@@ -143,6 +143,8 @@ async function prepareAgentWizard(os = 'linux') {
       codeEl.innerText = `curl -sSL ${serverUrl}/install-agent.sh | sudo bash -s -- \\\n  --server ${serverUrl} \\\n  --token ${data.raw_token}`;
     } else if (os === 'cli') {
       codeEl.innerText = `fallbck-agent enroll \\\n  --server ${serverUrl} \\\n  --token ${data.raw_token}`;
+    } else if (os === 'db') {
+      codeEl.innerText = `fallbck-db-agent enroll \\\n  --server ${serverUrl} \\\n  --token ${data.raw_token}\n\n# then check the database client tools and start the service:\nfallbck-db-agent tools\nsystemctl enable --now fallbck-db-agent`;
     } else if (os === 'windows') {
       codeEl.innerText = `iwr -useb ${serverUrl}/install-agent.ps1 | iex;\nfallbck-agent.exe enroll --server ${serverUrl} --token ${data.raw_token}`;
     }
@@ -192,10 +194,43 @@ async function submitTargetForm(e) {
 // Job modal: shared between "create" and "edit" (data-job-id decides)
 function jobForm() { return document.getElementById('job-form'); }
 
+// Job type switches the form between the filesystem and database sections and
+// limits the agent list to agents of that type
+function setJobType(type) {
+  const form = jobForm();
+  const isDB = type === 'database';
+  const fs = document.getElementById('job-fs-fields');
+  const dbf = document.getElementById('job-db-fields');
+  fs.hidden = isDB; fs.disabled = isDB;
+  dbf.hidden = !isDB; dbf.disabled = !isDB;
+  const sel = form.elements['agent_id'];
+  let keep = false;
+  for (const opt of sel.options) {
+    if (!opt.value) continue;
+    const match = (opt.dataset.agentType || 'filesystem') === type;
+    opt.hidden = !match; opt.disabled = !match;
+    if (match && opt.selected) keep = true;
+  }
+  if (!keep) sel.value = '';
+  setDBEngine(form.elements['db_engine'].value);
+}
+
+function setDBEngine(engine) {
+  document.querySelectorAll('#job-db-fields .db-engine-opts').forEach(el => {
+    const on = el.dataset.engine === engine;
+    el.hidden = !on;
+    el.querySelectorAll('input,select').forEach(c => { c.disabled = !on; });
+  });
+  const port = jobForm().elements['db_port'];
+  if (port) port.placeholder = { postgres: '5432', mysql: '3306', mongodb: '27017' }[engine] || '';
+}
+
 function newJob() {
   const form = jobForm();
   form.reset();
   form.dataset.jobId = '';
+  document.getElementById('db-password-hint').hidden = true;
+  setJobType('filesystem');
   document.getElementById('job-modal-title').innerText = 'Create Backup Job';
   document.getElementById('job-submit').innerText = 'Create Job';
   openModal('modal-add-job');
@@ -210,10 +245,40 @@ async function editJob(jobId) {
     form.reset();
     form.dataset.jobId = job.id;
     form.elements['name'].value = job.name || '';
+    const jobType = job.job_type || 'filesystem';
+    form.elements['job_type'].value = jobType;
     form.elements['agent_id'].value = job.agent_id || '';
     form.elements['target_id'].value = job.target_id || '';
     form.elements['backup_paths'].value = (job.backup_paths || []).join('\n');
     form.elements['exclude_paths'].value = (job.exclude_paths || []).join('\n');
+    document.getElementById('db-password-hint').hidden = true;
+    if (jobType === 'database' && job.db_config) {
+      const dc = job.db_config;
+      form.elements['db_engine'].value = dc.engine || 'postgres';
+      form.elements['db_host'].value = dc.host || '';
+      form.elements['db_port'].value = dc.port || '';
+      form.elements['db_user'].value = dc.user || '';
+      form.elements['db_profile'].value = dc.profile || '';
+      form.elements['db_databases'].value = (dc.databases || []).join('\n');
+      form.elements['db_tls_mode'].value = (dc.tls && dc.tls.mode) || '';
+      form.elements['db_tls_ca_file'].value = (dc.tls && dc.tls.ca_file) || '';
+      form.elements['db_compression'].value = dc.compression || 'none';
+      form.elements['db_backup_id'].value = dc.backup_id || '';
+      document.getElementById('db-password-hint').hidden = !dc.has_password;
+      const pg = dc.postgres || {}, my = dc.mysql || {}, mo = dc.mongodb || {};
+      form.elements['pg_mode'].value = pg.mode || 'dump';
+      form.elements['pg_format'].value = pg.format || 'custom';
+      form.elements['pg_role_passwords'].value = pg.role_passwords || 'auto';
+      form.elements['pg_globals'].checked = pg.globals !== false;
+      form.elements['my_single_transaction'].checked = my.single_transaction !== false;
+      form.elements['my_include_binlogs'].checked = !!my.include_binlogs;
+      form.elements['mongo_read_preference'].value = mo.read_preference || '';
+      form.elements['mongo_auth_source'].value = mo.auth_source || '';
+      form.elements['mongo_replica_set'].value = mo.replica_set || '';
+      form.elements['mongo_oplog'].checked = mo.oplog !== false;
+    }
+    setJobType(jobType);
+    form.elements['agent_id'].value = job.agent_id || '';
     form.elements['schedule_cron'].value = job.schedule_cron || '';
     form.elements['direct_pbs'].checked = !!job.direct_pbs;
     form.elements['enabled'].checked = !!job.enabled;
@@ -256,8 +321,37 @@ async function submitJobForm(e) {
       keep_monthly: parseInt(formData.get('keep_monthly') || '12'),
     },
     enabled: formData.get('enabled') === 'on',
-    direct_pbs: formData.get('direct_pbs') === 'on'
+    direct_pbs: formData.get('direct_pbs') === 'on',
+    job_type: formData.get('job_type') || 'filesystem'
   };
+
+  if (payload.job_type === 'database') {
+    payload.backup_paths = [];
+    payload.exclude_paths = [];
+    const lines = (formData.get('db_databases') || '').split('\n').map(p => p.trim()).filter(p => p.length > 0);
+    const engine = formData.get('db_engine');
+    const dc = {
+      engine: engine,
+      host: (formData.get('db_host') || '').trim(),
+      port: parseInt(formData.get('db_port') || '0') || 0,
+      user: formData.get('db_user') || '',
+      profile: formData.get('db_profile') || '',
+      tls: { mode: formData.get('db_tls_mode') || '', ca_file: formData.get('db_tls_ca_file') || '' },
+      databases: lines,
+      compression: formData.get('db_compression') || 'none',
+      backup_id: formData.get('db_backup_id') || ''
+    };
+    if (formData.get('db_password')) dc.password = formData.get('db_password');
+    if (formData.get('db_clear_password') === 'on') dc.clear_password = true;
+    if (engine === 'postgres') {
+      dc.postgres = { mode: formData.get('pg_mode'), format: formData.get('pg_format'), role_passwords: formData.get('pg_role_passwords'), globals: formData.get('pg_globals') === 'on' };
+    } else if (engine === 'mysql') {
+      dc.mysql = { single_transaction: formData.get('my_single_transaction') === 'on', include_binlogs: formData.get('my_include_binlogs') === 'on' };
+    } else if (engine === 'mongodb') {
+      dc.mongodb = { oplog: formData.get('mongo_oplog') === 'on', read_preference: formData.get('mongo_read_preference') || '', auth_source: formData.get('mongo_auth_source') || '', replica_set: formData.get('mongo_replica_set') || '' };
+    }
+    payload.db_config = dc;
+  }
 
   try {
     const resp = await apiFetch(jobId ? `/api/v1/jobs/${jobId}` : '/api/v1/jobs', {

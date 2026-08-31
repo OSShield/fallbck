@@ -45,6 +45,8 @@ type Options struct {
 	Workers int
 	// ArchiveName names the pxar archive inside the snapshot (default: gopbs default)
 	ArchiveName string
+	// Blobs are small extra files stored in the snapshot as <name>.blob (manifests)
+	Blobs []gopbs.Blob
 	// OnProgress receives upload progress per archive
 	OnProgress func(archive string, stats pbs.UploadStats, done bool)
 }
@@ -115,6 +117,7 @@ func Run(ctx context.Context, opts Options) (*temporal.BackupExecutionResult, er
 	result, err := runBackup(ctx, gopbs.BackupOptions{
 		Client:     clientCfg,
 		Archive:    archive.Options{Name: archiveName},
+		Blobs:      opts.Blobs,
 		Ref:        ref,
 		Format:     format,
 		Paths:      s.BackupPaths,

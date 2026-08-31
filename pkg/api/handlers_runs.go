@@ -97,22 +97,8 @@ func (s *ServerAPI) HandleUpdateJob(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
-	if job.Name == "" || job.AgentID == uuid.Nil || job.TargetID == uuid.Nil {
-		s.writeError(w, http.StatusBadRequest, "Name, AgentID, and TargetID are required")
-		return
-	}
-	paths, err := db.ValidateBackupPaths(job.BackupPaths)
-	if err != nil {
-		s.writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	job.BackupPaths = paths
-	if _, err := s.DB.GetAgentByID(r.Context(), job.AgentID); err != nil {
-		s.writeError(w, http.StatusBadRequest, "Agent not found")
-		return
-	}
-	if _, err := s.DB.GetTargetByID(r.Context(), job.TargetID); err != nil {
-		s.writeError(w, http.StatusBadRequest, "Backup target not found")
+	if msg, err := s.validateJob(r.Context(), &job, existing); err != nil {
+		s.writeError(w, http.StatusBadRequest, msg)
 		return
 	}
 
@@ -128,8 +114,8 @@ func (s *ServerAPI) HandleUpdateJob(w http.ResponseWriter, r *http.Request) {
 	}
 	updated, err := s.DB.GetJobByID(r.Context(), job.ID)
 	if err != nil {
-		s.writeJSON(w, http.StatusOK, job)
+		s.writeJSON(w, http.StatusOK, job.Sanitize())
 		return
 	}
-	s.writeJSON(w, http.StatusOK, updated)
+	s.writeJSON(w, http.StatusOK, updated.Sanitize())
 }

@@ -56,6 +56,7 @@ func (s *ServerAPI) RegisterRoutes(r chi.Router, admin, agent Middleware) {
 			r.Post("/agents/heartbeat", s.HandleAgentHeartbeat)
 			r.Post("/agents/token/rotate", s.HandleRotateAgentToken)
 			r.Get("/agents/pbs-credentials", s.HandlePBSCredentials)
+			r.Get("/agents/db-credentials", s.HandleDBCredentials)
 		})
 
 		// Administrative
@@ -132,6 +133,12 @@ func (s *ServerAPI) HandleAgentEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	agentType, ok := db.NormalizeAgentType(req.AgentType)
+	if !ok {
+		s.writeError(w, http.StatusBadRequest, fmt.Sprintf("Unknown agent type %q", req.AgentType))
+		return
+	}
+
 	agentID := uuid.New()
 	taskQueue := fmt.Sprintf("fallbck-agent-%s", agentID.String())
 
@@ -151,6 +158,7 @@ func (s *ServerAPI) HandleAgentEnroll(w http.ResponseWriter, r *http.Request) {
 		OS:        req.OS,
 		Arch:      req.Arch,
 		Version:   req.Version,
+		AgentType: agentType,
 		TaskQueue: taskQueue,
 		Status:    db.AgentStatusOnline,
 	}
@@ -193,7 +201,7 @@ func (s *ServerAPI) HandleAgentEnroll(w http.ResponseWriter, r *http.Request) {
 		ProxyURL:       s.Config.ProxyURL(),
 	}
 
-	slog.Info("Successfully enrolled new agent", "agent_id", agentID, "hostname", req.Hostname, "token_name", token.Name)
+	slog.Info("Successfully enrolled new agent", "agent_id", agentID, "hostname", req.Hostname, "agent_type", agentType, "token_name", token.Name)
 	s.writeJSON(w, http.StatusCreated, resp)
 }
 
@@ -452,23 +460,18 @@ func (s *ServerAPI) HandleCreateJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if job.Name == "" || job.AgentID == uuid.Nil || job.TargetID == uuid.Nil {
-		s.writeError(w, http.StatusBadRequest, "Name, AgentID, and TargetID are required")
+	if msg, err := s.validateJob(r.Context(), &job, nil); err != nil {
+		s.writeError(w, http.StatusBadRequest, msg)
 		return
 	}
-	paths, err := db.ValidateBackupPaths(job.BackupPaths)
-	if err != nil {
-		s.writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	job.BackupPaths = paths
 
 	if err := s.DB.CreateJob(r.Context(), &job); err != nil {
+		slog.Error("Failed to create job", "error", err)
 		s.writeError(w, http.StatusInternalServerError, "Failed to create job")
 		return
 	}
 
-	s.writeJSON(w, http.StatusCreated, job)
+	s.writeJSON(w, http.StatusCreated, job.Sanitize())
 }
 
 // HandleListJobs returns all jobs
@@ -480,6 +483,9 @@ func (s *ServerAPI) HandleListJobs(w http.ResponseWriter, r *http.Request) {
 	}
 	if jobs == nil {
 		jobs = []*db.BackupJob{}
+	}
+	for _, j := range jobs {
+		j.Sanitize()
 	}
 	s.writeJSON(w, http.StatusOK, jobs)
 }
@@ -499,7 +505,7 @@ func (s *ServerAPI) HandleGetJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.writeJSON(w, http.StatusOK, job)
+	s.writeJSON(w, http.StatusOK, job.Sanitize())
 }
 
 // HandleDeleteJob deletes a job

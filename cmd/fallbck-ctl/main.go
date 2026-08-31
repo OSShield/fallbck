@@ -135,8 +135,9 @@ func handleTokenCommands(serverURL string, args []string) {
 		fmt.Printf("  Name:      %s\n", tokenResp.Name)
 		fmt.Printf("  Max Uses:  %d\n", tokenResp.MaxUses)
 		fmt.Printf("  Expires:   %s\n\n", tokenResp.ExpiresAt.Format(time.RFC3339))
-		fmt.Println("Enroll agent command:")
+		fmt.Println("Enroll agent command (filesystem agent / database agent):")
 		fmt.Printf("  fallbck-agent enroll --server %s --token %s\n", serverURL, tokenResp.RawToken)
+		fmt.Printf("  fallbck-db-agent enroll --server %s --token %s\n", serverURL, tokenResp.RawToken)
 
 	case "list":
 		resp, err := apiGet(fmt.Sprintf("%s/api/v1/tokens", serverURL))
@@ -180,14 +181,14 @@ func handleAgentCommands(serverURL string, args []string) {
 		_ = json.NewDecoder(resp.Body).Decode(&agents)
 
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-		fmt.Fprintln(w, "ID\tHOSTNAME\tIP\tOS/ARCH\tSTATUS\tLAST SEEN")
+		fmt.Fprintln(w, "ID\tHOSTNAME\tTYPE\tIP\tOS/ARCH\tSTATUS\tLAST SEEN")
 		for _, a := range agents {
 			lastSeen := "never"
 			if a.LastSeenAt != nil {
 				lastSeen = a.LastSeenAt.Format("15:04:05")
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s/%s\t%s\t%s\n",
-				a.ID.String()[:8], a.Hostname, a.IPAddress, a.OS, a.Arch, a.Status, lastSeen,
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s/%s\t%s\t%s\n",
+				a.ID.String()[:8], a.Hostname, a.AgentType, a.IPAddress, a.OS, a.Arch, a.Status, lastSeen,
 			)
 		}
 		w.Flush()
@@ -240,14 +241,18 @@ func handleJobCommands(serverURL string, args []string) {
 		_ = json.NewDecoder(resp.Body).Decode(&jobs)
 
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-		fmt.Fprintln(w, "ID\tNAME\tAGENT\tTARGET\tSCHEDULE\tENABLED")
+		fmt.Fprintln(w, "ID\tNAME\tTYPE\tAGENT\tTARGET\tSOURCE\tSCHEDULE\tENABLED")
 		for _, j := range jobs {
 			sched := j.ScheduleCron
 			if sched == "" {
 				sched = "manual"
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%t\n",
-				j.ID.String()[:8], j.Name, j.AgentName, j.TargetName, sched, j.Enabled,
+			jobType := j.JobType
+			if jobType == "" {
+				jobType = "filesystem"
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%t\n",
+				j.ID.String()[:8], j.Name, jobType, j.AgentName, j.TargetName, j.Summary(), sched, j.Enabled,
 			)
 		}
 		w.Flush()

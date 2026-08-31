@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/osshield/fallbck/pkg/dbbackup"
 	"time"
 
 	"github.com/google/uuid"
@@ -31,14 +32,17 @@ func (d *DB) CreateAgent(ctx context.Context, agent *Agent) error {
 	agent.UpdatedAt = now
 
 	query := `
-		INSERT INTO agents (id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		INSERT INTO agents (id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		RETURNING id, created_at, updated_at
 	`
+	if agent.AgentType == "" {
+		agent.AgentType = AgentTypeFilesystem
+	}
 	return d.Pool.QueryRow(ctx, query,
 		agent.ID, agent.Hostname, agent.IPAddress, agent.OS, agent.Arch,
 		agent.Version, agent.TaskQueue, agent.Status, agent.LastSeenAt,
-		agent.CreatedAt, agent.UpdatedAt,
+		agent.CreatedAt, agent.UpdatedAt, agent.AgentType,
 	).Scan(&agent.ID, &agent.CreatedAt, &agent.UpdatedAt)
 }
 
@@ -47,9 +51,10 @@ func (d *DB) UpsertAgent(ctx context.Context, agent *Agent) error {
 	agent.UpdatedAt = now
 
 	query := `
-		INSERT INTO agents (id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		INSERT INTO agents (id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		ON CONFLICT (id) DO UPDATE SET
+			agent_type = EXCLUDED.agent_type,
 			hostname = EXCLUDED.hostname,
 			ip_address = EXCLUDED.ip_address,
 			os = EXCLUDED.os,
@@ -64,18 +69,18 @@ func (d *DB) UpsertAgent(ctx context.Context, agent *Agent) error {
 	return d.Pool.QueryRow(ctx, query,
 		agent.ID, agent.Hostname, agent.IPAddress, agent.OS, agent.Arch,
 		agent.Version, agent.TaskQueue, agent.Status, agent.LastSeenAt,
-		now, now,
+		now, now, agent.AgentType,
 	).Scan(&agent.CreatedAt, &agent.UpdatedAt)
 }
 
 func (d *DB) GetAgentByID(ctx context.Context, id uuid.UUID) (*Agent, error) {
 	query := `
-		SELECT id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at
+		SELECT id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type
 		FROM agents WHERE id = $1
 	`
 	row := d.Pool.QueryRow(ctx, query, id)
 	var a Agent
-	err := row.Scan(&a.ID, &a.Hostname, &a.IPAddress, &a.OS, &a.Arch, &a.Version, &a.TaskQueue, &a.Status, &a.LastSeenAt, &a.CreatedAt, &a.UpdatedAt)
+	err := row.Scan(&a.ID, &a.Hostname, &a.IPAddress, &a.OS, &a.Arch, &a.Version, &a.TaskQueue, &a.Status, &a.LastSeenAt, &a.CreatedAt, &a.UpdatedAt, &a.AgentType)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -87,7 +92,7 @@ func (d *DB) GetAgentByID(ctx context.Context, id uuid.UUID) (*Agent, error) {
 
 func (d *DB) ListAgents(ctx context.Context) ([]*Agent, error) {
 	query := `
-		SELECT id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at
+		SELECT id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type
 		FROM agents ORDER BY hostname ASC
 	`
 	rows, err := d.Pool.Query(ctx, query)
@@ -99,7 +104,7 @@ func (d *DB) ListAgents(ctx context.Context) ([]*Agent, error) {
 	var agents []*Agent
 	for rows.Next() {
 		var a Agent
-		if err := rows.Scan(&a.ID, &a.Hostname, &a.IPAddress, &a.OS, &a.Arch, &a.Version, &a.TaskQueue, &a.Status, &a.LastSeenAt, &a.CreatedAt, &a.UpdatedAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.Hostname, &a.IPAddress, &a.OS, &a.Arch, &a.Version, &a.TaskQueue, &a.Status, &a.LastSeenAt, &a.CreatedAt, &a.UpdatedAt, &a.AgentType); err != nil {
 			return nil, err
 		}
 		agents = append(agents, &a)
@@ -274,16 +279,20 @@ func (d *DB) CreateJob(ctx context.Context, job *BackupJob) error {
 	if err != nil {
 		return fmt.Errorf("failed to serialize retention policy: %w", err)
 	}
+	jobType, dbConfigJSON, err := jobTypeColumns(job)
+	if err != nil {
+		return err
+	}
 
 	query := `
-		INSERT INTO backup_jobs (id, name, agent_id, target_id, schedule_cron, backup_paths, exclude_paths, retention_policy, enabled, direct_pbs, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		INSERT INTO backup_jobs (id, name, agent_id, target_id, schedule_cron, backup_paths, exclude_paths, retention_policy, enabled, direct_pbs, created_at, updated_at, job_type, db_config)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		RETURNING id
 	`
 	return d.Pool.QueryRow(ctx, query,
 		job.ID, job.Name, job.AgentID, job.TargetID, job.ScheduleCron,
 		backupPathsJSON, excludePathsJSON, retentionJSON, job.Enabled, job.DirectPBS,
-		job.CreatedAt, job.UpdatedAt,
+		job.CreatedAt, job.UpdatedAt, jobType, dbConfigJSON,
 	).Scan(&job.ID)
 }
 
@@ -291,6 +300,7 @@ func (d *DB) GetJobByID(ctx context.Context, id uuid.UUID) (*BackupJob, error) {
 	query := `
 		SELECT j.id, j.name, j.agent_id, j.target_id, j.schedule_cron, j.backup_paths, j.exclude_paths,
 		       j.retention_policy, j.enabled, j.direct_pbs, j.created_at, j.updated_at,
+		       j.job_type, j.db_config,
 		       a.hostname as agent_name, t.name as target_name
 		FROM backup_jobs j
 		JOIN agents a ON j.agent_id = a.id
@@ -299,11 +309,12 @@ func (d *DB) GetJobByID(ctx context.Context, id uuid.UUID) (*BackupJob, error) {
 	`
 	row := d.Pool.QueryRow(ctx, query, id)
 	var j BackupJob
-	var backupPathsRaw, excludePathsRaw, retentionRaw []byte
+	var backupPathsRaw, excludePathsRaw, retentionRaw, dbConfigRaw []byte
 	err := row.Scan(
 		&j.ID, &j.Name, &j.AgentID, &j.TargetID, &j.ScheduleCron,
 		&backupPathsRaw, &excludePathsRaw, &retentionRaw,
 		&j.Enabled, &j.DirectPBS, &j.CreatedAt, &j.UpdatedAt,
+		&j.JobType, &dbConfigRaw,
 		&j.AgentName, &j.TargetName,
 	)
 	if err != nil {
@@ -316,6 +327,7 @@ func (d *DB) GetJobByID(ctx context.Context, id uuid.UUID) (*BackupJob, error) {
 	_ = json.Unmarshal(backupPathsRaw, &j.BackupPaths)
 	_ = json.Unmarshal(excludePathsRaw, &j.ExcludePaths)
 	_ = json.Unmarshal(retentionRaw, &j.RetentionPolicy)
+	j.DBConfig = parseDBConfig(dbConfigRaw)
 
 	return &j, nil
 }
@@ -324,6 +336,7 @@ func (d *DB) ListJobs(ctx context.Context) ([]*BackupJob, error) {
 	query := `
 		SELECT j.id, j.name, j.agent_id, j.target_id, j.schedule_cron, j.backup_paths, j.exclude_paths,
 		       j.retention_policy, j.enabled, j.direct_pbs, j.created_at, j.updated_at,
+		       j.job_type, j.db_config,
 		       a.hostname as agent_name, t.name as target_name
 		FROM backup_jobs j
 		JOIN agents a ON j.agent_id = a.id
@@ -339,11 +352,12 @@ func (d *DB) ListJobs(ctx context.Context) ([]*BackupJob, error) {
 	var jobs []*BackupJob
 	for rows.Next() {
 		var j BackupJob
-		var backupPathsRaw, excludePathsRaw, retentionRaw []byte
+		var backupPathsRaw, excludePathsRaw, retentionRaw, dbConfigRaw []byte
 		if err := rows.Scan(
 			&j.ID, &j.Name, &j.AgentID, &j.TargetID, &j.ScheduleCron,
 			&backupPathsRaw, &excludePathsRaw, &retentionRaw,
 			&j.Enabled, &j.DirectPBS, &j.CreatedAt, &j.UpdatedAt,
+			&j.JobType, &dbConfigRaw,
 			&j.AgentName, &j.TargetName,
 		); err != nil {
 			return nil, err
@@ -351,9 +365,39 @@ func (d *DB) ListJobs(ctx context.Context) ([]*BackupJob, error) {
 		_ = json.Unmarshal(backupPathsRaw, &j.BackupPaths)
 		_ = json.Unmarshal(excludePathsRaw, &j.ExcludePaths)
 		_ = json.Unmarshal(retentionRaw, &j.RetentionPolicy)
+		j.DBConfig = parseDBConfig(dbConfigRaw)
 		jobs = append(jobs, &j)
 	}
 	return jobs, rows.Err()
+}
+
+// jobTypeColumns returns the job_type and db_config column values
+func jobTypeColumns(job *BackupJob) (string, []byte, error) {
+	jobType, ok := NormalizeAgentType(job.JobType)
+	if !ok {
+		return "", nil, fmt.Errorf("unknown job type %q", job.JobType)
+	}
+	job.JobType = jobType
+	if jobType != JobTypeDatabase || job.DBConfig == nil {
+		return jobType, []byte("{}"), nil
+	}
+	raw, err := json.Marshal(job.DBConfig)
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to serialize database configuration: %w", err)
+	}
+	return jobType, raw, nil
+}
+
+// parseDBConfig decodes the db_config column; an empty object yields nil
+func parseDBConfig(raw []byte) *dbbackup.Spec {
+	if len(raw) == 0 {
+		return nil
+	}
+	var spec dbbackup.Spec
+	if err := json.Unmarshal(raw, &spec); err != nil || spec.Engine == "" {
+		return nil
+	}
+	return &spec
 }
 
 func (d *DB) DeleteJob(ctx context.Context, id uuid.UUID) error {
