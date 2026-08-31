@@ -24,21 +24,49 @@ var AgentVersion = "0.1.0"
 // ConfigFileName is the agent configuration file inside the data directory
 const ConfigFileName = "agent.yaml"
 
-// EnrollAgent exchanges a one-time enrollment token for an agent identity and bearer
-// token, and writes agent.yaml (and an optional server CA bundle) into dataDir.
+// Options parameterise an enrollment
+type Options struct {
+	ServerURL string
+	Token     string
+	// DataDir receives agent.yaml; default: the type's default data directory
+	DataDir string
+	// AgentType is config.AgentTypeFilesystem (default) or config.AgentTypeDatabase
+	AgentType string
+	// Version reported to the server (default AgentVersion)
+	Version string
+}
+
+// EnrollAgent enrolls a filesystem agent (see Enroll)
 func EnrollAgent(ctx context.Context, serverURL, token, dataDir string) (*config.AgentConfig, error) {
-	if dataDir == "" {
-		dataDir = config.DefaultAgentDataDir()
+	return Enroll(ctx, Options{ServerURL: serverURL, Token: token, DataDir: dataDir})
+}
+
+// Enroll exchanges a one-time enrollment token for an agent identity and bearer token,
+// and writes agent.yaml (and an optional server CA bundle) into the data directory.
+// Operator settings already present in an existing agent.yaml (db_backup, TLS options)
+// are preserved.
+func Enroll(ctx context.Context, o Options) (*config.AgentConfig, error) {
+	if o.AgentType == "" {
+		o.AgentType = config.AgentTypeFilesystem
 	}
-	serverURL = strings.TrimRight(serverURL, "/")
+	if o.Version == "" {
+		o.Version = AgentVersion
+	}
+	dataDir := o.DataDir
+	if dataDir == "" {
+		dataDir = config.DefaultAgentDataDirFor(o.AgentType)
+	}
+	serverURL := strings.TrimRight(o.ServerURL, "/")
+	token := o.Token
 
 	hostname, _ := os.Hostname()
 	reqBody := api.EnrollRequest{
-		Token:    token,
-		Hostname: hostname,
-		OS:       runtime.GOOS,
-		Arch:     runtime.GOARCH,
-		Version:  AgentVersion,
+		Token:     token,
+		Hostname:  hostname,
+		OS:        runtime.GOOS,
+		Arch:      runtime.GOARCH,
+		Version:   o.Version,
+		AgentType: o.AgentType,
 	}
 
 	jsonBytes, err := json.Marshal(reqBody)
@@ -104,7 +132,16 @@ func EnrollAgent(ctx context.Context, serverURL, token, dataDir string) (*config
 		cfg.ServerCACertPath = caPath
 	}
 
-	if err := cfg.Save(filepath.Join(dataDir, ConfigFileName)); err != nil {
+	configPath := filepath.Join(dataDir, ConfigFileName)
+	if existing, err := config.ReadAgentConfigFile(configPath); err == nil {
+		cfg.DBBackup = existing.DBBackup
+		cfg.InsecureSkipVerify = existing.InsecureSkipVerify
+		if cfg.ServerCACertPath == "" {
+			cfg.ServerCACertPath = existing.ServerCACertPath
+		}
+	}
+
+	if err := cfg.Save(configPath); err != nil {
 		return nil, err
 	}
 	return cfg, nil

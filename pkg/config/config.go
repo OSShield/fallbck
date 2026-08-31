@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"github.com/osshield/fallbck/pkg/dbbackup"
 	"log/slog"
 	"net/url"
 	"os"
@@ -157,6 +158,25 @@ type AgentConfig struct {
 	InsecureSkipVerify bool   `yaml:"insecure_skip_verify" json:"insecure_skip_verify"`
 	// EnrollmentKey triggers self-enrollment on first start
 	EnrollmentKey string `yaml:"enrollment_key" json:"-"`
+	// DBBackup configures fallbck-db-agent (spool, tools, credential profiles)
+	DBBackup dbbackup.Config `yaml:"db_backup,omitempty" json:"db_backup"`
+}
+
+// Agent types (agents.agent_type); each has its own binary and data directory
+const (
+	AgentTypeFilesystem = "filesystem"
+	AgentTypeDatabase   = "database"
+)
+
+// AgentTypes lists the known agent types
+var AgentTypes = []string{AgentTypeFilesystem, AgentTypeDatabase}
+
+// AgentDirName is the per-type directory name under /var/lib/fallbck and ~/.fallbck
+func AgentDirName(agentType string) string {
+	if agentType == AgentTypeDatabase {
+		return "db-agent"
+	}
+	return "agent"
 }
 
 // DefaultServerConfig returns the defaults for fallbck-server
@@ -206,20 +226,33 @@ func DefaultServerConfig() *ServerConfig {
 // the agent state; the service units point at it explicitly.
 const SystemAgentDataDir = "/var/lib/fallbck/agent"
 
-// DefaultAgentDataDir returns the agent data directory used when none is configured:
-// FALLBCK_AGENT_DATA_DIR if set, the system directory when running as root (the
-// packaged case), otherwise ~/.fallbck/agent for unprivileged use.
-func DefaultAgentDataDir() string {
+// SystemDBAgentDataDir is the packaged fallbck-db-agent state directory
+const SystemDBAgentDataDir = "/var/lib/fallbck/db-agent"
+
+// SystemAgentDataDirFor returns the packaged data directory for an agent type
+func SystemAgentDataDirFor(agentType string) string {
+	return "/var/lib/fallbck/" + AgentDirName(agentType)
+}
+
+// DefaultAgentDataDirFor is DefaultAgentDataDir for a given agent type
+func DefaultAgentDataDirFor(agentType string) string {
 	if dir := os.Getenv("FALLBCK_AGENT_DATA_DIR"); dir != "" {
 		return dir
 	}
 	if os.Geteuid() == 0 {
-		return SystemAgentDataDir
+		return SystemAgentDataDirFor(agentType)
 	}
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		return filepath.Join(home, ".fallbck", "agent")
+		return filepath.Join(home, ".fallbck", AgentDirName(agentType))
 	}
-	return SystemAgentDataDir
+	return SystemAgentDataDirFor(agentType)
+}
+
+// DefaultAgentDataDir returns the agent data directory used when none is configured:
+// FALLBCK_AGENT_DATA_DIR if set, the system directory when running as root (the
+// packaged case), otherwise ~/.fallbck/agent for unprivileged use.
+func DefaultAgentDataDir() string {
+	return DefaultAgentDataDirFor(AgentTypeFilesystem)
 }
 
 // DefaultAgentConfig returns the defaults for fallbck-agent
@@ -356,7 +389,98 @@ func LoadAgentConfig(filePath string) (*AgentConfig, error) {
 	envBool("FALLBCK_AGENT_INSECURE_SKIP_VERIFY", &cfg.InsecureSkipVerify)
 	envString("FALLBCK_AGENT_ENROLLMENT_KEY", &cfg.EnrollmentKey)
 
+	envString("FALLBCK_AGENT_DB_SPOOL_DIR", &cfg.DBBackup.SpoolDir)
+	envString("FALLBCK_AGENT_DB_STATE_DIR", &cfg.DBBackup.StateDir)
+	envInt64("FALLBCK_AGENT_DB_MIN_FREE_BYTES", &cfg.DBBackup.MinFreeBytes)
+	envBool("FALLBCK_AGENT_DB_KEEP_FAILED_SPOOL", &cfg.DBBackup.KeepFailedSpool)
+	envString("FALLBCK_AGENT_DB_POSTGRES_BINDIR", &cfg.DBBackup.Tools.PostgresBinDir)
+	envString("FALLBCK_AGENT_DB_MYSQL_BINDIR", &cfg.DBBackup.Tools.MySQLBinDir)
+	envString("FALLBCK_AGENT_DB_MONGO_BINDIR", &cfg.DBBackup.Tools.MongoBinDir)
+	applyProfileEnv(&cfg.DBBackup, os.Environ())
+	if err := cfg.DBBackup.Validate(); err != nil {
+		return nil, err
+	}
+
 	return cfg, nil
+}
+
+// ReadAgentConfigFile loads only the YAML file (no defaults, no environment); it reports
+// os.ErrNotExist when the file is missing.
+func ReadAgentConfigFile(filePath string) (*AgentConfig, error) {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, err
+	}
+	var cfg AgentConfig
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse agent config YAML: %w", err)
+	}
+	return &cfg, nil
+}
+
+// UpdateAgentToken rewrites only the token fields of the config file, keeping every
+// other setting (including values that came from the environment) out of the file.
+func UpdateAgentToken(filePath, token string, expires time.Time) error {
+	cfg, err := ReadAgentConfigFile(filePath)
+	if err != nil {
+		return err
+	}
+	cfg.AuthToken = token
+	cfg.TokenExpiresAt = expires
+	return cfg.Save(filePath)
+}
+
+// profileEnvPrefix introduces FALLBCK_AGENT_DB_PROFILE_<NAME>_{ENGINE,USER,PASSWORD,PASSWORD_FILE,HOST,PORT}
+// overrides; NAME is lower-cased to form the profile name (letters, digits, '_').
+const profileEnvPrefix = "FALLBCK_AGENT_DB_PROFILE_"
+
+var profileEnvFields = []string{"PASSWORD_FILE", "PASSWORD", "ENGINE", "USER", "HOST", "PORT"}
+
+func applyProfileEnv(c *dbbackup.Config, environ []string) {
+	for _, kv := range environ {
+		if !strings.HasPrefix(kv, profileEnvPrefix) {
+			continue
+		}
+		key, value, ok := strings.Cut(kv[len(profileEnvPrefix):], "=")
+		if !ok {
+			continue
+		}
+		var field, name string
+		for _, f := range profileEnvFields {
+			if strings.HasSuffix(key, "_"+f) {
+				field, name = f, strings.TrimSuffix(key, "_"+f)
+				break
+			}
+		}
+		if field == "" || name == "" {
+			continue
+		}
+		name = strings.ToLower(name)
+		if c.Profiles == nil {
+			c.Profiles = map[string]dbbackup.CredentialProfile{}
+		}
+		p := c.Profiles[name]
+		switch field {
+		case "ENGINE":
+			p.Engine = value
+		case "USER":
+			p.User = value
+		case "PASSWORD":
+			p.Password = value
+		case "PASSWORD_FILE":
+			p.PasswordFile = value
+		case "HOST":
+			p.Host = value
+		case "PORT":
+			fmt.Sscanf(value, "%d", &p.Port)
+		}
+		if p.Engine == "" {
+			if e, ok := dbbackup.NormalizeEngine(name); ok {
+				p.Engine = e
+			}
+		}
+		c.Profiles[name] = p
+	}
 }
 
 // Save writes the agent configuration to path with owner-only permissions (it holds the token)
@@ -427,6 +551,15 @@ func LogLevel() slog.Level {
 func envString(name string, dst *string) {
 	if v := os.Getenv(name); v != "" {
 		*dst = v
+	}
+}
+
+func envInt64(name string, dst *int64) {
+	if v := os.Getenv(name); v != "" {
+		var n int64
+		if _, err := fmt.Sscanf(v, "%d", &n); err == nil {
+			*dst = n
+		}
 	}
 }
 

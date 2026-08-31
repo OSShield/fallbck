@@ -2,10 +2,32 @@ package db
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/osshield/fallbck/pkg/config"
+	"github.com/osshield/fallbck/pkg/dbbackup"
 )
+
+// Agent / job types: each agent binary handles one kind of job
+const (
+	AgentTypeFilesystem = config.AgentTypeFilesystem
+	AgentTypeDatabase   = config.AgentTypeDatabase
+	JobTypeFilesystem   = config.AgentTypeFilesystem
+	JobTypeDatabase     = config.AgentTypeDatabase
+)
+
+// NormalizeAgentType maps "" to filesystem and reports unknown values
+func NormalizeAgentType(t string) (string, bool) {
+	switch t {
+	case "", AgentTypeFilesystem:
+		return AgentTypeFilesystem, true
+	case AgentTypeDatabase:
+		return AgentTypeDatabase, true
+	}
+	return t, false
+}
 
 // AgentStatus represents the lifecycle state of an agent
 type AgentStatus string
@@ -25,6 +47,7 @@ type Agent struct {
 	OS         string      `json:"os" db:"os"`
 	Arch       string      `json:"arch" db:"arch"`
 	Version    string      `json:"version" db:"version"`
+	AgentType  string      `json:"agent_type" db:"agent_type"`
 	TaskQueue  string      `json:"task_queue" db:"task_queue"`
 	Status     AgentStatus `json:"status" db:"status"`
 	LastSeenAt *time.Time  `json:"last_seen_at" db:"last_seen_at"`
@@ -34,13 +57,13 @@ type Agent struct {
 
 // EnrollmentToken represents a one-time or multi-use token for agent onboarding
 type EnrollmentToken struct {
-	ID         uuid.UUID `json:"id" db:"id"`
-	TokenHash  string    `json:"-" db:"token_hash"`
-	Name       string    `json:"name" db:"name"`
-	MaxUses    int       `json:"max_uses" db:"max_uses"`
-	UsesCount  int       `json:"uses_count" db:"uses_count"`
-	ExpiresAt  time.Time `json:"expires_at" db:"expires_at"`
-	CreatedAt  time.Time `json:"created_at" db:"created_at"`
+	ID        uuid.UUID `json:"id" db:"id"`
+	TokenHash string    `json:"-" db:"token_hash"`
+	Name      string    `json:"name" db:"name"`
+	MaxUses   int       `json:"max_uses" db:"max_uses"`
+	UsesCount int       `json:"uses_count" db:"uses_count"`
+	ExpiresAt time.Time `json:"expires_at" db:"expires_at"`
+	CreatedAt time.Time `json:"created_at" db:"created_at"`
 }
 
 // pxar archive formats a target accepts
@@ -96,9 +119,14 @@ type BackupJob struct {
 	Enabled         bool            `json:"enabled" db:"enabled"`
 	// DirectPBS makes the agent talk to PBS itself (credentials handed out per run)
 	// instead of through the server-side tunnel. Server-side setting only.
-	DirectPBS bool      `json:"direct_pbs" db:"direct_pbs"`
-	CreatedAt time.Time `json:"created_at" db:"created_at"`
-	UpdatedAt       time.Time       `json:"updated_at" db:"updated_at"`
+	DirectPBS bool `json:"direct_pbs" db:"direct_pbs"`
+	// JobType is filesystem (BackupPaths) or database (DBConfig)
+	JobType string `json:"job_type" db:"job_type"`
+	// DBConfig is the database job specification; the password is stored but never
+	// returned by the API (see Sanitize)
+	DBConfig  *dbbackup.Spec `json:"db_config,omitempty" db:"db_config"`
+	CreatedAt time.Time      `json:"created_at" db:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at" db:"updated_at"`
 
 	// Joined fields for display
 	AgentName  string `json:"agent_name,omitempty"`
@@ -151,4 +179,26 @@ type BackupRun struct {
 func (r RetentionPolicy) ToJSON() []byte {
 	bytes, _ := json.Marshal(r)
 	return bytes
+}
+
+// IsDatabase reports whether the job is a database backup
+func (j *BackupJob) IsDatabase() bool { return j.JobType == JobTypeDatabase }
+
+// Sanitize redacts the stored database password (HasPassword tells whether one exists)
+func (j *BackupJob) Sanitize() *BackupJob {
+	if j.JobType == "" {
+		j.JobType = JobTypeFilesystem
+	}
+	if j.DBConfig != nil {
+		j.DBConfig = j.DBConfig.Redacted()
+	}
+	return j
+}
+
+// Summary describes what the job backs up (paths or database target)
+func (j *BackupJob) Summary() string {
+	if j.IsDatabase() {
+		return j.DBConfig.Summary()
+	}
+	return strings.Join(j.BackupPaths, ", ")
 }

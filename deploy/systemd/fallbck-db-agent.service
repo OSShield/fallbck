@@ -1,0 +1,35 @@
+[Unit]
+Description=FallBCK database backup agent (PostgreSQL, MySQL/MariaDB, MongoDB)
+Documentation=https://github.com/osshield/fallbck
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=fallbck
+Group=fallbck
+# Enroll first:  fallbck-db-agent enroll --server https://backup.example.com --token <token>
+# or set FALLBCK_AGENT_ENROLLMENT_KEY / FALLBCK_AGENT_SERVER_URL in /etc/fallbck/db-agent.env.
+# Credential profiles live under db_backup.profiles in /var/lib/fallbck/db-agent/agent.yaml
+# (or FALLBCK_AGENT_DB_PROFILE_<NAME>_PASSWORD in db-agent.env).
+Environment=FALLBCK_AGENT_DATA_DIR=/var/lib/fallbck/db-agent
+EnvironmentFile=-/etc/fallbck/db-agent.env
+ExecStart=/usr/local/bin/fallbck-db-agent run --config /var/lib/fallbck/db-agent/agent.yaml
+Restart=on-failure
+RestartSec=10s
+# A running dump is terminated (SIGTERM to the tool, then SIGKILL after 20s)
+TimeoutStopSec=60s
+WorkingDirectory=/var/lib/fallbck/db-agent
+StateDirectory=fallbck/db-agent
+ConfigurationDirectory=fallbck
+LimitNOFILE=65536
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ReadWritePaths=/var/lib/fallbck/db-agent
+
+[Install]
+WantedBy=multi-user.target

@@ -41,7 +41,9 @@ The primary backup target is Proxmox Backup Server, driven by the Proxmox Backup
 3. The server validates both, loads the target, connects to PBS with the target's **API token** (TLS chain verification or certificate fingerprint pin), performs the `proxmox-backup-protocol-v1` upgrade for exactly the snapshot named in the ticket, and pipes bytes between PBS and the agent.
 4. The agent hands that stream to gopbs (`pbs.Config.DialSession`), which chunks, deduplicates and uploads the pxar archive, catalog and manifest, then finishes the snapshot.
 
-Agents never see PBS credentials or choose the datastore/namespace/snapshot; the server does not parse the backup protocol, it only transports it. Per job, an administrator can enable `direct_pbs`: the agent then obtains the target's endpoint, fingerprint and API token for that run (`GET /api/v1/agents/pbs-credentials`, agent token + backup ticket, only honoured for jobs with the flag) and connects to PBS directly with gopbs. Prune runs server-side through the PBS REST API. Restore is done with PBS's own tools (GUI / `proxmox-backup-client`) since the snapshots are standard pxar.
+Agents never see PBS credentials or choose the datastore/namespace/snapshot; the server does not parse the backup protocol, it only transports it.
+
+Database jobs (`job_type: database`, `db_config`) follow the same path with `fallbck-db-agent` (agent type `database`, own task queue): `PrepareBackupSession` names the group `host/db-<engine>-<host>` and passes the job spec with the password redacted; the agent fetches a server-stored password with its ticket (`GET /api/v1/agents/db-credentials`) or uses a local credential profile, dumps with the vendor tools into a spool directory, and uploads it through the same tunnel/direct path as archive `db.pxar` plus a `fallbck-db.json.blob` manifest (versions, checksums, WAL/binlog/oplog positions, restore commands). Per job, an administrator can enable `direct_pbs`: the agent then obtains the target's endpoint, fingerprint and API token for that run (`GET /api/v1/agents/pbs-credentials`, agent token + backup ticket, only honoured for jobs with the flag) and connects to PBS directly with gopbs. Prune runs server-side through the PBS REST API. Restore is done with PBS's own tools (GUI / `proxmox-backup-client`) since the snapshots are standard pxar.
 
 ## Code map
 | Package | Purpose |
@@ -56,6 +58,10 @@ Agents never see PBS credentials or choose the datastore/namespace/snapshot; the
 | `pkg/temporal` | SDK client helpers, server worker, workflows and activities |
 | `pkg/api`, `web` | REST API and server-rendered Web UI |
 | `pkg/proxy` | PBS backup-session tunnel (gRPC byte stream, server-side protocol upgrade, TLS pinning); `pbstest` fake PBS for tests |
-| `pkg/agent/backup` | agent backup engine on top of gopbs |
+| `cmd/fallbck-db-agent` | database agent: enrollment as type `database`, `tools` diagnostics, database activities |
+| `pkg/agent/runtime` | shared agent daemon skeleton (config + self-enrollment, gateway connections, worker, heartbeat/token rotation) |
+| `pkg/agent/backup` | agent backup engine on top of gopbs (pxar upload, blobs) |
+| `pkg/dbbackup` | database job spec, credential profiles, manifest (shared by server, agent and config) |
+| `pkg/agent/dbbackup` | database engines (PostgreSQL, MySQL/MariaDB, MongoDB): tool detection, prechecks, dumps, spool, state |
 | `pkg/db` | pgx pool, versioned migrations, repositories |
 | `pkg/integration` | end-to-end test: embedded Temporal + gateway + agent worker (`go test -tags sqlite`) |

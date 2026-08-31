@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/osshield/fallbck/pkg/db"
+	"github.com/osshield/fallbck/pkg/dbbackup"
 	"github.com/osshield/fallbck/pkg/temporal"
 	"github.com/osshield/fallbck/pkg/temporal/activities"
 	"github.com/stretchr/testify/mock"
@@ -111,4 +112,40 @@ func TestBackupJobWorkflowCancelled(t *testing.T) {
 		t.Errorf("finalised status = %s, want cancelled", finalized.Status)
 	}
 	env.AssertNotCalled(t, "PruneJob", mock.Anything, mock.Anything)
+}
+
+func TestBackupJobWorkflowDatabase(t *testing.T) {
+	testSuite := &testsuite.WorkflowTestSuite{}
+	env := testSuite.NewTestWorkflowEnvironment()
+
+	jobID := uuid.New()
+	session := &temporal.BackupSessionInfo{
+		JobID: jobID, AgentTaskQueue: "fallbck-agent-db", BackupRunID: uuid.New(),
+		JobType:  db.JobTypeDatabase,
+		DBConfig: &dbbackup.Spec{Engine: dbbackup.EnginePostgres, Host: "db01"},
+	}
+	execResult := &temporal.BackupExecutionResult{Status: db.RunStatusCompleted, SnapshotID: "host/db-postgres-db01/2026-08-28T01:00:00Z"}
+
+	var serverActs *activities.ServerActivities
+	var agentActs *activities.AgentActivities
+	var dbActs *activities.DBAgentActivities
+	env.OnActivity(serverActs.PrepareBackupSession, mock.Anything, jobID).Return(session, nil)
+	env.OnActivity(dbActs.ExecuteDatabaseBackup, mock.Anything, session).Return(execResult, nil)
+	env.OnActivity(agentActs.ExecuteFilesystemBackup, mock.Anything, mock.Anything).Return(nil, nil)
+	env.OnActivity(serverActs.FinalizeBackupRun, mock.Anything, session, execResult).Return(nil)
+	env.OnActivity(serverActs.PruneJob, mock.Anything, session).Return(nil)
+
+	env.ExecuteWorkflow(BackupJobWorkflow, jobID)
+	if !env.IsWorkflowCompleted() {
+		t.Fatal("Workflow did not complete")
+	}
+	var result temporal.BackupExecutionResult
+	if err := env.GetWorkflowResult(&result); err != nil {
+		t.Fatalf("Workflow failed: %v", err)
+	}
+	if result.SnapshotID != execResult.SnapshotID {
+		t.Errorf("result %+v", result)
+	}
+	env.AssertNotCalled(t, "ExecuteFilesystemBackup", mock.Anything, mock.Anything)
+	env.AssertCalled(t, "PruneJob", mock.Anything, session)
 }

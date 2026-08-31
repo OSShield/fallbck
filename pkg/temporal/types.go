@@ -1,6 +1,7 @@
 package temporal
 
 import (
+	"github.com/osshield/fallbck/pkg/dbbackup"
 	"time"
 
 	"github.com/google/uuid"
@@ -29,7 +30,14 @@ type BackupSessionInfo struct {
 	PxarFormat string `json:"pxar_format"`
 	// DirectPBS: the agent fetches PBS credentials with its ticket and connects to PBS
 	// itself instead of through the server tunnel (job setting)
-	DirectPBS       bool               `json:"direct_pbs"`
+	DirectPBS bool `json:"direct_pbs"`
+	// JobType is filesystem or database; database jobs carry DBConfig (password
+	// redacted — the agent fetches it with its ticket when DBPasswordOnServer is set)
+	JobType            string         `json:"job_type,omitempty"`
+	DBConfig           *dbbackup.Spec `json:"db_config,omitempty"`
+	DBPasswordOnServer bool           `json:"db_password_on_server,omitempty"`
+	// JobName is informational (manifest)
+	JobName         string             `json:"job_name,omitempty"`
 	BackupPaths     []string           `json:"backup_paths"`
 	ExcludePaths    []string           `json:"exclude_paths"`
 	RetentionPolicy db.RetentionPolicy `json:"retention_policy"`

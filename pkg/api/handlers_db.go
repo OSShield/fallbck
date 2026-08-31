@@ -1,0 +1,117 @@
+package api
+
+import (
+	"context"
+	"errors"
+	"log/slog"
+	"net/http"
+
+	"github.com/google/uuid"
+	"github.com/osshield/fallbck/pkg/auth"
+	"github.com/osshield/fallbck/pkg/db"
+)
+
+// DBCredentials hands an agent the server-stored database password for a run
+type DBCredentials struct {
+	Password string `json:"password"`
+}
+
+// validateJob checks a job create/update request: required fields, the agent and
+// target exist, the job type matches the agent type, and the type-specific
+// configuration is valid. existing (updates only) supplies the stored password when
+// the request leaves it blank. It returns the message to show the client.
+func (s *ServerAPI) validateJob(ctx context.Context, job *db.BackupJob, existing *db.BackupJob) (string, error) {
+	if job.Name == "" || job.AgentID == uuid.Nil || job.TargetID == uuid.Nil {
+		return "Name, AgentID, and TargetID are required", errors.New("missing fields")
+	}
+	jobType, ok := db.NormalizeAgentType(job.JobType)
+	if !ok {
+		return "Unknown job type " + job.JobType, errors.New("bad job type")
+	}
+	job.JobType = jobType
+
+	switch jobType {
+	case db.JobTypeDatabase:
+		if len(job.BackupPaths) > 0 {
+			return "Database jobs do not take backup paths", errors.New("paths on db job")
+		}
+		if job.DBConfig == nil {
+			return "Database jobs require db_config", errors.New("missing db_config")
+		}
+		if job.DBConfig.ClearPassword {
+			job.DBConfig.Password = ""
+		} else if job.DBConfig.Password == "" && existing != nil && existing.DBConfig != nil {
+			job.DBConfig.Password = existing.DBConfig.Password
+		}
+		job.DBConfig.ClearPassword = false
+		job.DBConfig.HasPassword = false
+		if err := job.DBConfig.Validate(); err != nil {
+			return err.Error(), err
+		}
+	default:
+		if job.DBConfig != nil {
+			return "Filesystem jobs do not take db_config", errors.New("db_config on filesystem job")
+		}
+		paths, err := db.ValidateBackupPaths(job.BackupPaths)
+		if err != nil {
+			return err.Error(), err
+		}
+		job.BackupPaths = paths
+	}
+
+	if s.DB == nil {
+		return "", nil
+	}
+	agent, err := s.DB.GetAgentByID(ctx, job.AgentID)
+	if err != nil {
+		return "Agent not found", err
+	}
+	if agentType, _ := db.NormalizeAgentType(agent.AgentType); agentType != jobType {
+		return "Agent " + agent.Hostname + " is a " + agentType + " agent and cannot run " + jobType + " jobs", errors.New("agent type mismatch")
+	}
+	if _, err := s.DB.GetTargetByID(ctx, job.TargetID); err != nil {
+		return "Backup target not found", err
+	}
+	return "", nil
+}
+
+// HandleDBCredentials hands a database agent the password stored on a database job for
+// the run identified by its backup ticket. Like HandlePBSCredentials, the ticket must
+// have been issued to the calling agent.
+func (s *ServerAPI) HandleDBCredentials(w http.ResponseWriter, r *http.Request) {
+	agent := auth.AgentFrom(r.Context())
+	if agent == nil {
+		s.writeError(w, http.StatusUnauthorized, "agent token required")
+		return
+	}
+	ticket := r.Header.Get(BackupTicketHeader)
+	if ticket == "" {
+		s.writeError(w, http.StatusBadRequest, "backup ticket header required")
+		return
+	}
+	claims, err := s.TokenManager.ValidateBackupTicket(ticket)
+	if err != nil {
+		s.writeError(w, http.StatusUnauthorized, "invalid or expired backup ticket")
+		return
+	}
+	if claims.AgentID != agent.AgentID {
+		slog.Warn("Database credential request with another agent's ticket", "agent_id", agent.AgentID, "ticket_agent_id", claims.AgentID)
+		s.writeError(w, http.StatusForbidden, "backup ticket was not issued to this agent")
+		return
+	}
+	job, err := s.DB.GetJobByID(r.Context(), claims.JobID)
+	if err != nil {
+		s.writeError(w, http.StatusNotFound, "job not found")
+		return
+	}
+	if !job.IsDatabase() || job.DBConfig == nil {
+		s.writeError(w, http.StatusForbidden, "job is not a database job")
+		return
+	}
+	if job.DBConfig.Password == "" {
+		s.writeError(w, http.StatusNotFound, "job stores no password; the agent must use a credential profile")
+		return
+	}
+	slog.Info("Handing database credentials to agent", "agent_id", agent.AgentID, "job_id", job.ID, "engine", job.DBConfig.Engine, "user", job.DBConfig.User)
+	s.writeJSON(w, http.StatusOK, DBCredentials{Password: job.DBConfig.Password})
+}

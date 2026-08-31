@@ -39,6 +39,20 @@ A job with several paths produces one `root.pxar` archive with each path at the 
 
 The agent needs exactly one endpoint: the server's public URL. It receives a bearer token at enrollment, polls its own Temporal task queue through the server's gateway, and streams backups into PBS through a session the server opens on its behalf (the agent never holds PBS credentials). A job can instead be set to **direct PBS access** (server-side job option `direct_pbs`): the agent then fetches the target's connection details and API token for that run and talks to PBS itself — useful when the agent has a better path to PBS than the server does.
 
+### Database agent
+
+`fallbck-db-agent` backs up **PostgreSQL** (`pg_dump` per database + `pg_dumpall --globals-only`, and/or `pg_basebackup` with streamed WAL), **MySQL/MariaDB** (`mysqldump`/`mariadb-dump --single-transaction` with the binlog position, optionally the binary logs written since the previous run) and **MongoDB** (`mongodump --oplog`, restorable with `--oplogReplay`). It enrolls like the filesystem agent but as agent type `database`, with its own data directory:
+
+```bash
+fallbck-db-agent enroll --server https://backup.example.com --token <enrollment token>
+fallbck-db-agent tools      # shows the detected client tools (pg_dump, mariadb-dump, mongodump, ...)
+fallbck-db-agent run
+```
+
+Database jobs are created in the Web UI (job type *Database*: engine, host, user, databases, TLS and engine options) and can only be assigned to database agents. The password is either stored on the server — handed to the agent per run over the agent's authenticated API, never through Temporal — or left blank, in which case the agent resolves it from a named **credential profile** in `db_backup.profiles` of its `agent.yaml` (`deploy/db-agent.yaml.example`; in containers `FALLBCK_AGENT_DB_PROFILE_<NAME>_PASSWORD`). Each run dumps into `<data_dir>/spool/<run>/` (the spool needs room for the largest dump; runs refuse to start below `db_backup.min_free_bytes`), uploads the directory as `db.pxar` together with a `fallbck-db.json.blob` manifest (tool and server versions, files and checksums, WAL range / binlog position and files / oplog, ready-to-run restore commands) and deletes the spool. Snapshots use the PBS group `host/db-<engine>-<host>` (override per job with *backup group id*), so they are pruned independently of the host's filesystem backups.
+
+Restore: `proxmox-backup-client restore <snapshot> db.pxar <dir>` (or download the manifest blob first) and follow `restore.commands` in `fallbck-db.json`. The Docker image (`Dockerfile.db-agent`) ships the client tools; the Linux packages rely on the distribution's `postgresql-client`, `mariadb-client`/`mysql-client` (binary-log fetching additionally needs `mysqlbinlog`/`mariadb-binlog`, which Alpine only ships in the `mariadb` package) and `mongodb-database-tools`. `pg_dump` must be at least as new as the server; the agent looks in the usual per-version directories (`/usr/lib/postgresql/*/bin`, `/usr/pgsql-*/bin`, `/usr/libexec/postgresql*`) or `db_backup.tools.postgres_bindir`.
+
 ## CLI
 
 Create an API key in the Web UI (API Keys), then:
@@ -57,12 +71,13 @@ PBS API tokens must be entered as `user@realm!tokenid:secret` (the `=` spelling 
 
 ## Linux packages
 
-Releases ship `.deb`, `.rpm` and `.apk` packages for `fallbck-server` and `fallbck-agent` (built by [GoReleaser](.goreleaser.yml) from the `Release` GitHub Action on `v*` tags; every push to `main` and every PR produces a snapshot build as a workflow artifact).
+Releases ship `.deb`, `.rpm` and `.apk` packages for `fallbck-server`, `fallbck-agent` and `fallbck-db-agent` (built by [GoReleaser](.goreleaser.yml) from the `Release` GitHub Action on `v*` tags; every push to `main` and every PR produces a snapshot build as a workflow artifact).
 
 | Package | Service | Config |
 |---|---|---|
 | `fallbck-server` | systemd `fallbck-server` (deb/rpm) / OpenRC `fallbck-server` (apk), runs as user `fallbck` | `/etc/fallbck/server.yaml`, secrets in `/etc/fallbck/server.env` |
 | `fallbck-agent` | systemd `fallbck-agent` / OpenRC `fallbck-agent`, runs as root | `/etc/fallbck/agent.env` (optional self-enrollment), state in `/var/lib/fallbck/agent` |
+| `fallbck-db-agent` | systemd `fallbck-db-agent` / OpenRC `fallbck-db-agent`, runs as user `fallbck` | `/etc/fallbck/db-agent.env`, credential profiles + spool in `/var/lib/fallbck/db-agent` (client tools from the distribution) |
 
 ```bash
 # server
@@ -74,6 +89,11 @@ systemctl enable --now fallbck-server              # OpenRC: rc-update add fallb
 apt install ./fallbck_agent_Linux_amd64.deb
 fallbck-agent enroll --server https://backup.example.com --token <enrollment token>
 systemctl enable --now fallbck-agent
+
+# database agent
+apt install ./fallbck_db_agent_Linux_amd64.deb postgresql-client mariadb-client
+sudo -u fallbck fallbck-db-agent enroll --server https://backup.example.com --token <enrollment token>
+systemctl enable --now fallbck-db-agent
 ```
 
 Publishing to the package repositories needs the `PKG_UPLOAD_PASSWORD` repository secret (the `linux_push` user of `*.pkg.lv`).

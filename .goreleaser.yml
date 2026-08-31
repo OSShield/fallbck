@@ -31,6 +31,21 @@ builds:
       - arm64
     binary: fallbck-agent
 
+  - id: fallbck-db-agent
+    main: ./cmd/fallbck-db-agent
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.AgentVersion={{ .Version }}
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    binary: fallbck-db-agent
+
 archives:
   - id: fallbck-server
     ids:
@@ -48,6 +63,17 @@ archives:
       - fallbck-agent
     name_template: >-
       {{ .ProjectName }}_agent_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+
+  - id: fallbck-db-agent
+    ids:
+      - fallbck-db-agent
+    name_template: >-
+      {{ .ProjectName }}_db_agent_
       {{- title .Os }}_
       {{- if eq .Arch "amd64" }}x86_64
       {{- else if eq .Arch "386" }}i386
@@ -212,11 +238,93 @@ nfpms:
       fields:
         Bugs: https://github.com/osshield/fallbck/issues
 
+  - id: fallbck-db-agent
+    ids:
+      - fallbck-db-agent
+    package_name: "fallbck-db-agent"
+    description: "fallbck-db-agent - Database backup agent (PostgreSQL, MySQL/MariaDB, MongoDB)"
+    vendor: "clysec"
+    maintainer: clysec
+    file_name_template: >-
+      {{ .ProjectName }}_db_agent_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}amd64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    formats:
+      - deb
+      - apk
+      - rpm
+    bindir: /usr/local/bin
+    # The database client tools come from the distribution; only one engine is
+    # usually needed, hence recommends rather than depends.
+    recommends:
+      - postgresql-client
+      - mariadb-client
+    contents:
+      - src: deploy/systemd/fallbck-db-agent.service
+        dst: /usr/lib/systemd/system/fallbck-db-agent.service
+        packager: deb
+      - src: deploy/systemd/fallbck-db-agent.service
+        dst: /usr/lib/systemd/system/fallbck-db-agent.service
+        packager: rpm
+      - src: deploy/openrc/fallbck-db-agent.initd
+        dst: /etc/init.d/fallbck-db-agent
+        packager: apk
+        file_info:
+          mode: 0755
+      - src: deploy/openrc/fallbck-db-agent.confd
+        dst: /etc/conf.d/fallbck-db-agent
+        type: config|noreplace
+        packager: apk
+      - src: deploy/packaging/db-agent.env
+        dst: /etc/fallbck/db-agent.env
+        type: config|noreplace
+        file_info:
+          mode: 0640
+          owner: root
+          group: fallbck
+      - src: deploy/db-agent.yaml.example
+        dst: /usr/share/doc/fallbck-db-agent/agent.yaml.example
+      - dst: /etc/fallbck
+        type: dir
+        file_info:
+          mode: 0755
+      # the fallbck user is created by the preinstall script, so it exists at unpack time
+      - dst: /var/lib/fallbck/db-agent
+        type: dir
+        file_info:
+          mode: 0700
+          owner: fallbck
+          group: fallbck
+      - dst: /var/log/fallbck
+        type: dir
+        file_info:
+          mode: 0750
+          owner: fallbck
+          group: fallbck
+    scripts:
+      preinstall: deploy/packaging/scripts/db-agent-preinstall.sh
+      postinstall: deploy/packaging/scripts/db-agent-postinstall.sh
+      preremove: deploy/packaging/scripts/db-agent-preremove.sh
+      postremove: deploy/packaging/scripts/db-agent-postremove.sh
+    apk:
+      scripts:
+        preupgrade: deploy/packaging/scripts/db-agent-preinstall.sh
+        postupgrade: deploy/packaging/scripts/db-agent-postinstall.sh
+    rpm:
+      summary: FallBCK database backup agent
+    deb:
+      fields:
+        Bugs: https://github.com/osshield/fallbck/issues
+
 uploads:
   - name: "debpkg"
     ids:
       - fallbck-server
       - fallbck-agent
+      - fallbck-db-agent
     method: "PUT"
     exts:
       - deb
@@ -229,6 +337,7 @@ uploads:
     ids:
       - fallbck-server
       - fallbck-agent
+      - fallbck-db-agent
     method: "PUT"
     exts:
       - apk
@@ -241,6 +350,7 @@ uploads:
     ids:
       - fallbck-server
       - fallbck-agent
+      - fallbck-db-agent
     method: "PUT"
     exts:
       - rpm

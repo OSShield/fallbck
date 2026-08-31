@@ -14,6 +14,8 @@ type EnrollRequest struct {
 	Arch      string `json:"arch"`
 	Version   string `json:"version"`
 	IPAddress string `json:"ip_address,omitempty"`
+	// AgentType is "filesystem" (default) or "database"
+	AgentType string `json:"agent_type,omitempty"`
 }
 
 // EnrollResponse contains the credentials and configuration needed for the agent to start.

@@ -19,6 +19,7 @@ func BackupJobWorkflow(ctx workflow.Context, jobID uuid.UUID) (*fbtemporal.Backu
 
 	var serverActs *activities.ServerActivities
 	var agentActs *activities.AgentActivities
+	var dbAgentActs *activities.DBAgentActivities
 
 	// 1. Prepare Backup Session on Server
 	serverActivityOpts := workflow.ActivityOptions{
@@ -55,6 +56,7 @@ func BackupJobWorkflow(ctx workflow.Context, jobID uuid.UUID) (*fbtemporal.Backu
 			NonRetryableErrorTypes: []string{
 				"unauthorized datastore scope",
 				"invalid or expired backup ticket",
+				activities.ErrTypeDBPrecheckFailed,
 			},
 		},
 	}
@@ -62,7 +64,12 @@ func BackupJobWorkflow(ctx workflow.Context, jobID uuid.UUID) (*fbtemporal.Backu
 
 	var execResult fbtemporal.BackupExecutionResult
 
-	execErr := workflow.ExecuteActivity(agentCtx, agentActs.ExecuteFilesystemBackup, &session).Get(agentCtx, &execResult)
+	var execErr error
+	if session.JobType == db.JobTypeDatabase {
+		execErr = workflow.ExecuteActivity(agentCtx, dbAgentActs.ExecuteDatabaseBackup, &session).Get(agentCtx, &execResult)
+	} else {
+		execErr = workflow.ExecuteActivity(agentCtx, agentActs.ExecuteFilesystemBackup, &session).Get(agentCtx, &execResult)
+	}
 	switch {
 	case execErr == nil:
 	case sdktemporal.IsCanceledError(execErr) || ctx.Err() != nil:

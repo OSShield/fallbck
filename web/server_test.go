@@ -30,6 +30,8 @@ func TestUIRenderRoutes(t *testing.T) {
 		{"/agents", http.StatusOK, "Enrolled Agents"},
 		{"/targets", http.StatusOK, "PBS Targets"},
 		{"/jobs", http.StatusOK, "Backup Jobs"},
+		{"/jobs", http.StatusOK, `name="job_type"`},
+		{"/agents", http.StatusOK, "Database agent"},
 		{"/runs", http.StatusOK, "Backup Executions"},
 		{"/tokens", http.StatusOK, "Enrollment Tokens"},
 		{"/apikeys", http.StatusOK, "API Keys"},
