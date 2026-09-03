@@ -121,6 +121,7 @@ func Run(ctx context.Context, o RunOptions) (*temporal.BackupExecutionResult, er
 		RunID: runID, JobID: jobID, Label: fmt.Sprintf("fallbck-%s-%s", jobID, runID),
 		Spec: spec, Creds: creds, Tools: tools, SpoolDir: spoolDir, SecretDir: secretDir,
 		PrevState: prev, Runner: runner,
+		Snapshot: fmt.Sprintf("%s/%s/%s", o.Session.BackupType, o.Session.BackupID, time.Unix(o.Session.BackupTime, 0).UTC().Format(time.RFC3339)),
 		Progress: func(p Progress) {
 			current = p
 			p.BytesInSpool = dirSize(spoolDir)
@@ -231,6 +232,7 @@ func Run(ctx context.Context, o RunOptions) (*temporal.BackupExecutionResult, er
 		Postgres:       res.Postgres,
 		MySQL:          res.MySQL,
 		MongoDB:        res.MongoDB,
+		MSSQL:          res.MSSQL,
 		Restore:        res.Restore,
 	}
 	if manifest.Databases == nil {

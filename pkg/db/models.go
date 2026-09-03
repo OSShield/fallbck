@@ -2,6 +2,7 @@ package db
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"time"
 
@@ -78,6 +79,34 @@ type AgentCapabilities struct {
 	PVEHost    bool
 	DockerHost bool
 	DBTools    bool
+	DBEngines  []string
+}
+
+// CleanDBEngines keeps the known engine names, canonical and without duplicates
+func CleanDBEngines(in []string) []string {
+	out := []string{}
+	for _, e := range in {
+		if name, ok := dbbackup.NormalizeEngine(e); ok && !slices.Contains(out, name) {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// CanRunDBEngine reports whether this agent can back up the engine. Filesystem agents
+// go by the engines they report; one that only sent the older db_tools flag predates
+// the mssql engine and is assumed to have the client tools of the other three.
+// Kubernetes agents dump from a pod and the retired database agent predates mssql, so
+// both handle everything except SQL Server.
+func (a *Agent) CanRunDBEngine(engine string) bool {
+	agentType, _ := NormalizeAgentType(a.AgentType)
+	if agentType != AgentTypeFilesystem {
+		return engine != dbbackup.EngineMSSQL
+	}
+	if len(a.DBEngines) > 0 {
+		return slices.Contains(a.DBEngines, engine)
+	}
+	return a.DBTools && engine != dbbackup.EngineMSSQL
 }
 
 // CanRunJob reports whether this agent may run a job of jobType, including the
@@ -131,7 +160,9 @@ type Agent struct {
 	DockerHost bool `json:"docker_host" db:"docker_host"`
 	// DBTools is reported by a filesystem agent that found database client tools
 	// (pg_dump, mysqldump/mariadb-dump, mongodump) and can therefore run database jobs
-	DBTools    bool        `json:"db_tools" db:"db_tools"`
+	DBTools bool `json:"db_tools" db:"db_tools"`
+	// DBEngines are the database engines the agent reported (see CanRunDBEngine)
+	DBEngines  []string    `json:"db_engines" db:"db_engines"`
 	Status     AgentStatus `json:"status" db:"status"`
 	LastSeenAt *time.Time  `json:"last_seen_at" db:"last_seen_at"`
 	CreatedAt  time.Time   `json:"created_at" db:"created_at"`

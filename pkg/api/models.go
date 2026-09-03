@@ -20,8 +20,11 @@ type EnrollRequest struct {
 	PVEHost bool `json:"pve_host,omitempty"`
 	// DockerHost is set by a filesystem agent that can reach a Docker daemon
 	DockerHost bool `json:"docker_host,omitempty"`
-	// DBTools is set by a filesystem agent that found database client tools
-	DBTools bool `json:"db_tools,omitempty"`
+	// DBEngines are the database engines a filesystem agent can back up (postgres,
+	// mysql, mongodb by their client tools; mssql always). DBTools is the older yes/no
+	// form, still sent for servers and agents that predate the list.
+	DBEngines []string `json:"db_engines,omitempty"`
+	DBTools   bool     `json:"db_tools,omitempty"`
 }
 
 // EnrollResponse contains the credentials and configuration needed for the agent to start.
@@ -69,8 +72,9 @@ type HeartbeatRequest struct {
 	PVEHost bool `json:"pve_host,omitempty"`
 	// DockerHost reports whether a Docker daemon answers on the agent's host
 	DockerHost bool `json:"docker_host,omitempty"`
-	// DBTools reports whether database client tools are installed on the agent's host
-	DBTools bool `json:"db_tools,omitempty"`
+	// DBEngines / DBTools: see EnrollRequest
+	DBEngines []string `json:"db_engines,omitempty"`
+	DBTools   bool     `json:"db_tools,omitempty"`
 }
 
 // MergeAgentRequest moves the jobs and runs of one agent onto another and deletes

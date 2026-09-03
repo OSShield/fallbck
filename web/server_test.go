@@ -38,6 +38,9 @@ func TestUIRenderRoutes(t *testing.T) {
 		{"/kubernetes", http.StatusFound, ""}, // cluster jobs live on the Backup Jobs page now
 		{"/jobs", http.StatusOK, `name="k8s_volumes_mode"`},
 		{"/jobs", http.StatusOK, `id="k8s-job-form"`},
+		{"/jobs", http.StatusOK, `<option value="mssql">Microsoft SQL Server</option>`},
+		{"/onboarding", http.StatusOK, `name="ms_backup_dir"`},
+		{"/onboarding", http.StatusOK, `data-value="windows" data-types="files,database"`},
 		{"/jobs", http.StatusOK, `href="/onboarding"`},
 		{"/tokens", http.StatusOK, "Show used and expired"},
 		{"/tokens?all=1", http.StatusOK, "Hide used and expired"},

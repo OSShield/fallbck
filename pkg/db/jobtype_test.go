@@ -54,3 +54,30 @@ func TestAgentCanRunJob(t *testing.T) {
 		t.Error("database agent")
 	}
 }
+
+func TestAgentCanRunDBEngine(t *testing.T) {
+	modern := &Agent{AgentType: AgentTypeFilesystem, DBTools: true, DBEngines: []string{"postgres", "mssql"}}
+	if !modern.CanRunDBEngine("postgres") || !modern.CanRunDBEngine("mssql") || modern.CanRunDBEngine("mysql") {
+		t.Error("an agent with an engine list goes by the list")
+	}
+	windows := &Agent{AgentType: AgentTypeFilesystem, DBTools: true, DBEngines: []string{"mssql"}}
+	if !windows.CanRunDBEngine("mssql") || windows.CanRunDBEngine("postgres") {
+		t.Error("a host without client tools still offers mssql, and only mssql")
+	}
+	legacy := &Agent{AgentType: AgentTypeFilesystem, DBTools: true}
+	if !legacy.CanRunDBEngine("postgres") || legacy.CanRunDBEngine("mssql") {
+		t.Error("an agent that only sent db_tools predates mssql")
+	}
+	if (&Agent{AgentType: AgentTypeFilesystem}).CanRunDBEngine("postgres") {
+		t.Error("no capability reported")
+	}
+	for _, typ := range []string{AgentTypeKubernetes, AgentTypeDatabase} {
+		a := &Agent{AgentType: typ}
+		if !a.CanRunDBEngine("mysql") || a.CanRunDBEngine("mssql") {
+			t.Errorf("%s agents run everything but SQL Server", typ)
+		}
+	}
+	if got := CleanDBEngines([]string{"PostgreSQL", "mssql", "mssql", "oracle"}); len(got) != 2 || got[0] != "postgres" || got[1] != "mssql" {
+		t.Errorf("CleanDBEngines: %v", got)
+	}
+}

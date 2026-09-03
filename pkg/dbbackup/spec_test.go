@@ -179,3 +179,56 @@ func TestKubernetesTarget(t *testing.T) {
 		}
 	}
 }
+
+func TestMSSQLSpecValidation(t *testing.T) {
+	s := &Spec{Engine: "sqlserver", Host: "sql01"}
+	if err := s.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if s.Engine != EngineMSSQL || s.MSSQL == nil || s.MSSQL.Mode != MSSQLModeAuto || s.EffectivePort() != 1433 {
+		t.Errorf("defaults: %+v %+v port %d", s, s.MSSQL, s.EffectivePort())
+	}
+	if !s.MSSQL.EffChecksum() || s.MSSQL.EffFullEveryDays() != 7 || s.MSSQL.EffStripeCount() != 1 {
+		t.Error("option defaults")
+	}
+	off := false
+	c := (&Spec{Engine: EngineMSSQL, Host: "h", MSSQL: &MSSQLOptions{Checksum: &off}}).Clone()
+	*c.MSSQL.Checksum = true
+	if off {
+		t.Error("clone shares the checksum pointer")
+	}
+	bad := map[string]*Spec{
+		"mode":            {Engine: EngineMSSQL, Host: "h", MSSQL: &MSSQLOptions{Mode: "weekly"}},
+		"copy-only diff":  {Engine: EngineMSSQL, Host: "h", MSSQL: &MSSQLOptions{Mode: MSSQLModeDifferential, CopyOnly: true}},
+		"copy-only auto":  {Engine: EngineMSSQL, Host: "h", MSSQL: &MSSQLOptions{CopyOnly: true}},
+		"gzip":            {Engine: EngineMSSQL, Host: "h", Compression: CompressionGzip},
+		"kubernetes":      {Engine: EngineMSSQL, Host: "h", Kubernetes: &K8sTarget{Namespace: "db", Service: "mssql"}},
+		"stripes":         {Engine: EngineMSSQL, Host: "h", MSSQL: &MSSQLOptions{StripeCount: 40}},
+		"transfer size":   {Engine: EngineMSSQL, Host: "h", MSSQL: &MSSQLOptions{MaxTransferSize: 1000}},
+		"agent dir alone": {Engine: EngineMSSQL, Host: "h", MSSQL: &MSSQLOptions{AgentDir: "/mnt/sqlbackup"}},
+		"foreign options": {Engine: EnginePostgres, Host: "h", MSSQL: &MSSQLOptions{}},
+	}
+	for name, spec := range bad {
+		if err := spec.Validate(); err == nil {
+			t.Errorf("%s: expected a validation error", name)
+		}
+	}
+	ok := &Spec{Engine: EngineMSSQL, Host: "h", MSSQL: &MSSQLOptions{Mode: MSSQLModeFull, CopyOnly: true, StripeCount: 4, MaxTransferSize: 4194304, BackupDir: `\\nas\sql`, AgentDir: `Z:\sql`}}
+	if err := ok.Validate(); err != nil {
+		t.Errorf("valid spec rejected: %v", err)
+	}
+}
+
+func TestMSSQLIntegratedAuthCredentials(t *testing.T) {
+	s := &Spec{Engine: EngineMSSQL, Host: "sql01"}
+	_ = s.Validate()
+	creds, err := ResolveCredentials(s, "", nil)
+	if err != nil || creds.User != "" || creds.Port != 1433 {
+		t.Errorf("integrated auth must resolve without a user: %v %+v", err, creds)
+	}
+	withUser := &Spec{Engine: EngineMSSQL, Host: "sql01", User: "backup"}
+	_ = withUser.Validate()
+	if _, err := ResolveCredentials(withUser, "", nil); err == nil {
+		t.Error("a SQL login without a password or profile must fail")
+	}
+}

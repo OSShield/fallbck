@@ -51,7 +51,7 @@
           {{range .Agents}}
           <div class="wizard-option" role="button" tabindex="0" data-kind="agent" data-value="{{.ID}}" onclick="obSelect(this)" onkeydown="obKey(event, this)">
             <div class="wizard-option-title">{{.Hostname}}</div>
-            <div class="wizard-option-desc">{{.AgentType}} agent, {{.OS}}/{{.Arch}}, {{.Status}}{{if .PVEHost}} · Proxmox VE{{end}}{{if .DockerHost}} · Docker{{end}}{{if .DBTools}} · DB tools{{end}}</div>
+            <div class="wizard-option-desc">{{.AgentType}} agent, {{.OS}}/{{.Arch}}, {{.Status}}{{if .PVEHost}} · Proxmox VE{{end}}{{if .DockerHost}} · Docker{{end}}{{if .DBEngines}} · DB: {{range $i, $e := .DBEngines}}{{if $i}}, {{end}}{{$e}}{{end}}{{else if .DBTools}} · DB tools{{end}}</div>
           </div>
           {{end}}
         </div>
@@ -68,7 +68,7 @@
           </div>
           <div class="wizard-option" role="button" tabindex="0" data-kind="type" data-value="database" onclick="obSelect(this)" onkeydown="obKey(event, this)">
             <div class="wizard-option-title">Database</div>
-            <div class="wizard-option-desc">Database agent: the same fallbck-agent with the vendor client tools installed. Dumps PostgreSQL, MySQL/MariaDB and MongoDB and records WAL, binlog and oplog positions for point-in-time restores.</div>
+            <div class="wizard-option-desc">Database agent: the same fallbck-agent. PostgreSQL, MySQL/MariaDB and MongoDB with the vendor client tools installed (WAL, binlog and oplog positions for point-in-time restores); Microsoft SQL Server natively with full, differential and log backups.</div>
           </div>
           <div class="wizard-option" role="button" tabindex="0" data-kind="type" data-value="kubernetes" onclick="obSelect(this)" onkeydown="obKey(event, this)">
             <div class="wizard-option-title">Kubernetes</div>
@@ -104,9 +104,9 @@
             <div class="wizard-option-title">Other Linux</div>
             <div class="wizard-option-desc">Static binary from the GitHub release with a hand-installed systemd or OpenRC service.</div>
           </div>
-          <div class="wizard-option" role="button" tabindex="0" data-kind="platform" data-value="windows" data-types="files" onclick="obSelect(this)" onkeydown="obKey(event, this)">
+          <div class="wizard-option" role="button" tabindex="0" data-kind="platform" data-value="windows" data-types="files,database" onclick="obSelect(this)" onkeydown="obKey(event, this)">
             <div class="wizard-option-title">Windows</div>
-            <div class="wizard-option-desc">MSI installer from the GitHub release, runs as a Windows service with Volume Shadow Copies.</div>
+            <div class="wizard-option-desc">MSI installer from the GitHub release, runs as a Windows service with Volume Shadow Copies. Also the agent for Microsoft SQL Server on this host.</div>
           </div>
           <div class="wizard-option" role="button" tabindex="0" data-kind="platform" data-value="kubernetes" data-types="kubernetes" onclick="obSelect(this)" onkeydown="obKey(event, this)">
             <div class="wizard-option-title">Kubernetes cluster</div>

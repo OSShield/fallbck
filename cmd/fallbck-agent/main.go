@@ -121,13 +121,13 @@ func main() {
 		}
 		logging.ApplyConfigLogLevel(cfg)
 		// Database jobs run on this agent too when the host has the client tools:
-		// the probe feeds the db_tools flag in heartbeats and gates the jobs server-side
+		// the probe feeds the db_engines list in heartbeats, which gates the jobs server-side
 		dbCfg := cfg.DBBackup
 		dbCfg.ApplyDefaults(cfg.DataDir)
 		if err := dbrun.CleanSpool(dbCfg); err != nil {
 			slog.Warn("Could not clean the spool directory", "dir", dbCfg.SpoolDir, "error", err)
 		}
-		agent.DBTools = runtime.DBToolsProbe(dbCfg, 10*time.Minute)
+		agent.DBEngines = runtime.DBEnginesProbe(dbCfg, 10*time.Minute)
 		register := func(w worker.Worker, conns *runtime.Conns, store *runtime.TokenStore) error {
 			acts := activities.NewAgentActivities()
 			acts.Tunnel = conns.Tunnel

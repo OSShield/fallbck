@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/osshield/fallbck/pkg/auth"
 	"github.com/osshield/fallbck/pkg/db"
+	"github.com/osshield/fallbck/pkg/dbbackup"
 	"github.com/osshield/fallbck/pkg/dockerbackup"
 	"github.com/osshield/fallbck/pkg/pvebackup"
 )
@@ -108,8 +109,13 @@ func (s *ServerAPI) validateJob(ctx context.Context, job *db.BackupJob, existing
 		}
 		job.DBConfig.ClearPassword = false
 		job.DBConfig.HasPassword = false
-		if agentType == db.AgentTypeFilesystem && agent != nil && !agent.DBTools {
-			return "Agent " + agent.Hostname + " has not reported database client tools (install pg_dump / mariadb-dump / mongodump on the host and wait for its next heartbeat, or run fallbck-agent tools)", errors.New("agent without db tools")
+		if agent != nil {
+			if engine, ok := dbbackup.NormalizeEngine(job.DBConfig.Engine); ok && !agent.CanRunDBEngine(engine) {
+				if engine == dbbackup.EngineMSSQL {
+					return "Agent " + agent.Hostname + " cannot run SQL Server jobs: they need fallbck-agent (not a kubernetes or legacy database agent) in a version that reports the mssql engine", errors.New("agent without mssql engine")
+				}
+				return "Agent " + agent.Hostname + " has not reported the " + engine + " client tools (install them on the host and wait for its next heartbeat, or run fallbck-agent tools)", errors.New("agent without db engine")
+			}
 		}
 		if agentType == db.AgentTypeKubernetes && job.DBConfig.Kubernetes == nil {
 			return "Database jobs on a kubernetes agent need the kubernetes target settings (namespace and service)", errors.New("missing kubernetes target")

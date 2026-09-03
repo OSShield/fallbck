@@ -62,7 +62,7 @@ Database jobs (`job_type: database`, `db_config`) follow the same path with `fal
 | `pkg/agent/runtime` | shared agent daemon skeleton (config + self-enrollment, gateway connections, worker, heartbeat/token rotation) |
 | `pkg/agent/backup` | agent backup engine on top of gopbs (pxar upload, blobs) |
 | `pkg/dbbackup` | database job spec, credential profiles, manifest (shared by server, agent and config) |
-| `pkg/agent/dbbackup` | database engines (PostgreSQL, MySQL/MariaDB, MongoDB): tool detection, prechecks, dumps, spool, state |
+| `pkg/agent/dbbackup` | database engines (PostgreSQL, MySQL/MariaDB, MongoDB by their client tools; Microsoft SQL Server natively over the built-in driver with full/differential/log chains): tool detection, prechecks, dumps, spool, state |
 | `cmd/fallbck-k8s-agent` | in-cluster Kubernetes agent (Helm-installed; `worker` mode uploads one volume, `db-worker` mode dumps one database on the engine image) |
 | `pkg/k8sbackup` | kubernetes job spec, discovery plan, run manifest (shared) |
 | `pkg/pvebackup` | Proxmox VE host job spec and run manifest (shared) |
