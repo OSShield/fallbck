@@ -29,6 +29,9 @@ func (s *ServerAPI) validateJob(ctx context.Context, job *db.BackupJob, existing
 		return "Unknown job type " + job.JobType, errors.New("bad job type")
 	}
 	job.JobType = jobType
+	if err := db.ValidateCron(job.ScheduleCron); err != nil {
+		return err.Error(), err
+	}
 
 	switch jobType {
 	case db.JobTypeDatabase:
@@ -117,4 +120,15 @@ func (s *ServerAPI) HandleDBCredentials(w http.ResponseWriter, r *http.Request) 
 	}
 	slog.Info("Handing database credentials to agent", "agent_id", agent.AgentID, "job_id", job.ID, "engine", job.DBConfig.Engine, "user", job.DBConfig.User)
 	s.writeJSON(w, http.StatusOK, DBCredentials{Password: job.DBConfig.Password})
+}
+
+// syncJobSchedule aligns the job's Temporal Schedule after a create/update; failures
+// only warn — the job is saved and the startup reconcile repairs the schedule.
+func (s *ServerAPI) syncJobSchedule(ctx context.Context, job *db.BackupJob) {
+	if s.Scheduler == nil {
+		return
+	}
+	if err := s.Scheduler.Sync(ctx, job); err != nil {
+		slog.Warn("Backup schedule could not be synced; the startup reconcile will retry", "job_id", job.ID, "error", err)
+	}
 }

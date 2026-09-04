@@ -56,6 +56,7 @@ Database jobs (`job_type: database`, `db_config`) follow the same path with `fal
 | `pkg/temporal/embedded` | in-process Temporal server (config, Postgres schema bootstrap, lifecycle) |
 | `pkg/temporal/ui` | embedded Temporal Web UI (loopback ui-server, proxied under `/temporal/`) |
 | `pkg/temporal` | SDK client helpers, server worker, workflows and activities |
+| `pkg/temporal/scheduler` | Temporal Schedules for cron jobs (sync on job changes, reconcile at startup) |
 | `pkg/api`, `web` | REST API and server-rendered Web UI |
 | `pkg/proxy` | PBS backup-session tunnel (gRPC byte stream, server-side protocol upgrade, TLS pinning); `pbstest` fake PBS for tests |
 | `cmd/fallbck-db-agent` | database agent: enrollment as type `database`, `tools` diagnostics, database activities |

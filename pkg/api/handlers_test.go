@@ -119,6 +119,7 @@ func TestCreateJobValidation(t *testing.T) {
 		"unknown job type":      `{"name":"j","agent_id":"` + agent + `","target_id":"` + target + `","job_type":"tape"}`,
 		"fs job relative path":  `{"name":"j","agent_id":"` + agent + `","target_id":"` + target + `","backup_paths":["etc"]}`,
 		"fs job bad exclude":    `{"name":"j","agent_id":"` + agent + `","target_id":"` + target + `","backup_paths":["/etc"],"exclude_paths":["[unclosed"]}`,
+		"bad cron":              `{"name":"j","agent_id":"` + agent + `","target_id":"` + target + `","backup_paths":["/etc"],"schedule_cron":"every day at noon"}`,
 	}
 	for name, body := range cases {
 		if rr := post(body); rr.Code != http.StatusBadRequest {

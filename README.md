@@ -55,6 +55,10 @@ Database jobs are created in the Web UI (job type *Database*: engine, host, user
 
 Restore: `proxmox-backup-client restore <snapshot> db.pxar <dir>` (or download the manifest blob first) and follow `restore.commands` in `fallbck-db.json`. The Docker image (`Dockerfile.db-agent`) ships the client tools; the Linux packages rely on the distribution's `postgresql-client`, `mariadb-client`/`mysql-client` (binary-log fetching additionally needs `mysqlbinlog`/`mariadb-binlog`, which Alpine only ships in the `mariadb` package) and `mongodb-database-tools`. `pg_dump` must be at least as new as the server; the agent looks in the usual per-version directories (`/usr/lib/postgresql/*/bin`, `/usr/pgsql-*/bin`, `/usr/libexec/postgresql*`) or `db_backup.tools.postgres_bindir`.
 
+## Scheduling
+
+A job with a cron expression gets a **Temporal Schedule** (managed by the server, visible under `/temporal/` → Schedules): standard 5-field cron plus `@daily` / `@every 6h`, evaluated in **UTC**. A firing starts the same workflow as "Run Now"; a firing that lands while the previous run of the job is still going is **skipped**, and after server downtime one missed firing within the last hour is caught up. Disabling a job pauses its schedule; clearing the cron or deleting the job removes it. The server reconciles schedules with the jobs table at every start. The jobs page shows the next fire time.
+
 ## CLI
 
 Create an API key in the Web UI (API Keys), then:
