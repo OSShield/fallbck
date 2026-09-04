@@ -25,6 +25,7 @@ import (
 	"github.com/osshield/fallbck/pkg/temporal"
 	"github.com/osshield/fallbck/pkg/temporal/activities"
 	"github.com/osshield/fallbck/pkg/temporal/embedded"
+	"github.com/osshield/fallbck/pkg/temporal/scheduler"
 	temporalui "github.com/osshield/fallbck/pkg/temporal/ui"
 	"github.com/osshield/fallbck/pkg/temporal/workflows"
 	"github.com/osshield/fallbck/web"
@@ -251,6 +252,21 @@ func main() {
 	r.Use(web.SecurityHeaders)
 
 	serverAPI := api.NewServerAPI(database, temporalClient, cfg, tokenManager, agentVerifier)
+	if temporalClient != nil {
+		jobScheduler := scheduler.New(temporalClient, database)
+		serverAPI.Scheduler = jobScheduler
+		// Align Temporal Schedules with the jobs table (create missing, fix drifted,
+		// drop orphans); failures are retried on the next start
+		go func() {
+			reconcileCtx, cancelReconcile := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancelReconcile()
+			if err := jobScheduler.ReconcileAll(reconcileCtx); err != nil {
+				slog.Warn("Backup schedule reconciliation incomplete", "error", err)
+			} else {
+				slog.Info("Backup schedules reconciled with the jobs table")
+			}
+		}()
+	}
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.Timeout(60 * time.Second))
 		serverAPI.RegisterRoutes(r, adminAuth.RequireAdmin, requireAgent)

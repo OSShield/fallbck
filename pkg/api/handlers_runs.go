@@ -112,6 +112,7 @@ func (s *ServerAPI) HandleUpdateJob(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, "Failed to update job")
 		return
 	}
+	s.syncJobSchedule(r.Context(), &job)
 	updated, err := s.DB.GetJobByID(r.Context(), job.ID)
 	if err != nil {
 		s.writeJSON(w, http.StatusOK, job.Sanitize())

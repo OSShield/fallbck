@@ -49,6 +49,7 @@
             <td>
               {{if .ScheduleCron}}
                 <span class="badge badge-info">{{.ScheduleCron}}</span>
+                {{with .NextRunString}}<div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">next {{.}} UTC</div>{{end}}
               {{else}}
                 <span style="color: var(--text-muted); font-size: 13px;">Manual Only</span>
               {{end}}
@@ -287,8 +288,8 @@
         </fieldset>
 
         <div class="form-group">
-          <label>Schedule (Cron expression or leave blank for manual)</label>
-          <input type="text" name="schedule_cron" class="form-control" placeholder="0 2 * * * (Every night at 2 AM)">
+          <label>Schedule (cron, runs in UTC; blank = manual — e.g. <code>0 2 * * *</code>, <code>@daily</code>, <code>@every 6h</code>)</label>
+          <input type="text" name="schedule_cron" class="form-control" placeholder="0 2 * * * (every night at 02:00 UTC)">
         </div>
 
         <div class="form-group" style="display: flex; align-items: center; gap: 8px;">

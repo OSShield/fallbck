@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,6 +28,14 @@ type ServerAPI struct {
 	TokenManager *auth.TokenManager
 	// Verifier is used to invalidate cached agent state on revocation (may be nil)
 	Verifier *auth.AgentVerifier
+	// Scheduler keeps Temporal Schedules aligned with jobs (may be nil)
+	Scheduler JobScheduler
+}
+
+// JobScheduler mirrors scheduler.Scheduler (interface here to keep tests light)
+type JobScheduler interface {
+	Sync(ctx context.Context, job *db.BackupJob) error
+	Remove(ctx context.Context, jobID uuid.UUID) error
 }
 
 // NewServerAPI initializes the API service
@@ -524,6 +533,7 @@ func (s *ServerAPI) HandleCreateJob(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, "Failed to create job")
 		return
 	}
+	s.syncJobSchedule(r.Context(), &job)
 
 	s.writeJSON(w, http.StatusCreated, job.Sanitize())
 }
@@ -574,6 +584,11 @@ func (s *ServerAPI) HandleDeleteJob(w http.ResponseWriter, r *http.Request) {
 	if err := s.DB.DeleteJob(r.Context(), id); err != nil {
 		s.writeError(w, http.StatusInternalServerError, "Failed to delete job")
 		return
+	}
+	if s.Scheduler != nil {
+		if err := s.Scheduler.Remove(r.Context(), id); err != nil {
+			slog.Warn("Backup schedule could not be removed; the startup reconcile will retry", "job_id", id, "error", err)
+		}
 	}
 
 	s.writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
