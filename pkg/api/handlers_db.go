@@ -57,6 +57,9 @@ func (s *ServerAPI) validateJob(ctx context.Context, job *db.BackupJob, existing
 			return err.Error(), err
 		}
 		job.BackupPaths = paths
+		if err := db.ValidateExcludePatterns(job.ExcludePaths); err != nil {
+			return err.Error(), err
+		}
 	}
 
 	if s.DB == nil {

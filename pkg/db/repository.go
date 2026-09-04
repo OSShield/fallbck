@@ -164,6 +164,19 @@ func (d *DB) ValidateAndConsumeToken(ctx context.Context, tokenHash string) (*En
 	return &t, nil
 }
 
+// DeleteEnrollmentToken invalidates a token immediately (enrollment looks tokens up
+// by hash, so a deleted row can never be consumed again)
+func (d *DB) DeleteEnrollmentToken(ctx context.Context, id uuid.UUID) error {
+	tag, err := d.Pool.Exec(ctx, `DELETE FROM enrollment_tokens WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (d *DB) ListEnrollmentTokens(ctx context.Context) ([]*EnrollmentToken, error) {
 	query := `SELECT id, token_hash, name, max_uses, uses_count, expires_at, created_at FROM enrollment_tokens ORDER BY created_at DESC`
 	rows, err := d.Pool.Query(ctx, query)

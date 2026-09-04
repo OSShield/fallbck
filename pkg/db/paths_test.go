@@ -42,3 +42,15 @@ func indexOf(s, sub string) int {
 	}
 	return -1
 }
+
+func TestValidateExcludePatterns(t *testing.T) {
+	if err := ValidateExcludePatterns([]string{"*.tmp", "/var/cache", "node_modules", "  "}); err != nil {
+		t.Errorf("valid patterns rejected: %v", err)
+	}
+	if err := ValidateExcludePatterns(nil); err != nil {
+		t.Errorf("empty list rejected: %v", err)
+	}
+	if err := ValidateExcludePatterns([]string{"[unclosed"}); err == nil {
+		t.Error("invalid pattern accepted")
+	}
+}

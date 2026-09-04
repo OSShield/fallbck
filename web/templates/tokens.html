@@ -22,6 +22,7 @@
           <th>Expires At</th>
           <th>Created At</th>
           <th>Status</th>
+          <th style="text-align: right;">Actions</th>
         </tr>
       </thead>
       <tbody>
@@ -37,13 +38,22 @@
             <td style="color: var(--text-muted);">{{formatTime .ExpiresAt}}</td>
             <td style="color: var(--text-muted);">{{formatTime .CreatedAt}}</td>
             <td>
-              <span class="badge badge-success"><span class="badge-dot"></span> Active</span>
+              {{if eq .Status "active"}}
+                <span class="badge badge-success"><span class="badge-dot"></span> Active</span>
+              {{else if eq .Status "expired"}}
+                <span class="badge badge-neutral">Expired</span>
+              {{else}}
+                <span class="badge badge-neutral">Exhausted</span>
+              {{end}}
+            </td>
+            <td style="text-align: right;">
+              <button class="btn btn-secondary btn-sm" style="color: var(--danger-text);" onclick="revokeToken('{{.ID}}')">Revoke</button>
             </td>
           </tr>
           {{end}}
         {{else}}
           <tr>
-            <td colspan="5">
+            <td colspan="6">
               <div class="empty-state">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/></svg>
                 <p>No enrollment tokens generated yet.</p>

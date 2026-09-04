@@ -18,6 +18,7 @@ import (
 	"github.com/osshield/gopbs"
 	"github.com/osshield/gopbs/archive"
 	"github.com/osshield/gopbs/pbs"
+	"github.com/osshield/gopbs/scan"
 )
 
 // DefaultArchiveName is used for jobs with more than one backup path
@@ -70,9 +71,6 @@ func Run(ctx context.Context, opts Options) (*temporal.BackupExecutionResult, er
 			return nil, fmt.Errorf("backup path %s: %w", p, err)
 		}
 	}
-	if len(s.ExcludePaths) > 0 {
-		slog.Warn("Exclude patterns are not applied yet by the pxar archiver; backing up the full paths", "excludes", s.ExcludePaths)
-	}
 
 	format := gopbs.FormatV1
 	if s.PxarFormat == db.PxarFormatV2 {
@@ -114,9 +112,15 @@ func Run(ctx context.Context, opts Options) (*temporal.BackupExecutionResult, er
 		slog.Debug("Connecting to PBS through the server tunnel")
 	}
 
+	// Exclude patterns use proxmox-backup-client syntax and are recorded in the
+	// archive exactly like the official client's --exclude; .pxarexclude files inside
+	// the tree are honoured as well, matching proxmox-backup-client.
 	result, err := runBackup(ctx, gopbs.BackupOptions{
-		Client:     clientCfg,
-		Archive:    archive.Options{Name: archiveName},
+		Client: clientCfg,
+		Archive: archive.Options{
+			Name: archiveName,
+			Scan: scan.Options{Exclude: s.ExcludePaths, PxarExcludeFiles: true},
+		},
 		Blobs:      opts.Blobs,
 		Ref:        ref,
 		Format:     format,
