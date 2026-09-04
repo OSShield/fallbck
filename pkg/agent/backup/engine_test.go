@@ -213,3 +213,40 @@ func TestRunUploadsBlobs(t *testing.T) {
 		t.Error("reserved blob name accepted")
 	}
 }
+
+func TestRunAppliesExcludePatterns(t *testing.T) {
+	run := func(exclude []string) *temporal.BackupExecutionResult {
+		fake := pbstest.New(t)
+		dir := makeTree(t)
+		session := &temporal.BackupSessionInfo{
+			Datastore: "store1", BackupType: "host", BackupID: "node6", BackupTime: time.Now().Unix(),
+			PxarFormat: db.PxarFormatV1, BackupPaths: []string{dir}, ExcludePaths: exclude,
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		result, err := Run(ctx, Options{Session: session, Dial: directDial(fake, session)})
+		if err != nil {
+			t.Fatalf("Run(exclude=%v): %v", exclude, err)
+		}
+		return result
+	}
+	full := run(nil)
+	// makeTree puts a 3 MiB blob at data/blob.bin; excluding it must shrink the archive
+	excluded := run([]string{"*.bin"})
+	if excluded.BytesScanned >= full.BytesScanned || full.BytesScanned-excluded.BytesScanned < 2*1024*1024 {
+		t.Errorf("exclude had no effect: full=%d excluded=%d", full.BytesScanned, excluded.BytesScanned)
+	}
+
+	// Invalid patterns fail before anything is uploaded
+	fake := pbstest.New(t)
+	session := &temporal.BackupSessionInfo{
+		Datastore: "store1", BackupType: "host", BackupID: "node6", BackupTime: time.Now().Unix(),
+		PxarFormat: db.PxarFormatV1, BackupPaths: []string{t.TempDir()}, ExcludePaths: []string{"[unclosed"},
+	}
+	if _, err := Run(context.Background(), Options{Session: session, Dial: directDial(fake, session)}); err == nil {
+		t.Error("invalid exclude pattern accepted")
+	}
+	if len(fake.Upgrades()) != 0 {
+		t.Error("session opened despite invalid pattern")
+	}
+}

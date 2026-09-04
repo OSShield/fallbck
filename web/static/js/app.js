@@ -389,6 +389,21 @@ async function triggerJobRun(jobId) {
   }
 }
 
+async function revokeToken(tokenId) {
+  if (!confirm('Invalidate this enrollment token? Agents can no longer enroll with it.')) return;
+  try {
+    const resp = await apiFetch(`/api/v1/tokens/${tokenId}`, { method: 'DELETE' });
+    if (!resp.ok) {
+      const err = await resp.json();
+      throw new Error(err.error || 'Failed to revoke token');
+    }
+    showToast('Enrollment token invalidated', 'success');
+    setTimeout(() => window.location.reload(), 600);
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
 async function cancelRun(runId) {
   if (!confirm('Cancel this backup run? The agent will stop uploading and the run is marked cancelled.')) return;
 

@@ -286,16 +286,16 @@ func handleRunCommands(serverURL string, args []string) {
 	_ = json.NewDecoder(resp.Body).Decode(&runs)
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-	fmt.Fprintln(w, "ID\tJOB\tSTATUS\tSCANNED\tUPLOADED\tDEDUP\tSTARTED")
+	fmt.Fprintln(w, "ID\tJOB\tSTATUS\tSCANNED\tUPLOADED\tDEDUP\tSTARTED\tDURATION")
 	for _, r := range runs {
 		started := r.CreatedAt.Format("2006-01-02 15:04")
 		if r.StartTime != nil {
 			started = r.StartTime.Format("15:04:05")
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%d MB\t%d MB\t%.2fx\t%s\n",
+		fmt.Fprintf(w, "%s\t%s\t%s\t%d MB\t%d MB\t%.2fx\t%s\t%s\n",
 			r.ID.String()[:8], r.JobName, r.Status,
 			r.BytesScanned/(1024*1024), r.BytesUploaded/(1024*1024),
-			r.DedupRatio, started,
+			r.DedupRatio, started, r.DurationString(),
 		)
 	}
 	w.Flush()

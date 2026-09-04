@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -72,6 +73,7 @@ func (s *ServerAPI) RegisterRoutes(r chi.Router, admin, agent Middleware) {
 			// Enrollment tokens
 			r.Post("/tokens", s.HandleCreateToken)
 			r.Get("/tokens", s.HandleListTokens)
+			r.Delete("/tokens/{id}", s.HandleDeleteToken)
 
 			// API keys
 			r.Post("/apikeys", s.HandleCreateAPIKey)
@@ -334,6 +336,26 @@ func (s *ServerAPI) HandleCreateToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.writeJSON(w, http.StatusCreated, resp)
+}
+
+// HandleDeleteToken invalidates an enrollment token immediately
+func (s *ServerAPI) HandleDeleteToken(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "Invalid token ID")
+		return
+	}
+	if err := s.DB.DeleteEnrollmentToken(r.Context(), id); err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			s.writeError(w, http.StatusNotFound, "Token not found")
+			return
+		}
+		slog.Error("Failed to delete enrollment token", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "Failed to delete token")
+		return
+	}
+	slog.Info("Enrollment token invalidated", "token_id", id)
+	s.writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
 // HandleListTokens lists all enrollment tokens

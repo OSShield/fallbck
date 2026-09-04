@@ -3,10 +3,28 @@ package db
 import (
 	"errors"
 	"fmt"
+	"github.com/osshield/gopbs/scan"
 	"path/filepath"
 	"sort"
 	"strings"
 )
+
+// ValidateExcludePatterns checks exclude patterns against the pxar pattern syntax
+// (proxmox-backup-client --exclude); invalid patterns would otherwise fail the backup
+// only at run time on the agent.
+func ValidateExcludePatterns(patterns []string) error {
+	cleaned := make([]string, 0, len(patterns))
+	for _, p := range patterns {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			cleaned = append(cleaned, p)
+		}
+	}
+	if _, err := scan.ParsePatterns(cleaned); err != nil {
+		return fmt.Errorf("invalid exclude pattern: %w", err)
+	}
+	return nil
+}
 
 // ValidateBackupPaths normalises a job's backup paths and rejects combinations that
 // cannot form one archive: every path must be absolute, exact duplicates are dropped and

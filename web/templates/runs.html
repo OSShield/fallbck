@@ -25,6 +25,7 @@
           <th>Deduplication</th>
           <th>PBS Snapshot ID</th>
           <th>Started</th>
+          <th>Duration</th>
           <th></th>
         </tr>
       </thead>
@@ -56,6 +57,7 @@
               {{if .PBSSnapshotID}}{{.PBSSnapshotID}}{{else}}-{{end}}
             </td>
             <td style="color: var(--text-muted); font-size: 13px;">{{formatTime .CreatedAt}}</td>
+            <td style="color: var(--text-muted); font-size: 13px; font-family: var(--font-mono);">{{.DurationString}}</td>
             <td style="text-align: right;">
               {{if .Status.IsActive}}
               <button class="btn btn-sm btn-danger" onclick="cancelRun('{{.ID}}')">Cancel</button>
@@ -65,7 +67,7 @@
           {{end}}
         {{else}}
           <tr>
-            <td colspan="9">
+            <td colspan="10">
               <div class="empty-state">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                 <p>No backup runs found.</p>

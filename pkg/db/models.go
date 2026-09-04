@@ -66,6 +66,17 @@ type EnrollmentToken struct {
 	CreatedAt time.Time `json:"created_at" db:"created_at"`
 }
 
+// Status describes whether the token can still be used
+func (t *EnrollmentToken) Status() string {
+	if !t.ExpiresAt.IsZero() && time.Now().After(t.ExpiresAt) {
+		return "expired"
+	}
+	if t.MaxUses > 0 && t.UsesCount >= t.MaxUses {
+		return "exhausted"
+	}
+	return "active"
+}
+
 // pxar archive formats a target accepts
 const (
 	PxarFormatV1 = "v1" // single stream + catalog; browsable everywhere
@@ -179,6 +190,25 @@ type BackupRun struct {
 func (r RetentionPolicy) ToJSON() []byte {
 	bytes, _ := json.Marshal(r)
 	return bytes
+}
+
+// DurationString renders how long the run took (or has been running); "-" before start
+func (r *BackupRun) DurationString() string {
+	if r.StartTime == nil {
+		return "-"
+	}
+	end := time.Now()
+	switch {
+	case r.EndTime != nil:
+		end = *r.EndTime
+	case !r.Status.IsActive():
+		return "-"
+	}
+	d := end.Sub(*r.StartTime).Round(time.Second)
+	if d < 0 {
+		return "-"
+	}
+	return d.String()
 }
 
 // IsDatabase reports whether the job is a database backup
