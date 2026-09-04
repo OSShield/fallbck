@@ -389,6 +389,38 @@ async function triggerJobRun(jobId) {
   }
 }
 
+async function toggleAgentDebug(agentId, enable) {
+  try {
+    const resp = await apiFetch(`/api/v1/agents/${agentId}/debug`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: enable })
+    });
+    if (!resp.ok) {
+      const err = await resp.json();
+      throw new Error(err.error || 'Failed to toggle debug logging');
+    }
+    showToast(enable ? 'Debug logging enabled — the agent applies it on its next heartbeat (~30s)' : 'Debug logging disabled', 'success');
+    setTimeout(() => window.location.reload(), 700);
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function showRunDetails(runId) {
+  try {
+    const resp = await apiFetch(`/api/v1/runs/${runId}`);
+    if (!resp.ok) throw new Error('Failed to load run');
+    const run = await resp.json();
+    document.getElementById('run-details-status').innerText = run.status || '';
+    document.getElementById('run-details-error').innerText = run.error_message || '(no error message)';
+    document.getElementById('run-details-log').innerText = run.log_tail || '(no agent log captured for this run)';
+    openModal('modal-run-details');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
 async function revokeToken(tokenId) {
   if (!confirm('Invalidate this enrollment token? Agents can no longer enroll with it.')) return;
   try {

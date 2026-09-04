@@ -1,6 +1,7 @@
 package workflows
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -8,6 +9,7 @@ import (
 	"github.com/osshield/fallbck/pkg/db"
 	fbtemporal "github.com/osshield/fallbck/pkg/temporal"
 	"github.com/osshield/fallbck/pkg/temporal/activities"
+	enumspb "go.temporal.io/api/enums/v1"
 	sdktemporal "go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 )
@@ -81,6 +83,27 @@ func BackupJobWorkflow(ctx workflow.Context, jobID uuid.UUID) (*fbtemporal.Backu
 		logger.Error("Agent backup activity failed", "error", execErr)
 		execResult.Status = db.RunStatusFailed
 		execResult.ErrorMessage = execErr.Error()
+		// The activity attaches its phase and the agent's log tail as error details
+		var appErr *sdktemporal.ApplicationError
+		if errors.As(execErr, &appErr) && appErr.HasDetails() {
+			var details fbtemporal.BackupFailureDetails
+			if appErr.Details(&details) == nil {
+				execResult.LogTail = details.LogTail
+			}
+		}
+		// A heartbeat timeout means the agent went silent: say so, and name the phase
+		// it last reported instead of Temporal's bare "activity Heartbeat timeout"
+		var timeoutErr *sdktemporal.TimeoutError
+		if errors.As(execErr, &timeoutErr) && timeoutErr.TimeoutType() == enumspb.TIMEOUT_TYPE_HEARTBEAT {
+			msg := "the agent stopped sending heartbeats for over 60s and all retries were exhausted (agent crashed, host overloaded, or the connection to the server was lost)"
+			var hb fbtemporal.BackupHeartbeatProgress
+			if timeoutErr.HasLastHeartbeatDetails() && timeoutErr.LastHeartbeatDetails(&hb) == nil && hb.Phase != "" {
+				msg += "; last reported phase: " + hb.Phase
+			} else {
+				msg += "; no heartbeat was ever recorded — the activity likely never started or died immediately"
+			}
+			execResult.ErrorMessage = msg
+		}
 	}
 
 	// 3. Finalize Run Status on Server. Runs on a disconnected context so it still

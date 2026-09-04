@@ -56,10 +56,24 @@ type BackupExecutionResult struct {
 	SnapshotID    string        `json:"snapshot_id"`
 	ErrorMessage  string        `json:"error_message,omitempty"`
 	Duration      time.Duration `json:"duration"`
+	// LogTail carries the agent's recent log lines when a run fails (shown in the Runs UI)
+	LogTail string `json:"log_tail,omitempty"`
+}
+
+// BackupFailureDetails travel as application-error details from a failed agent
+// activity to the workflow, which copies them onto the run record.
+type BackupFailureDetails struct {
+	// Phase the activity was in when it failed, with its elapsed time
+	Phase string `json:"phase"`
+	// LogTail is the agent's recent log output (all levels, capped)
+	LogTail string `json:"log_tail"`
 }
 
 // BackupHeartbeatProgress is sent periodically during execution
 type BackupHeartbeatProgress struct {
+	// Phase names what the agent is doing right now (and for how long); recorded with
+	// every heartbeat so a heartbeat-timeout failure can report where the agent stopped
+	Phase         string  `json:"phase,omitempty"`
 	CurrentFile   string  `json:"current_file"`
 	BytesScanned  int64   `json:"bytes_scanned"`
 	BytesUploaded int64   `json:"bytes_uploaded"`

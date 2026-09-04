@@ -69,6 +69,7 @@ func (s *ServerAPI) RegisterRoutes(r chi.Router, admin, agent Middleware) {
 			r.Get("/agents", s.HandleListAgents)
 			r.Get("/agents/{id}", s.HandleGetAgent)
 			r.Delete("/agents/{id}", s.HandleDeleteAgent)
+			r.Post("/agents/{id}/debug", s.HandleSetAgentDebug)
 
 			// Enrollment tokens
 			r.Post("/tokens", s.HandleCreateToken)
@@ -230,12 +231,17 @@ func (s *ServerAPI) HandleAgentHeartbeat(w http.ResponseWriter, r *http.Request)
 		status = db.AgentStatus(req.Status)
 	}
 
-	if err := s.DB.UpdateAgentHeartbeat(r.Context(), claims.AgentID, status); err != nil {
+	debug, err := s.DB.UpdateAgentHeartbeat(r.Context(), claims.AgentID, status)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			s.writeError(w, http.StatusUnauthorized, "agent no longer exists")
+			return
+		}
 		s.writeError(w, http.StatusInternalServerError, "Failed to update heartbeat")
 		return
 	}
 
-	s.writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	s.writeJSON(w, http.StatusOK, HeartbeatResponse{Status: "ok", DebugLogging: debug})
 }
 
 // HandleListAgents returns all registered agents
@@ -336,6 +342,32 @@ func (s *ServerAPI) HandleCreateToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.writeJSON(w, http.StatusCreated, resp)
+}
+
+// HandleSetAgentDebug toggles remote debug logging for an agent; the agent applies it
+// on its next heartbeat (within ~30s), no restart needed
+func (s *ServerAPI) HandleSetAgentDebug(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "Invalid agent ID")
+		return
+	}
+	var req SetAgentDebugRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	if err := s.DB.SetAgentDebugLogging(r.Context(), id, req.Enabled); err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			s.writeError(w, http.StatusNotFound, "Agent not found")
+			return
+		}
+		slog.Error("Failed to set agent debug logging", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "Failed to update agent")
+		return
+	}
+	slog.Info("Agent debug logging toggled", "agent_id", id, "enabled", req.Enabled)
+	s.writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "debug_logging": req.Enabled})
 }
 
 // HandleDeleteToken invalidates an enrollment token immediately

@@ -61,6 +61,18 @@ type HeartbeatRequest struct {
 	Version string    `json:"version"`
 }
 
+// HeartbeatResponse acknowledges a heartbeat and carries server-side agent settings
+type HeartbeatResponse struct {
+	Status string `json:"status"`
+	// DebugLogging tells the agent to raise its log level to debug (web UI toggle)
+	DebugLogging bool `json:"debug_logging"`
+}
+
+// SetAgentDebugRequest toggles an agent's remote debug logging
+type SetAgentDebugRequest struct {
+	Enabled bool `json:"enabled"`
+}
+
 // CreateAPIKeyRequest creates an admin API key for fallbck-ctl / automation
 type CreateAPIKeyRequest struct {
 	Name      string     `json:"name"`

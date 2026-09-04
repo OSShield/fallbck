@@ -38,6 +38,8 @@ type DBAgentActivities struct {
 	Config   dbbackup.Config
 	Hostname string
 	Version  string
+	// LogTail returns the agent's recent log output, attached to failures
+	LogTail func() string
 }
 
 // NewDBAgentActivities creates a new DBAgentActivities instance
@@ -63,8 +65,13 @@ func (a *DBAgentActivities) ExecuteDatabaseBackup(ctx context.Context, session *
 		"direct_pbs", session.DirectPBS,
 	)
 
+	pt := newPhaseTracker()
+	stopHeartbeats := startHeartbeats(ctx, pt)
+	defer stopHeartbeats()
+
 	failed := func(err error) (*temporal.BackupExecutionResult, error) {
-		return &temporal.BackupExecutionResult{Status: db.RunStatusFailed, ErrorMessage: err.Error()}, err
+		return &temporal.BackupExecutionResult{Status: db.RunStatusFailed, ErrorMessage: err.Error()},
+			backupFailure(ctx, err, pt, a.LogTail)
 	}
 
 	password := ""
@@ -101,7 +108,7 @@ func (a *DBAgentActivities) ExecuteDatabaseBackup(ctx context.Context, session *
 		}
 	}
 
-	upload := func(ctx context.Context, spoolDir string, blobs []gopbs.Blob, progress func(string, pbs.UploadStats, bool)) (*temporal.BackupExecutionResult, error) {
+	upload := func(ctx context.Context, spoolDir string, blobs []gopbs.Blob) (*temporal.BackupExecutionResult, error) {
 		s := *session
 		s.BackupPaths = []string{spoolDir}
 		s.ExcludePaths = nil
@@ -112,7 +119,7 @@ func (a *DBAgentActivities) ExecuteDatabaseBackup(ctx context.Context, session *
 			Direct:      direct,
 			ArchiveName: dbbackup.ArchiveName,
 			Blobs:       blobs,
-			OnProgress:  progress,
+			OnPhase:     pt.Set,
 		})
 	}
 
@@ -125,23 +132,25 @@ func (a *DBAgentActivities) ExecuteDatabaseBackup(ctx context.Context, session *
 		Hostname:     a.Hostname,
 		AgentVersion: a.Version,
 		Progress: func(p dbrun.Progress) {
-			activity.RecordHeartbeat(ctx, temporal.BackupHeartbeatProgress{
-				CurrentFile:  p.Describe(),
-				BytesScanned: p.BytesInSpool,
-			})
+			pt.Set(p.Describe())
 		},
 	})
 	if err != nil {
 		var pe *dbrun.PrecheckError
 		if errors.As(err, &pe) {
 			slog.Error("Database backup precheck failed", "error", err)
+			tail := ""
+			if a.LogTail != nil {
+				tail = a.LogTail()
+			}
 			return &temporal.BackupExecutionResult{Status: db.RunStatusFailed, ErrorMessage: err.Error()},
-				sdktemporal.NewNonRetryableApplicationError(err.Error(), ErrTypeDBPrecheckFailed, err)
+				sdktemporal.NewNonRetryableApplicationError(err.Error(), ErrTypeDBPrecheckFailed, err,
+					temporal.BackupFailureDetails{Phase: pt.Current(), LogTail: tail})
 		}
 		if ctx.Err() != nil {
 			return nil, err
 		}
-		slog.Error("Database backup failed", "error", err)
+		slog.Error("Database backup failed", "error", err, "phase", pt.Current())
 		return failed(fmt.Errorf("database backup failed: %w", err))
 	}
 	return result, nil

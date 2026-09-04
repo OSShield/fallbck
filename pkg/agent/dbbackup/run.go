@@ -12,12 +12,11 @@ import (
 	dbspec "github.com/osshield/fallbck/pkg/dbbackup"
 	"github.com/osshield/fallbck/pkg/temporal"
 	"github.com/osshield/gopbs"
-	"github.com/osshield/gopbs/pbs"
 )
 
 // UploadFunc uploads the spool directory (as the archive) plus blobs to PBS; the
 // activity binds it to the pxar engine with the run's session.
-type UploadFunc func(ctx context.Context, spoolDir string, blobs []gopbs.Blob, progress func(archive string, stats pbs.UploadStats, done bool)) (*temporal.BackupExecutionResult, error)
+type UploadFunc func(ctx context.Context, spoolDir string, blobs []gopbs.Blob) (*temporal.BackupExecutionResult, error)
 
 // RunOptions parameterise Run
 type RunOptions struct {
@@ -233,9 +232,7 @@ func Run(ctx context.Context, o RunOptions) (*temporal.BackupExecutionResult, er
 
 	// Upload
 	req.progress("upload", "")
-	result, err := o.Upload(ctx, spoolDir, []gopbs.Blob{{Name: dbspec.ManifestBlobName, Data: data}}, func(archive string, stats pbs.UploadStats, done bool) {
-		report(Progress{Phase: "upload", Current: archive, BytesInSpool: int64(stats.Size)})
-	})
+	result, err := o.Upload(ctx, spoolDir, []gopbs.Blob{{Name: dbspec.ManifestBlobName, Data: data}})
 	if err != nil {
 		return nil, err
 	}

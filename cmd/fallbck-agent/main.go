@@ -30,8 +30,8 @@ func main() {
 	runCmd := flag.NewFlagSet("run", flag.ExitOnError)
 	runConfig := runCmd.String("config", "", "Path to agent YAML configuration file")
 
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: config.LogLevel()}))
-	slog.SetDefault(logger)
+	logging := runtime.SetupLogging()
+	agent.Logging = logging
 	enrollment.AgentVersion = AgentVersion
 
 	if len(os.Args) < 2 {
@@ -62,10 +62,12 @@ func main() {
 			slog.Error("Agent startup failed", "error", err)
 			os.Exit(1)
 		}
+		logging.ApplyConfigLogLevel(cfg)
 		err = runtime.Run(agent, cfg, configPath, func(w worker.Worker, conns *runtime.Conns, store *runtime.TokenStore) error {
 			acts := activities.NewAgentActivities()
 			acts.Tunnel = conns.Tunnel
 			acts.Credentials = runtime.PBSCredentialsFetcher(cfg, store)
+			acts.LogTail = logging.Tail
 			w.RegisterActivity(acts)
 			return nil
 		})

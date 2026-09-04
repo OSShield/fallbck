@@ -15,7 +15,10 @@ import (
 // runBackup mirrors gopbs.Backup but names the archive roots itself: a single directory
 // is the archive root as in gopbs; several paths are placed under the virtual root under
 // the names from ArchiveEntryNames (archive.AddDirectoryAs, gopbs >= 0.1.5).
-func runBackup(ctx context.Context, opts gopbs.BackupOptions) (*gopbs.BackupResult, error) {
+func runBackup(ctx context.Context, opts gopbs.BackupOptions, phase func(string)) (*gopbs.BackupResult, error) {
+	if phase == nil {
+		phase = func(string) {}
+	}
 	if opts.Format != gopbs.FormatV1 && opts.Format != gopbs.FormatV2 {
 		return nil, fmt.Errorf("unknown archive format %d", opts.Format)
 	}
@@ -71,7 +74,7 @@ func runBackup(ctx context.Context, opts gopbs.BackupOptions) (*gopbs.BackupResu
 		}
 	}
 
-	metaName, payloadName := pbs.SplitIndexNames(arch.CatalogEntryName())
+	metaName, _ := pbs.SplitIndexNames(arch.CatalogEntryName())
 	if opts.Format == gopbs.FormatV2 {
 		result.ArchiveName = metaName
 	} else {
@@ -79,28 +82,12 @@ func runBackup(ctx context.Context, opts gopbs.BackupOptions) (*gopbs.BackupResu
 	}
 
 	clientCfg := opts.Client
-	if opts.OnProgress != nil {
-		totals := map[string]uint64{}
-		if opts.Format == gopbs.FormatV2 {
-			if m, p, err := arch.EstimatedSizeV2(); err == nil {
-				totals[metaName], totals[payloadName] = uint64(m), uint64(p)
-			}
-		} else if t, err := arch.EstimatedSizeV1(); err == nil {
-			totals[result.ArchiveName] = uint64(t)
-		}
-		userProgress := clientCfg.OnUploadProgress
-		clientCfg.OnUploadProgress = func(name string, stats pbs.UploadStats, done bool) {
-			if userProgress != nil {
-				userProgress(name, stats, done)
-			}
-			opts.OnProgress(gopbs.Progress{Archive: name, Total: totals[name], Stats: stats, Done: done})
-		}
-	}
 
 	client, err := pbs.NewClient(clientCfg)
 	if err != nil {
 		return nil, err
 	}
+	phase("opening PBS session")
 	sess, err := client.StartBackup(ctx, opts.Ref)
 	if err != nil {
 		return nil, err
@@ -114,6 +101,7 @@ func runBackup(ctx context.Context, opts gopbs.BackupOptions) (*gopbs.BackupResu
 		if err != nil {
 			return nil, err
 		}
+		phase("uploading " + result.ArchiveName)
 		result.Archive, result.Payload, err = sess.UploadPXARv2(ctx, result.ArchiveName, meta, payload)
 		meta.Close()
 		payload.Close()
@@ -125,6 +113,7 @@ func runBackup(ctx context.Context, opts gopbs.BackupOptions) (*gopbs.BackupResu
 		if err != nil {
 			return nil, err
 		}
+		phase("uploading " + result.ArchiveName)
 		result.Archive, err = sess.UploadPXARv1(ctx, result.ArchiveName, stream)
 		stream.Close()
 		if err != nil {
@@ -135,6 +124,7 @@ func runBackup(ctx context.Context, opts gopbs.BackupOptions) (*gopbs.BackupResu
 			if err != nil {
 				return nil, err
 			}
+			phase("uploading catalog")
 			result.Catalog, err = sess.UploadCatalog(ctx, catStream)
 			catStream.Close()
 			if err != nil {
@@ -152,6 +142,7 @@ func runBackup(ctx context.Context, opts gopbs.BackupOptions) (*gopbs.BackupResu
 		}
 	}
 
+	phase("finalizing snapshot")
 	if err := sess.Finish(ctx); err != nil {
 		return nil, err
 	}

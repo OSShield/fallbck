@@ -48,12 +48,19 @@ type Options struct {
 	ArchiveName string
 	// Blobs are small extra files stored in the snapshot as <name>.blob (manifests)
 	Blobs []gopbs.Blob
-	// OnProgress receives upload progress per archive
-	OnProgress func(archive string, stats pbs.UploadStats, done bool)
+	// OnPhase is told what the engine is doing (opening the session, uploading an
+	// archive, finalizing); used for activity heartbeats and failure reporting
+	OnPhase func(phase string)
 }
 
 // Run executes the backup and maps the outcome to a BackupExecutionResult
 func Run(ctx context.Context, opts Options) (*temporal.BackupExecutionResult, error) {
+	phase := opts.OnPhase
+	if phase == nil {
+		phase = func(string) {}
+	}
+	phase("preparing backup")
+
 	s := opts.Session
 	if s == nil {
 		return nil, errors.New("backup session is required")
@@ -115,18 +122,19 @@ func Run(ctx context.Context, opts Options) (*temporal.BackupExecutionResult, er
 	// Exclude patterns use proxmox-backup-client syntax and are recorded in the
 	// archive exactly like the official client's --exclude; .pxarexclude files inside
 	// the tree are honoured as well, matching proxmox-backup-client.
+	// No gopbs OnProgress: setting it would cost a full extra metadata scan of the
+	// tree just for progress totals; liveness comes from the caller's phase heartbeats.
 	result, err := runBackup(ctx, gopbs.BackupOptions{
 		Client: clientCfg,
 		Archive: archive.Options{
 			Name: archiveName,
 			Scan: scan.Options{Exclude: s.ExcludePaths, PxarExcludeFiles: true},
 		},
-		Blobs:      opts.Blobs,
-		Ref:        ref,
-		Format:     format,
-		Paths:      s.BackupPaths,
-		OnProgress: progressAdapter(opts.OnProgress),
-	})
+		Blobs:  opts.Blobs,
+		Ref:    ref,
+		Format: format,
+		Paths:  s.BackupPaths,
+	}, opts.OnPhase)
 	if err != nil {
 		return nil, err
 	}
@@ -167,11 +175,4 @@ func Run(ctx context.Context, opts Options) (*temporal.BackupExecutionResult, er
 		SnapshotID:    snapshot,
 		Duration:      duration,
 	}, nil
-}
-
-func progressAdapter(fn func(string, pbs.UploadStats, bool)) func(gopbs.Progress) {
-	if fn == nil {
-		return nil
-	}
-	return func(p gopbs.Progress) { fn(p.Archive, p.Stats, p.Done) }
 }

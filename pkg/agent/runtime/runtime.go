@@ -50,6 +50,9 @@ type Agent struct {
 	// Type is config.AgentTypeFilesystem or config.AgentTypeDatabase
 	Type    string
 	Version string
+	// Logging is the process logging setup (SetupLogging); the heartbeat loop applies
+	// the server's per-agent debug toggle to it and failures attach its ring buffer
+	Logging *Logging
 }
 
 // FindDefaultConfig returns the first existing agent.yaml among the conventional
@@ -288,9 +291,10 @@ func PBSCredentialsFetcher(cfg *config.AgentConfig, store *TokenStore) func(ctx 
 	}
 }
 
-// StartHeartbeat reports the agent online every 30 s and rotates the token when it
-// approaches expiry; it returns when ctx is cancelled
-func StartHeartbeat(ctx context.Context, cfg *config.AgentConfig, store *TokenStore, version string) {
+// StartHeartbeat reports the agent online every 30 s, applies the server's remote
+// debug-logging toggle from the response, and rotates the token when it approaches
+// expiry; it returns when ctx is cancelled. logging may be nil.
+func StartHeartbeat(ctx context.Context, cfg *config.AgentConfig, store *TokenStore, version string, logging *Logging) {
 	ticker := time.NewTicker(heartbeatInterval)
 	defer ticker.Stop()
 
@@ -320,11 +324,25 @@ func StartHeartbeat(ctx context.Context, cfg *config.AgentConfig, store *TokenSt
 			slog.Warn("Heartbeat failed", "error", err)
 			return
 		}
-		_ = resp.Body.Close()
+		defer resp.Body.Close()
 		if resp.StatusCode == http.StatusUnauthorized {
 			slog.Error("Server rejected the agent token; the agent may have been revoked. Re-enroll to continue.")
-		} else if resp.StatusCode >= 300 {
+			return
+		}
+		if resp.StatusCode >= 300 {
 			slog.Warn("Heartbeat rejected", "status", resp.StatusCode)
+			return
+		}
+		var ack api.HeartbeatResponse
+		if err := json.NewDecoder(resp.Body).Decode(&ack); err != nil {
+			return
+		}
+		if logging != nil && logging.Control.SetRemoteDebug(ack.DebugLogging) {
+			if ack.DebugLogging {
+				slog.Info("Debug logging enabled remotely (web UI toggle)")
+			} else {
+				slog.Info("Debug logging disabled remotely; back to the configured level")
+			}
 		}
 	}
 
@@ -408,7 +426,7 @@ func Run(a Agent, cfg *config.AgentConfig, configPath string, register func(w wo
 	defer w.Stop()
 	slog.Info("Agent Temporal worker listening", "queue", cfg.TaskQueue)
 
-	go StartHeartbeat(ctx, cfg, store, a.Version)
+	go StartHeartbeat(ctx, cfg, store, a.Version, a.Logging)
 
 	stopChan := make(chan os.Signal, 1)
 	signal.Notify(stopChan, os.Interrupt, syscall.SIGTERM)

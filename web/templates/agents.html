@@ -51,7 +51,12 @@
             <td style="color: var(--text-muted); font-size: 13px;">
               {{if .LastSeenAt}}{{formatTime .LastSeenAt}}{{else}}Never{{end}}
             </td>
-            <td style="text-align: right;">
+            <td style="text-align: right; display: flex; justify-content: flex-end; gap: 8px;">
+              {{if .DebugLogging}}
+                <button class="btn btn-secondary btn-sm" title="Debug logging is on; the agent logs at debug level. Click to return to its configured level." onclick="toggleAgentDebug('{{.ID}}', false)">Debug: on</button>
+              {{else}}
+                <button class="btn btn-secondary btn-sm" title="Raise this agent's log level to debug from here — applied on its next heartbeat (~30s), no restart." onclick="toggleAgentDebug('{{.ID}}', true)">Debug: off</button>
+              {{end}}
               <button class="btn btn-secondary btn-sm" style="color: var(--danger-text);" onclick="deleteResource('agents', '{{.ID}}')">Delete</button>
             </td>
           </tr>
