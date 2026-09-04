@@ -37,8 +37,8 @@ func main() {
 	toolsCmd := flag.NewFlagSet("tools", flag.ExitOnError)
 	toolsConfig := toolsCmd.String("config", "", "Path to agent YAML configuration file")
 
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: config.LogLevel()}))
-	slog.SetDefault(logger)
+	logging := runtime.SetupLogging()
+	agent.Logging = logging
 	enrollment.AgentVersion = AgentVersion
 
 	if len(os.Args) < 2 {
@@ -69,6 +69,7 @@ func main() {
 			slog.Error("Agent startup failed", "error", err)
 			os.Exit(1)
 		}
+		logging.ApplyConfigLogLevel(cfg)
 		dbCfg := cfg.DBBackup
 		dbCfg.ApplyDefaults(cfg.DataDir)
 		if err := dbrun.CleanSpool(dbCfg); err != nil {
@@ -91,6 +92,7 @@ func main() {
 			acts.Config = dbCfg
 			acts.Hostname = cfg.Hostname
 			acts.Version = AgentVersion
+			acts.LogTail = logging.Tail
 			w.RegisterActivity(acts)
 			return nil
 		})

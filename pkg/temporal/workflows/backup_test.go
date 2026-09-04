@@ -1,6 +1,7 @@
 package workflows
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/osshield/fallbck/pkg/temporal"
 	"github.com/osshield/fallbck/pkg/temporal/activities"
 	"github.com/stretchr/testify/mock"
+	enumspb "go.temporal.io/api/enums/v1"
 	sdktemporal "go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
 )
@@ -148,4 +150,64 @@ func TestBackupJobWorkflowDatabase(t *testing.T) {
 	}
 	env.AssertNotCalled(t, "ExecuteFilesystemBackup", mock.Anything, mock.Anything)
 	env.AssertCalled(t, "PruneJob", mock.Anything, session)
+}
+
+func TestBackupJobWorkflowFailureCarriesDetails(t *testing.T) {
+	testSuite := &testsuite.WorkflowTestSuite{}
+	env := testSuite.NewTestWorkflowEnvironment()
+
+	jobID := uuid.New()
+	session := &temporal.BackupSessionInfo{JobID: jobID, AgentTaskQueue: "q", BackupRunID: uuid.New()}
+	var serverActs *activities.ServerActivities
+	var agentActs *activities.AgentActivities
+	env.OnActivity(serverActs.PrepareBackupSession, mock.Anything, jobID).Return(session, nil)
+	env.OnActivity(agentActs.ExecuteFilesystemBackup, mock.Anything, session).Return(nil,
+		sdktemporal.NewApplicationError("boom [phase: uploading root.pxar.didx (2m0s)]", "backup_failed",
+			temporal.BackupFailureDetails{Phase: "uploading root.pxar.didx (2m0s)", LogTail: "ERROR something broke"}))
+	var finalized *temporal.BackupExecutionResult
+	env.OnActivity(serverActs.FinalizeBackupRun, mock.Anything, session, mock.Anything).
+		Run(func(args mock.Arguments) { finalized = args.Get(2).(*temporal.BackupExecutionResult) }).Return(nil)
+
+	env.ExecuteWorkflow(BackupJobWorkflow, jobID)
+	if !env.IsWorkflowCompleted() {
+		t.Fatal("Workflow did not complete")
+	}
+	if finalized == nil {
+		t.Fatal("FinalizeBackupRun not called")
+	}
+	if finalized.Status != db.RunStatusFailed || finalized.LogTail != "ERROR something broke" {
+		t.Errorf("finalized: %+v", finalized)
+	}
+	if !strings.Contains(finalized.ErrorMessage, "phase: uploading root.pxar.didx") {
+		t.Errorf("error message lost the phase: %q", finalized.ErrorMessage)
+	}
+}
+
+func TestBackupJobWorkflowHeartbeatTimeoutMessage(t *testing.T) {
+	testSuite := &testsuite.WorkflowTestSuite{}
+	env := testSuite.NewTestWorkflowEnvironment()
+
+	jobID := uuid.New()
+	session := &temporal.BackupSessionInfo{JobID: jobID, AgentTaskQueue: "q", BackupRunID: uuid.New()}
+	var serverActs *activities.ServerActivities
+	var agentActs *activities.AgentActivities
+	env.OnActivity(serverActs.PrepareBackupSession, mock.Anything, jobID).Return(session, nil)
+	env.OnActivity(agentActs.ExecuteFilesystemBackup, mock.Anything, session).Return(nil,
+		sdktemporal.NewTimeoutError(enumspb.TIMEOUT_TYPE_HEARTBEAT, nil,
+			temporal.BackupHeartbeatProgress{Phase: "uploading root.pxar.didx (4m30s)"}))
+	var finalized *temporal.BackupExecutionResult
+	env.OnActivity(serverActs.FinalizeBackupRun, mock.Anything, session, mock.Anything).
+		Run(func(args mock.Arguments) { finalized = args.Get(2).(*temporal.BackupExecutionResult) }).Return(nil)
+
+	env.ExecuteWorkflow(BackupJobWorkflow, jobID)
+	if !env.IsWorkflowCompleted() {
+		t.Fatal("Workflow did not complete")
+	}
+	if finalized == nil {
+		t.Fatal("FinalizeBackupRun not called")
+	}
+	msg := finalized.ErrorMessage
+	if !strings.Contains(msg, "stopped sending heartbeats") || !strings.Contains(msg, "last reported phase: uploading root.pxar.didx") {
+		t.Errorf("heartbeat timeout message not descriptive: %q", msg)
+	}
 }

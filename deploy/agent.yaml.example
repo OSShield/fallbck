@@ -10,4 +10,5 @@ auth_token: "eyJ..."                 # bearer token issued at enrollment (file m
 token_expires_at: 2027-08-25T00:00:00Z
 # server_ca_cert_path: "/var/lib/fallbck/agent/server-ca.crt"   # private CA for server_url
 # insecure_skip_verify: false
+# log_level: info                    # debug|info|warn|error; DEBUG=true env wins; the web UI can raise it to debug live
 # enrollment_key: ""                 # set (or FALLBCK_AGENT_ENROLLMENT_KEY) to self-enroll on first start

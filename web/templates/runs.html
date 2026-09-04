@@ -58,7 +58,8 @@
             </td>
             <td style="color: var(--text-muted); font-size: 13px;">{{formatTime .CreatedAt}}</td>
             <td style="color: var(--text-muted); font-size: 13px; font-family: var(--font-mono);">{{.DurationString}}</td>
-            <td style="text-align: right;">
+            <td style="text-align: right; display: flex; justify-content: flex-end; gap: 8px;">
+              <button class="btn btn-secondary btn-sm" onclick="showRunDetails('{{.ID}}')">Details</button>
               {{if .Status.IsActive}}
               <button class="btn btn-sm btn-danger" onclick="cancelRun('{{.ID}}')">Cancel</button>
               {{end}}
@@ -77,6 +78,30 @@
         {{end}}
       </tbody>
     </table>
+  </div>
+</div>
+
+<!-- Run Details Modal -->
+<div id="modal-run-details" class="modal-backdrop">
+  <div class="modal-content" style="max-width: 860px;">
+    <div class="modal-header">
+      <h3>Run Details</h3>
+      <button class="close-btn" onclick="closeModal('modal-run-details')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size: 14px;"><strong>Status:</strong> <span id="run-details-status"></span></p>
+      <div class="form-group">
+        <label>Error</label>
+        <pre id="run-details-error" style="background-color: var(--bg-subtle); padding: 12px; border-radius: var(--radius-sm); font-size: 12px; white-space: pre-wrap; word-break: break-word; max-height: 160px; overflow: auto;"></pre>
+      </div>
+      <div class="form-group">
+        <label>Agent log (captured at failure, all levels)</label>
+        <pre id="run-details-log" style="background-color: var(--bg-subtle); padding: 12px; border-radius: var(--radius-sm); font-size: 12px; white-space: pre-wrap; word-break: break-word; max-height: 380px; overflow: auto;"></pre>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-run-details')">Close</button>
+    </div>
   </div>
 </div>
 {{end}}

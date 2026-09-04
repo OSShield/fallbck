@@ -75,12 +75,12 @@ func (d *DB) UpsertAgent(ctx context.Context, agent *Agent) error {
 
 func (d *DB) GetAgentByID(ctx context.Context, id uuid.UUID) (*Agent, error) {
 	query := `
-		SELECT id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type
+		SELECT id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, debug_logging
 		FROM agents WHERE id = $1
 	`
 	row := d.Pool.QueryRow(ctx, query, id)
 	var a Agent
-	err := row.Scan(&a.ID, &a.Hostname, &a.IPAddress, &a.OS, &a.Arch, &a.Version, &a.TaskQueue, &a.Status, &a.LastSeenAt, &a.CreatedAt, &a.UpdatedAt, &a.AgentType)
+	err := row.Scan(&a.ID, &a.Hostname, &a.IPAddress, &a.OS, &a.Arch, &a.Version, &a.TaskQueue, &a.Status, &a.LastSeenAt, &a.CreatedAt, &a.UpdatedAt, &a.AgentType, &a.DebugLogging)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -92,7 +92,7 @@ func (d *DB) GetAgentByID(ctx context.Context, id uuid.UUID) (*Agent, error) {
 
 func (d *DB) ListAgents(ctx context.Context) ([]*Agent, error) {
 	query := `
-		SELECT id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type
+		SELECT id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, debug_logging
 		FROM agents ORDER BY hostname ASC
 	`
 	rows, err := d.Pool.Query(ctx, query)
@@ -104,7 +104,7 @@ func (d *DB) ListAgents(ctx context.Context) ([]*Agent, error) {
 	var agents []*Agent
 	for rows.Next() {
 		var a Agent
-		if err := rows.Scan(&a.ID, &a.Hostname, &a.IPAddress, &a.OS, &a.Arch, &a.Version, &a.TaskQueue, &a.Status, &a.LastSeenAt, &a.CreatedAt, &a.UpdatedAt, &a.AgentType); err != nil {
+		if err := rows.Scan(&a.ID, &a.Hostname, &a.IPAddress, &a.OS, &a.Arch, &a.Version, &a.TaskQueue, &a.Status, &a.LastSeenAt, &a.CreatedAt, &a.UpdatedAt, &a.AgentType, &a.DebugLogging); err != nil {
 			return nil, err
 		}
 		agents = append(agents, &a)
@@ -112,11 +112,31 @@ func (d *DB) ListAgents(ctx context.Context) ([]*Agent, error) {
 	return agents, rows.Err()
 }
 
-func (d *DB) UpdateAgentHeartbeat(ctx context.Context, id uuid.UUID, status AgentStatus) error {
+// UpdateAgentHeartbeat records the heartbeat and returns the agent's remote
+// debug-logging setting for the response.
+func (d *DB) UpdateAgentHeartbeat(ctx context.Context, id uuid.UUID, status AgentStatus) (bool, error) {
 	now := time.Now().UTC()
-	query := `UPDATE agents SET last_seen_at = $1, status = $2, updated_at = $1 WHERE id = $3`
-	_, err := d.Pool.Exec(ctx, query, now, status, id)
-	return err
+	query := `UPDATE agents SET last_seen_at = $1, status = $2, updated_at = $1 WHERE id = $3 RETURNING debug_logging`
+	var debug bool
+	if err := d.Pool.QueryRow(ctx, query, now, status, id).Scan(&debug); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, ErrNotFound
+		}
+		return false, err
+	}
+	return debug, nil
+}
+
+// SetAgentDebugLogging flips the per-agent debug toggle (delivered on the next heartbeat)
+func (d *DB) SetAgentDebugLogging(ctx context.Context, id uuid.UUID, enabled bool) error {
+	tag, err := d.Pool.Exec(ctx, `UPDATE agents SET debug_logging = $2, updated_at = NOW() WHERE id = $1`, id, enabled)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (d *DB) DeleteAgent(ctx context.Context, id uuid.UUID) error {
@@ -452,13 +472,13 @@ func (d *DB) UpdateRun(ctx context.Context, run *BackupRun) error {
 		UPDATE backup_runs
 		SET status = $1, start_time = $2, end_time = $3, bytes_scanned = $4,
 		    bytes_uploaded = $5, dedup_ratio = $6, chunk_count = $7,
-		    error_message = $8, pbs_snapshot_id = $9
-		WHERE id = $10
+		    error_message = $8, pbs_snapshot_id = $9, log_tail = $10
+		WHERE id = $11
 	`
 	_, err := d.Pool.Exec(ctx, query,
 		run.Status, run.StartTime, run.EndTime, run.BytesScanned,
 		run.BytesUploaded, run.DedupRatio, run.ChunkCount,
-		run.ErrorMessage, run.PBSSnapshotID, run.ID,
+		run.ErrorMessage, run.PBSSnapshotID, run.LogTail, run.ID,
 	)
 	return err
 }
@@ -470,7 +490,7 @@ func (d *DB) ListRuns(ctx context.Context, limit int) ([]*BackupRun, error) {
 	query := `
 		SELECT r.id, r.job_id, r.agent_id, r.target_id, r.workflow_id, r.run_id, r.status,
 		       r.start_time, r.end_time, r.bytes_scanned, r.bytes_uploaded, r.dedup_ratio,
-		       r.chunk_count, r.error_message, r.pbs_snapshot_id, r.created_at,
+		       r.chunk_count, r.error_message, r.pbs_snapshot_id, r.log_tail, r.created_at,
 		       j.name as job_name, a.hostname as agent_name
 		FROM backup_runs r
 		JOIN backup_jobs j ON r.job_id = j.id
@@ -490,7 +510,7 @@ func (d *DB) ListRuns(ctx context.Context, limit int) ([]*BackupRun, error) {
 		if err := rows.Scan(
 			&r.ID, &r.JobID, &r.AgentID, &r.TargetID, &r.WorkflowID, &r.RunID, &r.Status,
 			&r.StartTime, &r.EndTime, &r.BytesScanned, &r.BytesUploaded, &r.DedupRatio,
-			&r.ChunkCount, &r.ErrorMessage, &r.PBSSnapshotID, &r.CreatedAt,
+			&r.ChunkCount, &r.ErrorMessage, &r.PBSSnapshotID, &r.LogTail, &r.CreatedAt,
 			&r.JobName, &r.AgentName,
 		); err != nil {
 			return nil, err

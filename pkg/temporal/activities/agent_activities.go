@@ -26,6 +26,8 @@ type AgentActivities struct {
 	// Credentials fetches PBS connection details for jobs in direct mode
 	// (GET /api/v1/agents/pbs-credentials with the run's ticket)
 	Credentials func(ctx context.Context, ticket string) (*backup.DirectOptions, error)
+	// LogTail returns the agent's recent log output, attached to failures
+	LogTail func() string
 }
 
 // NewAgentActivities creates a new AgentActivities instance
@@ -45,15 +47,23 @@ func (a *AgentActivities) ExecuteFilesystemBackup(ctx context.Context, session *
 		"format", session.PxarFormat,
 		"direct_pbs", session.DirectPBS,
 	)
-	opts := backup.Options{Session: session, Workers: a.Workers}
+	// Heartbeat on a timer for the whole activity: scanning and session setup produce
+	// no upload progress, and must not trip the 60s heartbeat timeout.
+	pt := newPhaseTracker()
+	stopHeartbeats := startHeartbeats(ctx, pt)
+	defer stopHeartbeats()
+
+	opts := backup.Options{Session: session, Workers: a.Workers, OnPhase: pt.Set}
 	if session.DirectPBS {
 		if a.Credentials == nil {
 			return nil, errors.New("job requires direct PBS access but the agent has no credentials fetcher")
 		}
+		pt.Set("fetching PBS credentials")
 		direct, err := a.Credentials(ctx, session.Ticket)
 		if err != nil {
 			slog.Error("Failed to fetch PBS credentials for direct backup", "error", err)
-			return &temporal.BackupExecutionResult{Status: db.RunStatusFailed, ErrorMessage: err.Error()}, err
+			return &temporal.BackupExecutionResult{Status: db.RunStatusFailed, ErrorMessage: err.Error()},
+				backupFailure(ctx, err, pt, a.LogTail)
 		}
 		opts.Direct = direct
 	} else {
@@ -65,25 +75,14 @@ func (a *AgentActivities) ExecuteFilesystemBackup(ctx context.Context, session *
 		}
 	}
 
-	result, err := backup.Run(ctx, backup.Options{
-		Session: opts.Session,
-		Workers: opts.Workers,
-		Dial:    opts.Dial,
-		Direct:  opts.Direct,
-		OnProgress: func(archive string, stats pbs.UploadStats, done bool) {
-			activity.RecordHeartbeat(ctx, temporal.BackupHeartbeatProgress{
-				CurrentFile:   archive,
-				BytesScanned:  int64(stats.Size),
-				BytesUploaded: int64(stats.Size),
-			})
-		},
-	})
+	result, err := backup.Run(ctx, opts)
 	if err != nil {
-		slog.Error("Agent backup execution failed", "error", err)
+		slog.Error("Agent backup execution failed", "error", err, "phase", pt.Current())
 		return &temporal.BackupExecutionResult{
-			Status:       db.RunStatusFailed,
-			ErrorMessage: fmt.Sprintf("Backup execution failed: %v", err),
-		}, err
+				Status:       db.RunStatusFailed,
+				ErrorMessage: fmt.Sprintf("Backup execution failed: %v", err),
+			},
+			backupFailure(ctx, err, pt, a.LogTail)
 	}
 	return result, nil
 }

@@ -41,18 +41,20 @@ const (
 
 // Agent represents a registered backup agent host
 type Agent struct {
-	ID         uuid.UUID   `json:"id" db:"id"`
-	Hostname   string      `json:"hostname" db:"hostname"`
-	IPAddress  string      `json:"ip_address" db:"ip_address"`
-	OS         string      `json:"os" db:"os"`
-	Arch       string      `json:"arch" db:"arch"`
-	Version    string      `json:"version" db:"version"`
-	AgentType  string      `json:"agent_type" db:"agent_type"`
-	TaskQueue  string      `json:"task_queue" db:"task_queue"`
-	Status     AgentStatus `json:"status" db:"status"`
-	LastSeenAt *time.Time  `json:"last_seen_at" db:"last_seen_at"`
-	CreatedAt  time.Time   `json:"created_at" db:"created_at"`
-	UpdatedAt  time.Time   `json:"updated_at" db:"updated_at"`
+	ID        uuid.UUID `json:"id" db:"id"`
+	Hostname  string    `json:"hostname" db:"hostname"`
+	IPAddress string    `json:"ip_address" db:"ip_address"`
+	OS        string    `json:"os" db:"os"`
+	Arch      string    `json:"arch" db:"arch"`
+	Version   string    `json:"version" db:"version"`
+	AgentType string    `json:"agent_type" db:"agent_type"`
+	TaskQueue string    `json:"task_queue" db:"task_queue"`
+	// DebugLogging raises the agent's log level to debug (applied via heartbeats)
+	DebugLogging bool        `json:"debug_logging" db:"debug_logging"`
+	Status       AgentStatus `json:"status" db:"status"`
+	LastSeenAt   *time.Time  `json:"last_seen_at" db:"last_seen_at"`
+	CreatedAt    time.Time   `json:"created_at" db:"created_at"`
+	UpdatedAt    time.Time   `json:"updated_at" db:"updated_at"`
 }
 
 // EnrollmentToken represents a one-time or multi-use token for agent onboarding
@@ -179,7 +181,9 @@ type BackupRun struct {
 	ChunkCount    int        `json:"chunk_count" db:"chunk_count"`
 	ErrorMessage  string     `json:"error_message" db:"error_message"`
 	PBSSnapshotID string     `json:"pbs_snapshot_id" db:"pbs_snapshot_id"`
-	CreatedAt     time.Time  `json:"created_at" db:"created_at"`
+	// LogTail is the agent's recent log output captured when the run failed
+	LogTail   string    `json:"log_tail,omitempty" db:"log_tail"`
+	CreatedAt time.Time `json:"created_at" db:"created_at"`
 
 	// Joined fields
 	JobName   string `json:"job_name,omitempty"`

@@ -6,6 +6,7 @@ import (
 	"github.com/osshield/fallbck/pkg/dbbackup"
 	sdktemporal "go.temporal.io/sdk/temporal"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -183,6 +184,7 @@ func (s *ServerActivities) FinalizeBackupRun(ctx context.Context, session *tempo
 		ChunkCount:    result.ChunkCount,
 		ErrorMessage:  result.ErrorMessage,
 		PBSSnapshotID: result.SnapshotID,
+		LogTail:       truncateTail(result.LogTail, 16*1024),
 	}
 
 	if err := s.DB.UpdateRun(ctx, run); err != nil {
@@ -236,4 +238,16 @@ func (s *ServerActivities) PruneJob(ctx context.Context, session *temporal.Backu
 	}
 
 	return nil
+}
+
+// truncateTail keeps the last max bytes of a log tail (the newest lines matter most)
+func truncateTail(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	cut := s[len(s)-max:]
+	if i := strings.IndexByte(cut, '\n'); i >= 0 && i < len(cut)-1 {
+		cut = cut[i+1:]
+	}
+	return cut
 }

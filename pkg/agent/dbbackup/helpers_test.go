@@ -13,7 +13,6 @@ import (
 	dbspec "github.com/osshield/fallbck/pkg/dbbackup"
 	"github.com/osshield/fallbck/pkg/temporal"
 	"github.com/osshield/gopbs"
-	"github.com/osshield/gopbs/pbs"
 )
 
 // fakeBin installs a shell script named name into dir (which the test puts on PATH).
@@ -149,7 +148,7 @@ type captureUpload struct {
 	copyTo string
 }
 
-func (c *captureUpload) fn(_ context.Context, spoolDir string, blobs []gopbs.Blob, progress func(string, pbs.UploadStats, bool)) (*temporal.BackupExecutionResult, error) {
+func (c *captureUpload) fn(_ context.Context, spoolDir string, blobs []gopbs.Blob) (*temporal.BackupExecutionResult, error) {
 	c.spool = spoolDir
 	c.blobs = blobs
 	c.files = nil
@@ -168,7 +167,6 @@ func (c *captureUpload) fn(_ context.Context, spoolDir string, blobs []gopbs.Blo
 			return nil, fmt.Errorf("copying spool: %v %s", err, out)
 		}
 	}
-	progress("db.pxar.didx", pbs.UploadStats{Size: 10}, true)
 	return &temporal.BackupExecutionResult{Status: "completed", SnapshotID: "host/db-x/2026-08-28T01:00:00Z", ChunkCount: 1}, nil
 }
 

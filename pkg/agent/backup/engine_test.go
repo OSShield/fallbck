@@ -56,7 +56,7 @@ func TestRunFormats(t *testing.T) {
 				Datastore: "store1", BackupType: "host", BackupID: "node6", BackupTime: time.Now().Unix(),
 				PxarFormat: format, BackupPaths: []string{dir},
 			}
-			var progressCalls int
+			var phases []string
 			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 			defer cancel()
 
@@ -64,7 +64,7 @@ func TestRunFormats(t *testing.T) {
 				Session:     session,
 				Dial:        directDial(fake, session),
 				ArchiveName: "root",
-				OnProgress:  func(string, pbs.UploadStats, bool) { progressCalls++ },
+				OnPhase:     func(p string) { phases = append(phases, p) },
 			})
 			if err != nil {
 				t.Fatalf("Run: %v", err)
@@ -75,8 +75,9 @@ func TestRunFormats(t *testing.T) {
 			if !strings.HasPrefix(res.SnapshotID, "host/node6/") {
 				t.Errorf("snapshot id %q", res.SnapshotID)
 			}
-			if progressCalls == 0 {
-				t.Error("no progress reported")
+			joined := strings.Join(phases, ",")
+			if !strings.Contains(joined, "opening PBS session") || !strings.Contains(joined, "uploading root.") || !strings.Contains(joined, "finalizing snapshot") {
+				t.Errorf("phases not reported: %v", phases)
 			}
 			if fake.Finished() != 1 {
 				t.Errorf("finished sessions = %d", fake.Finished())

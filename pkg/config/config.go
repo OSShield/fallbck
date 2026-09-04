@@ -158,6 +158,10 @@ type AgentConfig struct {
 	InsecureSkipVerify bool   `yaml:"insecure_skip_verify" json:"insecure_skip_verify"`
 	// EnrollmentKey triggers self-enrollment on first start
 	EnrollmentKey string `yaml:"enrollment_key" json:"-"`
+	// LogLevel sets the agent's base log level (debug, info, warn, error); the DEBUG /
+	// FALLBCK_LOG_LEVEL environment variables take precedence, and the server can
+	// raise the level to debug at runtime (per-agent toggle in the web UI)
+	LogLevel string `yaml:"log_level,omitempty" json:"log_level,omitempty"`
 	// DBBackup configures fallbck-db-agent (spool, tools, credential profiles)
 	DBBackup dbbackup.Config `yaml:"db_backup,omitempty" json:"db_backup"`
 }
@@ -388,6 +392,7 @@ func LoadAgentConfig(filePath string) (*AgentConfig, error) {
 	envString("FALLBCK_AGENT_SERVER_CA", &cfg.ServerCACertPath)
 	envBool("FALLBCK_AGENT_INSECURE_SKIP_VERIFY", &cfg.InsecureSkipVerify)
 	envString("FALLBCK_AGENT_ENROLLMENT_KEY", &cfg.EnrollmentKey)
+	envString("FALLBCK_AGENT_LOG_LEVEL", &cfg.LogLevel)
 
 	envString("FALLBCK_AGENT_DB_SPOOL_DIR", &cfg.DBBackup.SpoolDir)
 	envString("FALLBCK_AGENT_DB_STATE_DIR", &cfg.DBBackup.StateDir)
@@ -529,19 +534,39 @@ func (tc *TemporalConfig) BuildTLSConfig() (*tls.Config, error) {
 	return tlsConfig, nil
 }
 
+// ParseLogLevel maps a level name (debug, info, warn, error) to a slog level
+func ParseLogLevel(s string) (slog.Level, bool) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "debug":
+		return slog.LevelDebug, true
+	case "info":
+		return slog.LevelInfo, true
+	case "warn", "warning":
+		return slog.LevelWarn, true
+	case "error":
+		return slog.LevelError, true
+	}
+	return slog.LevelInfo, false
+}
+
+// EnvLogLevelSet reports whether the environment picked a log level (DEBUG or
+// FALLBCK_LOG_LEVEL); when it did, it outranks the config file's log_level.
+func EnvLogLevelSet() bool {
+	if v := strings.ToLower(os.Getenv("DEBUG")); v == "1" || v == "true" || v == "yes" {
+		return true
+	}
+	_, ok := ParseLogLevel(os.Getenv("FALLBCK_LOG_LEVEL"))
+	return ok && os.Getenv("FALLBCK_LOG_LEVEL") != ""
+}
+
 // LogLevel returns the process log level: FALLBCK_LOG_LEVEL (debug|info|warn|error) or,
 // for quick troubleshooting, DEBUG=true. Defaults to info.
 func LogLevel() slog.Level {
 	if v := strings.ToLower(os.Getenv("DEBUG")); v == "1" || v == "true" || v == "yes" {
 		return slog.LevelDebug
 	}
-	switch strings.ToLower(os.Getenv("FALLBCK_LOG_LEVEL")) {
-	case "debug":
-		return slog.LevelDebug
-	case "warn", "warning":
-		return slog.LevelWarn
-	case "error":
-		return slog.LevelError
+	if lvl, ok := ParseLogLevel(os.Getenv("FALLBCK_LOG_LEVEL")); ok && os.Getenv("FALLBCK_LOG_LEVEL") != "" {
+		return lvl
 	}
 	return slog.LevelInfo
 }

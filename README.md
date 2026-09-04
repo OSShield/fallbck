@@ -67,7 +67,9 @@ fallbck-ctl agents list
 
 ## Troubleshooting
 
-Set `DEBUG=true` (or `FALLBCK_LOG_LEVEL=debug`) on the server or agent for verbose logs. On the server this shows every PBS session handshake — the upgrade request (datastore, snapshot, token id without the secret) and PBS's answer — plus the embedded Temporal's info logs. On the agent it shows tunnel setup and credential fetches.
+Set `DEBUG=true` (or `FALLBCK_LOG_LEVEL=debug`) on the server or agent for verbose logs; agents also take `log_level: debug` in `agent.yaml`. For a running agent you can flip debug logging **from the web UI** (Agents page, "Debug" button) — it is delivered with the next heartbeat (~30s), applied live, and needs no restart.
+
+Every backup activity heartbeats its current phase every 15s; a run that fails records the phase it was in plus the agent's recent log lines (all levels, even without debug enabled) — open **Details** on the run in the history list. A "heartbeat timeout" now reports the last phase the agent was in before it went silent. On the server this shows every PBS session handshake — the upgrade request (datastore, snapshot, token id without the secret) and PBS's answer — plus the embedded Temporal's info logs. On the agent it shows tunnel setup and credential fetches.
 
 PBS API tokens must be entered as `user@realm!tokenid:secret` (the `=` spelling from the PBS token dialog is accepted and normalised); the token needs `Datastore.Backup` on the datastore/namespace. A `401 authentication failed` from PBS means the token or secret is wrong; `403` means missing privileges.
 
