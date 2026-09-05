@@ -338,7 +338,7 @@ func PBSCredentialsFetcher(cfg *config.AgentConfig, store *TokenStore) func(ctx 
 			return nil, fmt.Errorf("fetching PBS credentials: %w", err)
 		}
 		slog.Debug("Received PBS credentials for direct backup", "endpoint", creds.Endpoint, "datastore", creds.Datastore)
-		return &backup.DirectOptions{Endpoint: creds.Endpoint, Fingerprint: creds.Fingerprint, TLSVerify: creds.TLSVerify, APIToken: creds.APIToken}, nil
+		return &backup.DirectOptions{Endpoint: creds.Endpoint, Namespace: creds.Namespace, Fingerprint: creds.Fingerprint, TLSVerify: creds.TLSVerify, APIToken: creds.APIToken}, nil
 	}
 }
 

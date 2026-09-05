@@ -31,3 +31,6 @@ go.work.sum
 # .idea/
 # .vscode/
 dist/
+
+*.local.yaml
+deploy/helm/fallbck-k8s-agent/*.tgz

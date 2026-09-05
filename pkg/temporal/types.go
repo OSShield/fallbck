@@ -22,7 +22,10 @@ type BackupSessionInfo struct {
 	ProxyURL       string    `json:"proxy_url"`
 	Ticket         string    `json:"ticket"`
 	Datastore      string    `json:"datastore"`
-	Namespace      string    `json:"namespace"`
+	// Namespace is the target's PBS namespace at prepare time (informational). The
+	// server tunnel and direct-mode credentials source the namespace from the target
+	// directly, so an agent cannot influence which namespace a backup lands in.
+	Namespace string `json:"namespace"`
 	// Snapshot identity the server opens on PBS (also bound into the ticket)
 	BackupType string `json:"backup_type"`
 	BackupID   string `json:"backup_id"`

@@ -5,3 +5,4 @@ bin/
 *.log
 coverage.*
 dist/
+*.local.yaml

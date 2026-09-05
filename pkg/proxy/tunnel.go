@@ -121,9 +121,16 @@ func (t *BackupTunnel) Session(ss grpc.ServerStream) error {
 		return status.Error(codes.FailedPrecondition, "backup target has no PBS API token configured")
 	}
 
+	// The PBS namespace is configured by an administrator on the target and is the
+	// single source of truth; a namespace carried in the (client-held) ticket is
+	// ignored so a client can never redirect a backup into another namespace.
+	if claims.Namespace != "" && claims.Namespace != target.Namespace {
+		t.logger.Warn("Ignoring namespace from the backup ticket; using the target's configured namespace",
+			"agent_id", agent.AgentID, "ticket_namespace", claims.Namespace, "target_namespace", target.Namespace)
+	}
 	params := SessionParams{
 		Datastore:  claims.Datastore,
-		Namespace:  claims.Namespace,
+		Namespace:  target.Namespace,
 		BackupType: claims.BackupType,
 		BackupID:   claims.BackupID,
 		BackupTime: claims.BackupTime,

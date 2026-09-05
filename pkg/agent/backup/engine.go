@@ -29,6 +29,9 @@ type DirectOptions struct {
 	Endpoint    string
 	Fingerprint string
 	TLSVerify   bool
+	// Namespace within the datastore (configured on the target by an administrator);
+	// empty means the root namespace
+	Namespace string
 	// APIToken in canonical user@realm!tokenid:secret form
 	APIToken string
 }
@@ -96,14 +99,17 @@ func Run(ctx context.Context, opts Options) (*temporal.BackupExecutionResult, er
 	}
 
 	start := time.Now()
-	slog.Info("Starting PBS backup", "paths", s.BackupPaths, "format", s.PxarFormat, "backup_id", ref.ID, "datastore", s.Datastore, "namespace", s.Namespace)
 
+	// The PBS namespace is server-controlled: in tunnel mode the server opens the
+	// session in the target's namespace (gopbs ignores Namespace when DialSession is
+	// set), and in direct mode it is delivered from the target via the run's
+	// credentials. The agent never sources it from the (client-held) session.
 	clientCfg := pbs.Config{
 		DialSession: opts.Dial,
 		Datastore:   s.Datastore,
-		Namespace:   s.Namespace,
 		Workers:     opts.Workers,
 	}
+	namespace := "(server-controlled)"
 	if d := opts.Direct; d != nil {
 		authID, secret, err := fbpbs.SplitAPIToken(d.APIToken)
 		if err != nil {
@@ -111,13 +117,16 @@ func Run(ctx context.Context, opts Options) (*temporal.BackupExecutionResult, er
 		}
 		clientCfg.DialSession = nil
 		clientCfg.BaseURL = d.Endpoint
+		clientCfg.Namespace = d.Namespace
 		clientCfg.Auth = pbs.TokenAuth{AuthID: authID, Secret: secret}
 		clientCfg.Fingerprint = strings.TrimPrefix(strings.TrimPrefix(d.Fingerprint, "SHA256:"), "sha256:")
 		clientCfg.InsecureSkipAll = clientCfg.Fingerprint == "" && !d.TLSVerify
-		slog.Info("Connecting to PBS directly", "endpoint", d.Endpoint, "token_id", authID, "fingerprint_pinned", clientCfg.Fingerprint != "", "tls_verify", d.TLSVerify)
+		namespace = d.Namespace
+		slog.Info("Connecting to PBS directly", "endpoint", d.Endpoint, "token_id", authID, "namespace", d.Namespace, "fingerprint_pinned", clientCfg.Fingerprint != "", "tls_verify", d.TLSVerify)
 	} else {
 		slog.Debug("Connecting to PBS through the server tunnel")
 	}
+	slog.Info("Starting PBS backup", "paths", s.BackupPaths, "format", s.PxarFormat, "backup_id", ref.ID, "datastore", s.Datastore, "namespace", namespace)
 
 	// Exclude patterns use proxmox-backup-client syntax and are recorded in the
 	// archive exactly like the official client's --exclude; .pxarexclude files inside

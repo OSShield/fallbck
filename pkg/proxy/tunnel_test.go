@@ -256,3 +256,35 @@ func TestTunnelRejections(t *testing.T) {
 		}
 	})
 }
+
+func TestTunnelUsesTargetNamespaceNotTicket(t *testing.T) {
+	// Target is configured for "production"; the client presents a ticket claiming
+	// "default". The tunnel must open the PBS session in the target's namespace.
+	h := newHarness(t, func(tgt *db.BackupTarget) { tgt.Namespace = "production" })
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	ticket, err := h.tm.CreateBackupTicket(auth.BackupTicketClaims{
+		JobID: uuid.New(), AgentID: h.agentID, TargetID: h.targetID,
+		Datastore: "store1", Namespace: "default", BackupType: "host", BackupID: "node6", BackupTime: 1700000000,
+	}, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := pbs.NewClient(pbs.Config{DialSession: func(ctx context.Context, ref pbs.SnapshotRef) (net.Conn, error) {
+		return proxy.Dial(ctx, h.conn, ticket)
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.StartBackup(ctx, pbs.SnapshotRef{Type: "host", ID: "node6", Time: time.Unix(1700000000, 0)}); err != nil {
+		t.Fatalf("StartBackup: %v", err)
+	}
+	ups := h.pbs.Upgrades()
+	if len(ups) != 1 {
+		t.Fatalf("expected one PBS session, got %d", len(ups))
+	}
+	if ns := ups[0].URL.Query().Get("ns"); ns != "production" {
+		t.Errorf("tunnel opened namespace %q, want the target's %q (ticket namespace must be ignored)", ns, "production")
+	}
+}
