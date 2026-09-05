@@ -3,6 +3,7 @@ package db
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestValidateCron(t *testing.T) {
@@ -20,8 +21,18 @@ func TestValidateCron(t *testing.T) {
 
 func TestNextRunString(t *testing.T) {
 	j := &BackupJob{ScheduleCron: "0 2 * * *", Enabled: true}
-	if s := j.NextRunString(); s == "" || !strings.Contains(s, " 02:0") {
+	if s := j.NextRunString(); s == "" || !strings.Contains(s, " 02:00 UTC") {
 		t.Errorf("next run %q", s)
+	}
+	// The display follows the configured schedule timezone
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatal(err)
+	}
+	SetScheduleLocation(loc)
+	t.Cleanup(func() { SetScheduleLocation(time.UTC) })
+	if s := j.NextRunString(); !strings.Contains(s, " 02:00 E") { // EST or EDT
+		t.Errorf("next run not in schedule timezone: %q", s)
 	}
 	if s := (&BackupJob{ScheduleCron: "0 2 * * *", Enabled: false}).NextRunString(); s != "" {
 		t.Errorf("disabled job must not show a next run, got %q", s)

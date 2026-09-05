@@ -133,6 +133,9 @@ type ServerConfig struct {
 	// AgentCABundlePath optionally points at a PEM bundle agents should trust for the
 	// public URL (private CAs); it is handed out at enrollment
 	AgentCABundlePath string `yaml:"agent_ca_bundle_path" json:"agent_ca_bundle_path"`
+	// Timezone (IANA name) governs cron schedules and next-run display; empty =
+	// auto-detect from TZ / the host zone, falling back to UTC
+	Timezone string `yaml:"timezone" json:"timezone"`
 
 	Auth        AuthConfig           `yaml:"auth" json:"auth"`
 	AgentTokens AgentTokensConfig    `yaml:"agent_tokens" json:"agent_tokens"`
@@ -291,6 +294,10 @@ func LoadServerConfig(filePath string) (*ServerConfig, error) {
 	envString("FALLBCK_DATA_DIR", &cfg.DataDir)
 	envString("FALLBCK_AGENT_CA_BUNDLE", &cfg.AgentCABundlePath)
 	envString("FALLBCK_DB_URL", &cfg.Database.URL)
+	envString("FALLBCK_TIMEZONE", &cfg.Timezone)
+	if cfg.Timezone == "" {
+		cfg.Timezone = DetectTimezone()
+	}
 
 	envString("FALLBCK_OIDC_ISSUER", &cfg.Auth.OIDC.Issuer)
 	envString("FALLBCK_OIDC_CLIENT_ID", &cfg.Auth.OIDC.ClientID)
@@ -335,6 +342,11 @@ func (c *ServerConfig) Validate(dev bool) error {
 	}
 	if len(c.JWTSecret) < 32 {
 		return errors.New("jwt_secret must be at least 32 characters")
+	}
+	if c.Timezone != "" {
+		if _, err := time.LoadLocation(c.Timezone); err != nil {
+			return fmt.Errorf("timezone %q is not a valid IANA timezone name: %v", c.Timezone, err)
+		}
 	}
 	if c.Auth.InsecureDisable {
 		if !dev {
@@ -625,4 +637,43 @@ func envList(name string, dst *[]string) {
 		}
 		*dst = out
 	}
+}
+
+// DetectTimezone finds the host's IANA timezone name: the TZ environment variable,
+// /etc/timezone (Debian), or the /etc/localtime symlink target; UTC when nothing is
+// determinable (the common case in containers without TZ set).
+func DetectTimezone() string {
+	valid := func(name string) bool {
+		if name == "" || name == "Local" {
+			return false
+		}
+		_, err := time.LoadLocation(name)
+		return err == nil
+	}
+	if tz := strings.TrimSpace(os.Getenv("TZ")); valid(tz) {
+		return tz
+	}
+	if b, err := os.ReadFile("/etc/timezone"); err == nil {
+		if name := strings.TrimSpace(string(b)); valid(name) {
+			return name
+		}
+	}
+	if target, err := os.Readlink("/etc/localtime"); err == nil {
+		if i := strings.Index(target, "zoneinfo/"); i >= 0 {
+			if name := target[i+len("zoneinfo/"):]; valid(name) {
+				return name
+			}
+		}
+	}
+	return "UTC"
+}
+
+// ScheduleLocation loads the configured timezone (UTC on any problem)
+func (c *ServerConfig) ScheduleLocation() *time.Location {
+	if c.Timezone != "" {
+		if loc, err := time.LoadLocation(c.Timezone); err == nil {
+			return loc
+		}
+	}
+	return time.UTC
 }

@@ -31,7 +31,7 @@ func TestUIRenderRoutes(t *testing.T) {
 		{"/targets", http.StatusOK, "PBS Targets"},
 		{"/jobs", http.StatusOK, "Backup Jobs"},
 		{"/jobs", http.StatusOK, `name="job_type"`},
-		{"/jobs", http.StatusOK, "runs in UTC"},
+		{"/jobs", http.StatusOK, "runs in "},
 		{"/runs", http.StatusOK, "Duration"},
 		{"/runs", http.StatusOK, "modal-run-details"},
 		{"/agents", http.StatusOK, "Database agent"},

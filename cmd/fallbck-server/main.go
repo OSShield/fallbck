@@ -253,7 +253,9 @@ func main() {
 
 	serverAPI := api.NewServerAPI(database, temporalClient, cfg, tokenManager, agentVerifier)
 	if temporalClient != nil {
-		jobScheduler := scheduler.New(temporalClient, database)
+		db.SetScheduleLocation(cfg.ScheduleLocation())
+		slog.Info("Cron schedules run in timezone", "timezone", cfg.Timezone)
+		jobScheduler := scheduler.New(temporalClient, database, cfg.Timezone)
 		serverAPI.Scheduler = jobScheduler
 		// Align Temporal Schedules with the jobs table (create missing, fix drifted,
 		// drop orphans); failures are retried on the next start

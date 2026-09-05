@@ -373,9 +373,14 @@ func (u *UIHandler) HandleJobs(w http.ResponseWriter, r *http.Request) {
 		targets, _ = u.DB.ListTargets(ctx)
 	}
 
+	timezone := "UTC"
+	if u.Config != nil && u.Config.Timezone != "" {
+		timezone = u.Config.Timezone
+	}
 	u.renderPage(w, r, "jobs.html", map[string]interface{}{
 		"Title":     "Backup Jobs",
 		"ActiveNav": "jobs",
+		"Timezone":  timezone,
 		"Jobs":      jobs,
 		"Agents":    agents,
 		"Targets":   targets,
