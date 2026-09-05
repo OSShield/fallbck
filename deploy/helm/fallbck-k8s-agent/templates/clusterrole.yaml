@@ -1,0 +1,25 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "fallbck-k8s-agent.name" . }}-{{ .Release.Namespace }}
+  labels: {{- include "fallbck-k8s-agent.labels" . | nindent 4 }}
+rules:
+  # Resource dump: read everything (includes Secrets — inherent to a DR backup;
+  # disable per job with resources.include_secrets=false)
+  - apiGroups: ["*"]
+    resources: ["*"]
+    verbs: ["get", "list"]
+  # Volume backups: clone PVCs and run worker pods in the volume's namespace
+  # (cluster-wide by necessity: a pod can only mount PVCs of its own namespace)
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["create", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["create", "delete", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: ["snapshot.storage.k8s.io"]
+    resources: ["volumesnapshots"]
+    verbs: ["create", "delete", "watch"]

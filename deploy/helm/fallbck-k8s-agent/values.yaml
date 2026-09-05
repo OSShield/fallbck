@@ -1,0 +1,55 @@
+# The FallBCK server (reverse proxy) URL — required
+server:
+  url: ""
+  # PEM bundle of a private CA to trust for server.url (inline)
+  caCert: ""
+  insecureSkipVerify: false
+
+# Cluster name — required; becomes the agent identity (k8s-<clusterName>) and the PBS
+# backup group prefix (host/k8s-<clusterName>[-pvc-<ns>-<name>])
+clusterName: ""
+
+enrollment:
+  # One-time enrollment token (creates a Secret); ignored once the agent is enrolled
+  key: ""
+  # ... or reference an existing Secret with key "enrollment-key"
+  existingSecret: ""
+
+# The agent stores its enrolled identity (agent id, task queue, bearer token) here.
+# It is agent-owned: helm upgrade/uninstall leaves it alone. Delete it to re-enroll.
+identitySecretName: fallbck-k8s-agent-identity
+
+image:
+  repository: oci.fi/fallbck/k8s-agent
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# Worker pods (one per volume, run in the volume's namespace)
+worker:
+  # Defaults to the agent image
+  image: ""
+  pullPolicy: IfNotPresent
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {memory: 512Mi}
+  # Container securityContext for workers. Default (set by the agent when empty):
+  # root with all capabilities dropped except DAC_READ_SEARCH, read-only rootfs —
+  # needed to read arbitrarily-owned PVC files. Override for PSS-restricted namespaces.
+  securityContext: {}
+
+resources:
+  requests: {cpu: 100m, memory: 256Mi}
+  limits: {memory: 1Gi}
+
+# The resource dump is staged here before upload; size for your cluster's YAML volume
+spool:
+  sizeLimit: 2Gi
+  # ... or use a PVC instead of an emptyDir
+  existingClaim: ""
+
+logLevel: info
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+priorityClassName: ""

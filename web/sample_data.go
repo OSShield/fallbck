@@ -80,14 +80,14 @@ func getSampleTargets() []*db.BackupTarget {
 			CreatedAt:   now.Add(-10 * 24 * time.Hour),
 		},
 		{
-			ID:          sampleTargetID2,
-			Name:        "Secondary PBS Offsite",
-			TargetType:  "pbs",
-			Endpoint:    "https://pbs-remote.backup.net:8007",
-			Datastore:   "hdd-archive-pool",
-			Namespace:   "offsite-cold",
-			TLSVerify:   true,
-			CreatedAt:   now.Add(-5 * 24 * time.Hour),
+			ID:         sampleTargetID2,
+			Name:       "Secondary PBS Offsite",
+			TargetType: "pbs",
+			Endpoint:   "https://pbs-remote.backup.net:8007",
+			Datastore:  "hdd-archive-pool",
+			Namespace:  "offsite-cold",
+			TLSVerify:  true,
+			CreatedAt:  now.Add(-5 * 24 * time.Hour),
 		},
 	}
 }

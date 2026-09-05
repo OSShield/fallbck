@@ -64,5 +64,8 @@ Database jobs (`job_type: database`, `db_config`) follow the same path with `fal
 | `pkg/agent/backup` | agent backup engine on top of gopbs (pxar upload, blobs) |
 | `pkg/dbbackup` | database job spec, credential profiles, manifest (shared by server, agent and config) |
 | `pkg/agent/dbbackup` | database engines (PostgreSQL, MySQL/MariaDB, MongoDB): tool detection, prechecks, dumps, spool, state |
+| `cmd/fallbck-k8s-agent` | in-cluster Kubernetes agent (Helm-installed; `worker` mode uploads one volume) |
+| `pkg/k8sbackup` | kubernetes job spec, discovery plan, run manifest (shared) |
+| `pkg/agent/k8sbackup` | resource dump, PVC snapshot/clone, worker pods, Secret identity, orphan sweep |
 | `pkg/db` | pgx pool, versioned migrations, repositories |
 | `pkg/integration` | end-to-end test: embedded Temporal + gateway + agent worker (`go test -tags sqlite`) |

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/osshield/fallbck/pkg/dbbackup"
+	"github.com/osshield/fallbck/pkg/k8sbackup"
 	"time"
 
 	"github.com/google/uuid"
@@ -312,20 +313,20 @@ func (d *DB) CreateJob(ctx context.Context, job *BackupJob) error {
 	if err != nil {
 		return fmt.Errorf("failed to serialize retention policy: %w", err)
 	}
-	jobType, dbConfigJSON, err := jobTypeColumns(job)
+	jobType, dbConfigJSON, k8sConfigJSON, err := jobTypeColumns(job)
 	if err != nil {
 		return err
 	}
 
 	query := `
-		INSERT INTO backup_jobs (id, name, agent_id, target_id, schedule_cron, backup_paths, exclude_paths, retention_policy, enabled, direct_pbs, created_at, updated_at, job_type, db_config)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+		INSERT INTO backup_jobs (id, name, agent_id, target_id, schedule_cron, backup_paths, exclude_paths, retention_policy, enabled, direct_pbs, created_at, updated_at, job_type, db_config, k8s_config)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 		RETURNING id
 	`
 	return d.Pool.QueryRow(ctx, query,
 		job.ID, job.Name, job.AgentID, job.TargetID, job.ScheduleCron,
 		backupPathsJSON, excludePathsJSON, retentionJSON, job.Enabled, job.DirectPBS,
-		job.CreatedAt, job.UpdatedAt, jobType, dbConfigJSON,
+		job.CreatedAt, job.UpdatedAt, jobType, dbConfigJSON, k8sConfigJSON,
 	).Scan(&job.ID)
 }
 
@@ -333,7 +334,7 @@ func (d *DB) GetJobByID(ctx context.Context, id uuid.UUID) (*BackupJob, error) {
 	query := `
 		SELECT j.id, j.name, j.agent_id, j.target_id, j.schedule_cron, j.backup_paths, j.exclude_paths,
 		       j.retention_policy, j.enabled, j.direct_pbs, j.created_at, j.updated_at,
-		       j.job_type, j.db_config,
+		       j.job_type, j.db_config, j.k8s_config,
 		       a.hostname as agent_name, t.name as target_name
 		FROM backup_jobs j
 		JOIN agents a ON j.agent_id = a.id
@@ -342,12 +343,12 @@ func (d *DB) GetJobByID(ctx context.Context, id uuid.UUID) (*BackupJob, error) {
 	`
 	row := d.Pool.QueryRow(ctx, query, id)
 	var j BackupJob
-	var backupPathsRaw, excludePathsRaw, retentionRaw, dbConfigRaw []byte
+	var backupPathsRaw, excludePathsRaw, retentionRaw, dbConfigRaw, k8sConfigRaw []byte
 	err := row.Scan(
 		&j.ID, &j.Name, &j.AgentID, &j.TargetID, &j.ScheduleCron,
 		&backupPathsRaw, &excludePathsRaw, &retentionRaw,
 		&j.Enabled, &j.DirectPBS, &j.CreatedAt, &j.UpdatedAt,
-		&j.JobType, &dbConfigRaw,
+		&j.JobType, &dbConfigRaw, &k8sConfigRaw,
 		&j.AgentName, &j.TargetName,
 	)
 	if err != nil {
@@ -361,6 +362,7 @@ func (d *DB) GetJobByID(ctx context.Context, id uuid.UUID) (*BackupJob, error) {
 	_ = json.Unmarshal(excludePathsRaw, &j.ExcludePaths)
 	_ = json.Unmarshal(retentionRaw, &j.RetentionPolicy)
 	j.DBConfig = parseDBConfig(dbConfigRaw)
+	j.K8sConfig = parseK8sConfig(j.JobType, k8sConfigRaw)
 
 	return &j, nil
 }
@@ -369,7 +371,7 @@ func (d *DB) ListJobs(ctx context.Context) ([]*BackupJob, error) {
 	query := `
 		SELECT j.id, j.name, j.agent_id, j.target_id, j.schedule_cron, j.backup_paths, j.exclude_paths,
 		       j.retention_policy, j.enabled, j.direct_pbs, j.created_at, j.updated_at,
-		       j.job_type, j.db_config,
+		       j.job_type, j.db_config, j.k8s_config,
 		       a.hostname as agent_name, t.name as target_name
 		FROM backup_jobs j
 		JOIN agents a ON j.agent_id = a.id
@@ -385,12 +387,12 @@ func (d *DB) ListJobs(ctx context.Context) ([]*BackupJob, error) {
 	var jobs []*BackupJob
 	for rows.Next() {
 		var j BackupJob
-		var backupPathsRaw, excludePathsRaw, retentionRaw, dbConfigRaw []byte
+		var backupPathsRaw, excludePathsRaw, retentionRaw, dbConfigRaw, k8sConfigRaw []byte
 		if err := rows.Scan(
 			&j.ID, &j.Name, &j.AgentID, &j.TargetID, &j.ScheduleCron,
 			&backupPathsRaw, &excludePathsRaw, &retentionRaw,
 			&j.Enabled, &j.DirectPBS, &j.CreatedAt, &j.UpdatedAt,
-			&j.JobType, &dbConfigRaw,
+			&j.JobType, &dbConfigRaw, &k8sConfigRaw,
 			&j.AgentName, &j.TargetName,
 		); err != nil {
 			return nil, err
@@ -399,26 +401,47 @@ func (d *DB) ListJobs(ctx context.Context) ([]*BackupJob, error) {
 		_ = json.Unmarshal(excludePathsRaw, &j.ExcludePaths)
 		_ = json.Unmarshal(retentionRaw, &j.RetentionPolicy)
 		j.DBConfig = parseDBConfig(dbConfigRaw)
+		j.K8sConfig = parseK8sConfig(j.JobType, k8sConfigRaw)
 		jobs = append(jobs, &j)
 	}
 	return jobs, rows.Err()
 }
 
-// jobTypeColumns returns the job_type and db_config column values
-func jobTypeColumns(job *BackupJob) (string, []byte, error) {
+// jobTypeColumns returns the job_type, db_config and k8s_config column values
+func jobTypeColumns(job *BackupJob) (string, []byte, []byte, error) {
 	jobType, ok := NormalizeAgentType(job.JobType)
 	if !ok {
-		return "", nil, fmt.Errorf("unknown job type %q", job.JobType)
+		return "", nil, nil, fmt.Errorf("unknown job type %q", job.JobType)
 	}
 	job.JobType = jobType
-	if jobType != JobTypeDatabase || job.DBConfig == nil {
-		return jobType, []byte("{}"), nil
+	dbJSON, k8sJSON := []byte("{}"), []byte("{}")
+	if jobType == JobTypeDatabase && job.DBConfig != nil {
+		raw, err := json.Marshal(job.DBConfig)
+		if err != nil {
+			return "", nil, nil, fmt.Errorf("failed to serialize database configuration: %w", err)
+		}
+		dbJSON = raw
 	}
-	raw, err := json.Marshal(job.DBConfig)
-	if err != nil {
-		return "", nil, fmt.Errorf("failed to serialize database configuration: %w", err)
+	if jobType == JobTypeKubernetes && job.K8sConfig != nil {
+		raw, err := json.Marshal(job.K8sConfig)
+		if err != nil {
+			return "", nil, nil, fmt.Errorf("failed to serialize kubernetes configuration: %w", err)
+		}
+		k8sJSON = raw
 	}
-	return jobType, raw, nil
+	return jobType, dbJSON, k8sJSON, nil
+}
+
+// parseK8sConfig decodes the k8s_config column for kubernetes jobs
+func parseK8sConfig(jobType string, raw []byte) *k8sbackup.Spec {
+	if jobType != JobTypeKubernetes || len(raw) == 0 {
+		return nil
+	}
+	var spec k8sbackup.Spec
+	if err := json.Unmarshal(raw, &spec); err != nil {
+		return nil
+	}
+	return &spec
 }
 
 // parseDBConfig decodes the db_config column; an empty object yields nil

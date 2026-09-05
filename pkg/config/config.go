@@ -173,15 +173,19 @@ type AgentConfig struct {
 const (
 	AgentTypeFilesystem = "filesystem"
 	AgentTypeDatabase   = "database"
+	AgentTypeKubernetes = "kubernetes"
 )
 
 // AgentTypes lists the known agent types
-var AgentTypes = []string{AgentTypeFilesystem, AgentTypeDatabase}
+var AgentTypes = []string{AgentTypeFilesystem, AgentTypeDatabase, AgentTypeKubernetes}
 
 // AgentDirName is the per-type directory name under /var/lib/fallbck and ~/.fallbck
 func AgentDirName(agentType string) string {
-	if agentType == AgentTypeDatabase {
+	switch agentType {
+	case AgentTypeDatabase:
 		return "db-agent"
+	case AgentTypeKubernetes:
+		return "k8s-agent"
 	}
 	return "agent"
 }

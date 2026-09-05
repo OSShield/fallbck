@@ -1,0 +1,10 @@
+fallbck-k8s-agent is starting in namespace {{ .Release.Namespace }}.
+
+* First start: the agent enrolls with {{ .Values.server.url }} using the enrollment
+  key and stores its identity in the Secret "{{ .Values.identitySecretName }}"
+  (agent-owned — helm upgrade/uninstall leaves it in place).
+* Force re-enrollment:  kubectl -n {{ .Release.Namespace }} delete secret {{ .Values.identitySecretName }}
+* The agent appears in the FallBCK UI as agent "k8s-{{ .Values.clusterName }}"
+  (type: kubernetes). Create jobs under the "Kubernetes" section.
+* Worker pods run in each backed-up PVC's namespace with short-lived credentials in
+  their pod spec; they have no Kubernetes API access.

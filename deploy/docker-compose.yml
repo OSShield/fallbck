@@ -157,6 +157,14 @@ services:
     networks:
       - fallbck-net
 
+  k8s-agent:
+    image: oci.fi/fallbck/k8s-agent:latest
+    build:
+      context: ..
+      dockerfile: Dockerfile.k8s-agent
+    profiles:
+      - k8s
+
 volumes:
   postgres_data:
   server_data:

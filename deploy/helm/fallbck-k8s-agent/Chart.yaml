@@ -1,0 +1,6 @@
+apiVersion: v2
+name: fallbck-k8s-agent
+description: FallBCK Kubernetes backup agent — API resources and PVC data to Proxmox Backup Server
+type: application
+version: 0.1.0
+appVersion: "0.3.0"

@@ -2,6 +2,7 @@ package temporal
 
 import (
 	"github.com/osshield/fallbck/pkg/dbbackup"
+	"github.com/osshield/fallbck/pkg/k8sbackup"
 	"time"
 
 	"github.com/google/uuid"
@@ -36,6 +37,8 @@ type BackupSessionInfo struct {
 	JobType            string         `json:"job_type,omitempty"`
 	DBConfig           *dbbackup.Spec `json:"db_config,omitempty"`
 	DBPasswordOnServer bool           `json:"db_password_on_server,omitempty"`
+	// K8sConfig is the kubernetes job specification (job_type kubernetes)
+	K8sConfig *k8sbackup.Spec `json:"k8s_config,omitempty"`
 	// JobName is informational (manifest)
 	JobName         string             `json:"job_name,omitempty"`
 	BackupPaths     []string           `json:"backup_paths"`

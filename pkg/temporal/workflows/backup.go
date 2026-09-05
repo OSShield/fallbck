@@ -67,13 +67,21 @@ func BackupJobWorkflow(ctx workflow.Context, jobID uuid.UUID) (*fbtemporal.Backu
 	var execResult fbtemporal.BackupExecutionResult
 
 	var execErr error
-	if session.JobType == db.JobTypeDatabase {
+	var k8sGroups []string
+	switch session.JobType {
+	case db.JobTypeKubernetes:
+		outcome := runKubernetesBackup(ctx, &session)
+		execResult, execErr, k8sGroups = outcome.result, outcome.err, outcome.activeGroups
+	case db.JobTypeDatabase:
 		execErr = workflow.ExecuteActivity(agentCtx, dbAgentActs.ExecuteDatabaseBackup, &session).Get(agentCtx, &execResult)
-	} else {
+	default:
 		execErr = workflow.ExecuteActivity(agentCtx, agentActs.ExecuteFilesystemBackup, &session).Get(agentCtx, &execResult)
 	}
 	switch {
 	case execErr == nil:
+		if execResult.Status == "" {
+			execResult.Status = db.RunStatusCompleted
+		}
 	case sdktemporal.IsCanceledError(execErr) || ctx.Err() != nil:
 		// Operator cancelled the run: the agent activity has been told to stop
 		logger.Info("Backup run cancelled", "job_id", jobID)
@@ -118,7 +126,11 @@ func BackupJobWorkflow(ctx workflow.Context, jobID uuid.UUID) (*fbtemporal.Backu
 
 	// 4. Execute Prune Retention Policy on PBS if backup succeeded
 	if execErr == nil && execResult.Status == db.RunStatusCompleted {
-		_ = workflow.ExecuteActivity(serverCtx, serverActs.PruneJob, &session).Get(serverCtx, nil)
+		if session.JobType == db.JobTypeKubernetes {
+			_ = workflow.ExecuteActivity(serverCtx, serverActs.PruneKubernetesJob, &session, k8sGroups).Get(serverCtx, nil)
+		} else {
+			_ = workflow.ExecuteActivity(serverCtx, serverActs.PruneJob, &session).Get(serverCtx, nil)
+		}
 	}
 
 	if execErr != nil {

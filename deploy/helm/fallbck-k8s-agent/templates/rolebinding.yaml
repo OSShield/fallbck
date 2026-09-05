@@ -1,0 +1,14 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "fallbck-k8s-agent.name" . }}-identity
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "fallbck-k8s-agent.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "fallbck-k8s-agent.name" . }}-identity
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "fallbck-k8s-agent.name" . }}
+    namespace: {{ .Release.Namespace }}

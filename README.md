@@ -55,6 +55,22 @@ Database jobs are created in the Web UI (job type *Database*: engine, host, user
 
 Restore: `proxmox-backup-client restore <snapshot> db.pxar <dir>` (or download the manifest blob first) and follow `restore.commands` in `fallbck-db.json`. The Docker image (`Dockerfile.db-agent`) ships the client tools; the Linux packages rely on the distribution's `postgresql-client`, `mariadb-client`/`mysql-client` (binary-log fetching additionally needs `mysqlbinlog`/`mariadb-binlog`, which Alpine only ships in the `mariadb` package) and `mongodb-database-tools`. `pg_dump` must be at least as new as the server; the agent looks in the usual per-version directories (`/usr/lib/postgresql/*/bin`, `/usr/pgsql-*/bin`, `/usr/libexec/postgresql*`) or `db_backup.tools.postgres_bindir`.
 
+### Kubernetes agent
+
+`fallbck-k8s-agent` runs **inside** the target cluster (agent type `kubernetes`, one identity per install) and backs up **all API resources** plus **PVC data**: with CSI snapshots it takes a `VolumeSnapshot`, clones it to a temporary PVC and uploads the files; without snapshot support it mounts the live volume read-only (crash-consistent). Install with the Helm chart:
+
+```bash
+helm install fallbck-k8s-agent deploy/helm/fallbck-k8s-agent \
+  --namespace fallbck --create-namespace \
+  --set server.url=https://backup.example.com \
+  --set clusterName=prod \
+  --set enrollment.key=<enrollment token>
+```
+
+The agent enrolls as `k8s-<clusterName>` and keeps its identity in a Secret (delete it to re-enroll; `helm upgrade` never touches it). Jobs are created in the **Kubernetes** section of the UI: namespace/label/resource selection, Secrets on or off, volume mode (all / labeled / none), storage-class filters, snapshot-class overrides, live-mount fallback, parallelism. Each run writes one PBS snapshot per volume (`host/k8s-<cluster>-pvc-<ns>-<name>`, uploaded in parallel by short-lived worker pods in the volume's namespace) plus a resources snapshot `host/k8s-<cluster>` carrying every selected object as YAML and a `k8s-manifest.blob` (plan, per-volume outcomes, restore commands). Retention prunes every group the cluster writes — including groups of PVCs that no longer exist — and can optionally forget orphaned groups after N days.
+
+Notes: the ClusterRole reads all resources (Secrets included — that is what a DR backup is) and may create pods/PVCs/VolumeSnapshots cluster-wide, because workers must run in each volume's namespace; worker pods carry short-lived credentials (2h ticket, 6h token) in their pod spec and have no Kubernetes API access; annotate a PVC `fallbck.io/skip: "true"` to exclude it. Restore is manual: `proxmox-backup-client restore host/k8s-<cluster>/<time> resources.pxar ./out`, `kubectl apply` in the order described by the manifest, and per volume restore `pvc.pxar` from its group into a pod mounting the recreated PVC.
+
 ## Scheduling
 
 A job with a cron expression gets a **Temporal Schedule** (managed by the server, visible under `/temporal/` → Schedules): standard 5-field cron plus `@daily` / `@every 6h`, evaluated in the **server's timezone** (`timezone:` in `server.yaml` or `FALLBCK_TIMEZONE`; auto-detected from `TZ`/the host zone, UTC when undetectable — set `TZ` on the Docker container). DST is handled by Temporal: `0 2 * * *` stays 02:00 local year round. A firing starts the same workflow as "Run Now"; a firing that lands while the previous run of the job is still going is **skipped**, and after server downtime one missed firing within the last hour is caught up. Disabling a job pauses its schedule; clearing the cron or deleting the job removes it. The server reconciles schedules with the jobs table at every start. The jobs page shows the next fire time.

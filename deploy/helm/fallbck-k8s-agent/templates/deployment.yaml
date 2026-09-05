@@ -1,0 +1,99 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "fallbck-k8s-agent.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "fallbck-k8s-agent.labels" . | nindent 4 }}
+spec:
+  # One identity = one Temporal task queue; never run two pods at once
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Chart.Name }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels: {{- include "fallbck-k8s-agent.labels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "fallbck-k8s-agent.name" . }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      containers:
+        - name: agent
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["run"]
+          env:
+            - name: FALLBCK_AGENT_SERVER_URL
+              value: {{ required "server.url is required" .Values.server.url | quote }}
+            - name: FALLBCK_CLUSTER_NAME
+              value: {{ required "clusterName is required" .Values.clusterName | quote }}
+            - name: FALLBCK_IDENTITY_SECRET
+              value: {{ .Values.identitySecretName | quote }}
+            - name: FALLBCK_WORKER_IMAGE
+              value: {{ include "fallbck-k8s-agent.workerImage" . | quote }}
+            - name: FALLBCK_WORKER_PULL_POLICY
+              value: {{ .Values.worker.pullPolicy | quote }}
+            - name: FALLBCK_WORKER_RESOURCES
+              value: {{ .Values.worker.resources | toJson | quote }}
+            {{- if .Values.worker.securityContext }}
+            - name: FALLBCK_WORKER_SECURITY_CONTEXT
+              value: {{ .Values.worker.securityContext | toJson | quote }}
+            {{- end }}
+            - name: FALLBCK_AGENT_DATA_DIR
+              value: /var/lib/fallbck/k8s-agent
+            - name: FALLBCK_AGENT_LOG_LEVEL
+              value: {{ .Values.logLevel | quote }}
+            {{- if .Values.server.insecureSkipVerify }}
+            - name: FALLBCK_AGENT_INSECURE_SKIP_VERIFY
+              value: "true"
+            {{- end }}
+            {{- if .Values.server.caCert }}
+            - name: FALLBCK_AGENT_SERVER_CA
+              value: /etc/fallbck/server-ca.crt
+            {{- end }}
+            - name: FALLBCK_AGENT_ENROLLMENT_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.enrollment.existingSecret | default (printf "%s-enrollment" (include "fallbck-k8s-agent.name" .)) }}
+                  key: enrollment-key
+                  optional: true
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: spool
+              mountPath: /var/lib/fallbck/k8s-agent
+            {{- if .Values.server.caCert }}
+            - name: server-ca
+              mountPath: /etc/fallbck
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: spool
+          {{- if .Values.spool.existingClaim }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.spool.existingClaim }}
+          {{- else }}
+          emptyDir:
+            sizeLimit: {{ .Values.spool.sizeLimit }}
+          {{- end }}
+        {{- if .Values.server.caCert }}
+        - name: server-ca
+          secret:
+            secretName: {{ include "fallbck-k8s-agent.name" . }}-server-ca
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}

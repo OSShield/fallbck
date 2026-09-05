@@ -143,6 +143,8 @@ async function prepareAgentWizard(os = 'linux') {
       codeEl.innerText = `curl -sSL ${serverUrl}/install-agent.sh | sudo bash -s -- \\\n  --server ${serverUrl} \\\n  --token ${data.raw_token}`;
     } else if (os === 'cli') {
       codeEl.innerText = `fallbck-agent enroll \\\n  --server ${serverUrl} \\\n  --token ${data.raw_token}`;
+    } else if (os === 'k8s') {
+      codeEl.innerText = `helm install fallbck-k8s-agent ./deploy/helm/fallbck-k8s-agent \\\n  --namespace fallbck --create-namespace \\\n  --set server.url=${serverUrl} \\\n  --set clusterName=<cluster name> \\\n  --set enrollment.key=${data.raw_token}`;
     } else if (os === 'db') {
       codeEl.innerText = `fallbck-db-agent enroll \\\n  --server ${serverUrl} \\\n  --token ${data.raw_token}\n\n# then check the database client tools and start the service:\nfallbck-db-agent tools\nsystemctl enable --now fallbck-db-agent`;
     } else if (os === 'windows') {
@@ -384,6 +386,137 @@ async function triggerJobRun(jobId) {
     }
     showToast('Backup run initiated!', 'success');
     setTimeout(() => window.location.href = '/runs', 1000);
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+// ---- Kubernetes job form ----------------------------------------------------
+
+function k8sJobForm() { return document.getElementById('k8s-job-form'); }
+
+const K8S_DEFAULT_NS_EXCLUDES = ['kube-system', 'kube-node-lease', 'kube-public'];
+
+function newK8sJob() {
+  const form = k8sJobForm();
+  form.reset();
+  form.dataset.jobId = '';
+  form.elements['k8s_ns_exclude'].value = K8S_DEFAULT_NS_EXCLUDES.join('\n');
+  document.getElementById('k8s-job-modal-title').innerText = 'Create Cluster Backup Job';
+  document.getElementById('k8s-job-submit').innerText = 'Create Job';
+  openModal('modal-add-k8s-job');
+}
+
+async function editK8sJob(jobId) {
+  try {
+    const resp = await apiFetch(`/api/v1/jobs/${jobId}`);
+    if (!resp.ok) throw new Error('Failed to load job');
+    const job = await resp.json();
+    const form = k8sJobForm();
+    form.reset();
+    form.dataset.jobId = job.id;
+    form.elements['name'].value = job.name || '';
+    form.elements['agent_id'].value = job.agent_id || '';
+    form.elements['target_id'].value = job.target_id || '';
+    form.elements['schedule_cron'].value = job.schedule_cron || '';
+    form.elements['direct_pbs'].checked = !!job.direct_pbs;
+    form.elements['enabled'].checked = !!job.enabled;
+    const rp = job.retention_policy || {};
+    form.elements['keep_last'].value = rp.keep_last ?? 7;
+    form.elements['keep_daily'].value = rp.keep_daily ?? 7;
+    form.elements['keep_weekly'].value = rp.keep_weekly ?? 4;
+    form.elements['keep_monthly'].value = rp.keep_monthly ?? 12;
+    const kc = job.k8s_config || {};
+    const ns = kc.namespaces || {};
+    const res = kc.resources || {};
+    const vols = kc.volumes || {};
+    form.elements['k8s_ns_include'].value = (ns.include || []).join('\n');
+    form.elements['k8s_ns_exclude'].value = (ns.exclude || []).join('\n');
+    form.elements['k8s_label_selector'].value = kc.label_selector || '';
+    form.elements['k8s_resources_exclude'].value = (res.exclude_extra || []).join('\n');
+    form.elements['k8s_include_secrets'].checked = res.include_secrets !== false;
+    form.elements['k8s_volumes_mode'].value = vols.mode || 'all';
+    form.elements['k8s_volumes_selector'].value = vols.label_selector || '';
+    form.elements['k8s_parallelism'].value = vols.parallelism || 2;
+    form.elements['k8s_storage_classes'].value = (vols.storage_classes || []).join('\n');
+    form.elements['k8s_exclude_storage_classes'].value = (vols.exclude_storage_classes || []).join('\n');
+    form.elements['k8s_snapshot_overrides'].value = Object.entries(vols.snapshot_class_overrides || {}).map(([k, v]) => `${k}=${v}`).join('\n');
+    form.elements['k8s_snapshot_timeout'].value = vols.snapshot_timeout || '';
+    form.elements['k8s_volume_timeout'].value = vols.volume_timeout || '';
+    form.elements['k8s_forget_days'].value = vols.forget_orphans_after_days || 0;
+    form.elements['k8s_live_fallback'].checked = vols.allow_live_fallback !== false;
+    form.elements['k8s_continue'].checked = vols.continue_on_error !== false;
+    document.getElementById('k8s-job-modal-title').innerText = 'Edit Cluster Backup Job';
+    document.getElementById('k8s-job-submit').innerText = 'Save Changes';
+    openModal('modal-add-k8s-job');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function submitK8sJobForm(e) {
+  e.preventDefault();
+  const form = e.target;
+  const fd = new FormData(form);
+  const jobId = form.dataset.jobId || '';
+  const lines = name => (fd.get(name) || '').split('\n').map(s => s.trim()).filter(Boolean);
+  const overrides = {};
+  lines('k8s_snapshot_overrides').forEach(l => {
+    const idx = l.indexOf('=');
+    if (idx > 0) overrides[l.slice(0, idx).trim()] = l.slice(idx + 1).trim();
+  });
+  const payload = {
+    name: fd.get('name'),
+    agent_id: fd.get('agent_id'),
+    target_id: fd.get('target_id'),
+    job_type: 'kubernetes',
+    schedule_cron: fd.get('schedule_cron') || '',
+    backup_paths: [],
+    exclude_paths: [],
+    retention_policy: {
+      keep_last: parseInt(fd.get('keep_last') || '7'),
+      keep_daily: parseInt(fd.get('keep_daily') || '7'),
+      keep_weekly: parseInt(fd.get('keep_weekly') || '4'),
+      keep_monthly: parseInt(fd.get('keep_monthly') || '12'),
+    },
+    enabled: fd.get('enabled') === 'on',
+    direct_pbs: fd.get('direct_pbs') === 'on',
+    k8s_config: {
+      namespaces: { include: lines('k8s_ns_include'), exclude: lines('k8s_ns_exclude') },
+      label_selector: fd.get('k8s_label_selector') || '',
+      resources: {
+        exclude_extra: lines('k8s_resources_exclude'),
+        include_secrets: fd.get('k8s_include_secrets') === 'on',
+      },
+      volumes: {
+        mode: fd.get('k8s_volumes_mode'),
+        label_selector: fd.get('k8s_volumes_selector') || '',
+        storage_classes: lines('k8s_storage_classes'),
+        exclude_storage_classes: lines('k8s_exclude_storage_classes'),
+        snapshot_class_overrides: overrides,
+        allow_live_fallback: fd.get('k8s_live_fallback') === 'on',
+        continue_on_error: fd.get('k8s_continue') === 'on',
+        parallelism: parseInt(fd.get('k8s_parallelism') || '2'),
+        snapshot_timeout: fd.get('k8s_snapshot_timeout') || '',
+        volume_timeout: fd.get('k8s_volume_timeout') || '',
+        forget_orphans_after_days: parseInt(fd.get('k8s_forget_days') || '0'),
+      },
+    },
+  };
+
+  try {
+    const resp = await apiFetch(jobId ? `/api/v1/jobs/${jobId}` : '/api/v1/jobs', {
+      method: jobId ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!resp.ok) {
+      const errData = await resp.json();
+      throw new Error(errData.error || 'Failed to save job');
+    }
+    showToast(jobId ? 'Cluster job updated' : 'Cluster job created', 'success');
+    closeModal('modal-add-k8s-job');
+    setTimeout(() => window.location.reload(), 800);
   } catch (err) {
     showToast(err.message, 'error');
   }

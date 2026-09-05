@@ -92,6 +92,7 @@ func (u *UIHandler) RegisterRoutes(r chi.Router) {
 		r.Get("/agents", u.HandleAgents)
 		r.Get("/targets", u.HandleTargets)
 		r.Get("/jobs", u.HandleJobs)
+		r.Get("/kubernetes", u.HandleKubernetes)
 		r.Get("/runs", u.HandleRuns)
 		r.Get("/tokens", u.HandleTokens)
 		r.Get("/apikeys", u.HandleAPIKeys)
@@ -372,19 +373,70 @@ func (u *UIHandler) HandleJobs(w http.ResponseWriter, r *http.Request) {
 		agents, _ = u.DB.ListAgents(ctx)
 		targets, _ = u.DB.ListTargets(ctx)
 	}
+	// Kubernetes jobs and agents live on their own page
+	jobs = filterJobs(jobs, func(j *db.BackupJob) bool { return !j.IsKubernetes() })
+	agents = filterAgents(agents, func(a *db.Agent) bool { return a.AgentType != db.AgentTypeKubernetes })
 
-	timezone := "UTC"
-	if u.Config != nil && u.Config.Timezone != "" {
-		timezone = u.Config.Timezone
-	}
 	u.renderPage(w, r, "jobs.html", map[string]interface{}{
 		"Title":     "Backup Jobs",
 		"ActiveNav": "jobs",
-		"Timezone":  timezone,
+		"Timezone":  u.timezone(),
 		"Jobs":      jobs,
 		"Agents":    agents,
 		"Targets":   targets,
 	})
+}
+
+// HandleKubernetes renders the Kubernetes backup section (cluster jobs + agents)
+func (u *UIHandler) HandleKubernetes(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	var jobs []*db.BackupJob
+	var agents []*db.Agent
+	var targets []*db.BackupTarget
+
+	if u.DB != nil {
+		jobs, _ = u.DB.ListJobs(ctx)
+		agents, _ = u.DB.ListAgents(ctx)
+		targets, _ = u.DB.ListTargets(ctx)
+	}
+	jobs = filterJobs(jobs, func(j *db.BackupJob) bool { return j.IsKubernetes() })
+	agents = filterAgents(agents, func(a *db.Agent) bool { return a.AgentType == db.AgentTypeKubernetes })
+
+	u.renderPage(w, r, "kubernetes.html", map[string]interface{}{
+		"Title":     "Kubernetes",
+		"ActiveNav": "kubernetes",
+		"Timezone":  u.timezone(),
+		"Jobs":      jobs,
+		"Agents":    agents,
+		"Targets":   targets,
+	})
+}
+
+func (u *UIHandler) timezone() string {
+	if u.Config != nil && u.Config.Timezone != "" {
+		return u.Config.Timezone
+	}
+	return "UTC"
+}
+
+func filterJobs(in []*db.BackupJob, keep func(*db.BackupJob) bool) []*db.BackupJob {
+	out := in[:0]
+	for _, j := range in {
+		if keep(j) {
+			out = append(out, j)
+		}
+	}
+	return out
+}
+
+func filterAgents(in []*db.Agent, keep func(*db.Agent) bool) []*db.Agent {
+	out := in[:0]
+	for _, a := range in {
+		if keep(a) {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 func (u *UIHandler) HandleRuns(w http.ResponseWriter, r *http.Request) {

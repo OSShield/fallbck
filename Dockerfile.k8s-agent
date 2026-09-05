@@ -1,0 +1,38 @@
+# syntax=docker/dockerfile:1
+# fallbck-k8s-agent: in-cluster Kubernetes backup agent (API resources + PVC data to
+# PBS through the FallBCK server). The same image serves as the volume-upload worker
+# (args: ["worker"]).
+
+# ---- Build stage -------------------------------------------------------------
+FROM golang:1-alpine AS builder
+
+WORKDIR /src
+
+RUN apk add --no-cache git ca-certificates tzdata
+
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
+
+COPY . .
+
+ARG FALLBCK_VERSION=0.1.0
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath \
+      -ldflags="-s -w -X main.AgentVersion=${FALLBCK_VERSION}" \
+      -o /bin/fallbck-k8s-agent ./cmd/fallbck-k8s-agent
+
+# ---- Runtime stage -----------------------------------------------------------
+FROM alpine:3.21
+
+RUN apk add --no-cache ca-certificates tzdata
+
+COPY --from=builder /bin/fallbck-k8s-agent /usr/local/bin/fallbck-k8s-agent
+
+# The agent runs unprivileged; worker pods set their own securityContext (root with
+# only DAC_READ_SEARCH by default, to read arbitrarily-owned PVC files).
+RUN addgroup -S fallbck && adduser -S -G fallbck -u 10004 fallbck
+USER fallbck
+
+ENTRYPOINT ["/usr/local/bin/fallbck-k8s-agent"]
+CMD ["run"]

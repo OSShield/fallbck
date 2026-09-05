@@ -89,6 +89,16 @@ func TestAdminMiddlewareIsApplied(t *testing.T) {
 	}
 	for _, path := range []string{"/api/v1/agents/pbs-credentials", "/api/v1/agents/db-credentials"} {
 		rr = httptest.NewRecorder()
+		r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/api/v1/agents/volume-ticket", nil))
+		if rr.Code != http.StatusUnauthorized {
+			t.Errorf("volume-ticket: expected agent middleware to apply, got %d", rr.Code)
+		}
+		rr = httptest.NewRecorder()
+		r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/api/v1/agents/token/worker", nil))
+		if rr.Code != http.StatusUnauthorized {
+			t.Errorf("token/worker: expected agent middleware to apply, got %d", rr.Code)
+		}
+		rr = httptest.NewRecorder()
 		r.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, nil))
 		if rr.Code != http.StatusUnauthorized {
 			t.Errorf("%s: expected agent middleware to apply, got %d", path, rr.Code)

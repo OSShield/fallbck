@@ -34,6 +34,19 @@ func (s *ServerAPI) validateJob(ctx context.Context, job *db.BackupJob, existing
 	}
 
 	switch jobType {
+	case db.JobTypeKubernetes:
+		if len(job.BackupPaths) > 0 {
+			return "Kubernetes jobs do not take backup paths", errors.New("paths on k8s job")
+		}
+		if job.DBConfig != nil {
+			return "Kubernetes jobs do not take db_config", errors.New("db_config on k8s job")
+		}
+		if job.K8sConfig == nil {
+			return "Kubernetes jobs require k8s_config", errors.New("missing k8s_config")
+		}
+		if err := job.K8sConfig.Validate(); err != nil {
+			return err.Error(), err
+		}
 	case db.JobTypeDatabase:
 		if len(job.BackupPaths) > 0 {
 			return "Database jobs do not take backup paths", errors.New("paths on db job")
@@ -54,6 +67,9 @@ func (s *ServerAPI) validateJob(ctx context.Context, job *db.BackupJob, existing
 	default:
 		if job.DBConfig != nil {
 			return "Filesystem jobs do not take db_config", errors.New("db_config on filesystem job")
+		}
+		if job.K8sConfig != nil {
+			return "Filesystem jobs do not take k8s_config", errors.New("k8s_config on filesystem job")
 		}
 		paths, err := db.ValidateBackupPaths(job.BackupPaths)
 		if err != nil {
