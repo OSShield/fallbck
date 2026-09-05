@@ -1,19 +1,21 @@
+
+ifndef BVERSION
+BVERSION := $(shell read -p "Enter version to build: " v < /dev/tty > /dev/tty && echo $$v)
+endif
+
 .PHONY: all docker binary
 
-all: read-version docker binary
 
-read-version:
-	@read -p "Enter version to build: " VERSION && echo $$VERSION
+all: docker binary
 
-docker: read-version
-    cd deploy && \
-		FALLBCK_VERSION=$$VERSION docker compose build --no-cache --pull && \
-		FALLBCK_VERSION=$$VERSION docker compose --profile=k8s build --no-cache --pull && \
-		docker compose push && \
-		docker compose --profile=k8s push
+docker:
+	cd deploy && \
+	FALLBCK_VERSION=$(BVERSION) docker compose build --no-cache --pull && \
+	FALLBCK_VERSION=$(BVERSION) docker compose --profile=k8s build --no-cache --pull && \
+	docker compose push && \
+	docker compose --profile=k8s push
 
-	@echo $$VERSION
-
-binary: read-version
-	git tag -a $$VERSION -m "Release $$VERSION" && \
+binary:
+	@echo "Building binary for version $(BVERSION)"
+	git tag -a "v$(BVERSION)" -m "Release v$(BVERSION)" && \
 	goreleaser release --clean
