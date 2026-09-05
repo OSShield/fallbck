@@ -58,7 +58,7 @@ func TestSchedulerLifecycle(t *testing.T) {
 	}
 	defer w.Stop()
 
-	sched := scheduler.New(c, nil)
+	sched := scheduler.New(c, nil, "Europe/Stockholm")
 	job := &db.BackupJob{ID: uuid.New(), Name: "sched-test", ScheduleCron: "@every 2s", Enabled: true}
 	if err := sched.Sync(ctx, job); err != nil {
 		t.Fatalf("Sync(create): %v", err)
@@ -70,6 +70,9 @@ func TestSchedulerLifecycle(t *testing.T) {
 	}
 	if desc.Schedule.State.Paused {
 		t.Error("enabled job created a paused schedule")
+	}
+	if desc.Schedule.Spec == nil || desc.Schedule.Spec.TimeZoneName != "Europe/Stockholm" {
+		t.Errorf("schedule timezone not applied: %+v", desc.Schedule.Spec)
 	}
 
 	// The schedule actually fires the workflow with the job id

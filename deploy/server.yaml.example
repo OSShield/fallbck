@@ -8,6 +8,7 @@ public_url: "https://backup.example.com"          # the reverse proxy's URL (OID
 jwt_secret: "super-secret-key-change-in-production-must-be-32-plus-chars"
 data_dir: "/var/lib/fallbck/server"
 # agent_ca_bundle_path: "/etc/fallbck/proxy-ca.pem"   # only for private CAs on public_url
+# timezone: "Europe/Stockholm"     # cron schedules run here (default: TZ env / host zone, else UTC)
 
 auth:
   oidc:

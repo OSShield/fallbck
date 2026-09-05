@@ -134,3 +134,28 @@ func TestAgentConfigSaveLoad(t *testing.T) {
 		t.Errorf("round trip mismatch: %+v", loaded)
 	}
 }
+
+func TestTimezoneConfig(t *testing.T) {
+	t.Setenv("TZ", "Europe/Stockholm")
+	if tz := DetectTimezone(); tz != "Europe/Stockholm" {
+		t.Errorf("DetectTimezone with TZ set = %q", tz)
+	}
+	t.Setenv("TZ", "Not/AZone")
+	if tz := DetectTimezone(); tz == "Not/AZone" {
+		t.Errorf("invalid TZ accepted: %q", tz)
+	}
+	cfg := DefaultServerConfig()
+	cfg.Auth.InsecureDisable = true
+	cfg.Timezone = "Europe/Stockholm"
+	if err := cfg.Validate(true); err != nil {
+		t.Errorf("valid timezone rejected: %v", err)
+	}
+	cfg.Timezone = "Mars/Olympus"
+	if err := cfg.Validate(true); err == nil {
+		t.Error("invalid timezone accepted")
+	}
+	cfg.Timezone = "Europe/Stockholm"
+	if cfg.ScheduleLocation().String() != "Europe/Stockholm" {
+		t.Errorf("ScheduleLocation = %v", cfg.ScheduleLocation())
+	}
+}

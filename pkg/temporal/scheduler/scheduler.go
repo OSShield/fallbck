@@ -44,11 +44,19 @@ func jobIDFromScheduleID(id string) (uuid.UUID, bool) {
 type Scheduler struct {
 	Client client.Client
 	DB     *db.DB
+	// TimeZone is the IANA timezone cron expressions are evaluated in ("" = UTC)
+	TimeZone string
 }
 
 // New creates a Scheduler; database may be nil (ReconcileAll then only prunes orphans)
-func New(c client.Client, database *db.DB) *Scheduler {
-	return &Scheduler{Client: c, DB: database}
+func New(c client.Client, database *db.DB, timeZone string) *Scheduler {
+	return &Scheduler{Client: c, DB: database, TimeZone: timeZone}
+}
+
+// spec builds the schedule spec: the job's cron, evaluated in the configured timezone
+// (DST-aware — "0 2 * * *" fires at 02:00 local across DST changes)
+func (s *Scheduler) spec(cron string) client.ScheduleSpec {
+	return client.ScheduleSpec{CronExpressions: []string{cron}, TimeZoneName: s.TimeZone}
 }
 
 func isNotFound(err error) bool {
@@ -90,7 +98,7 @@ func (s *Scheduler) Sync(ctx context.Context, job *db.BackupJob) error {
 		}
 		_, err := s.Client.ScheduleClient().Create(ctx, client.ScheduleOptions{
 			ID:     ScheduleID(job.ID),
-			Spec:   client.ScheduleSpec{CronExpressions: []string{cron}},
+			Spec:   s.spec(cron),
 			Action: action(job),
 			// Skip a firing while the previous run of this job is still going
 			Overlap:       enumspb.SCHEDULE_OVERLAP_POLICY_SKIP,
@@ -101,14 +109,15 @@ func (s *Scheduler) Sync(ctx context.Context, job *db.BackupJob) error {
 		if err != nil {
 			return fmt.Errorf("creating schedule: %w", err)
 		}
-		slog.Info("Backup schedule created", "job_id", job.ID, "job", job.Name, "cron", cron, "paused", !job.Enabled)
+		slog.Info("Backup schedule created", "job_id", job.ID, "job", job.Name, "cron", cron, "timezone", s.TimeZone, "paused", !job.Enabled)
 		return nil
 	}
 
 	err := handle.Update(ctx, client.ScheduleUpdateOptions{
 		DoUpdate: func(in client.ScheduleUpdateInput) (*client.ScheduleUpdate, error) {
 			sched := in.Description.Schedule
-			sched.Spec = &client.ScheduleSpec{CronExpressions: []string{cron}}
+			spec := s.spec(cron)
+			sched.Spec = &spec
 			sched.Action = action(job)
 			if sched.Policy == nil {
 				sched.Policy = &client.SchedulePolicies{}

@@ -67,6 +67,8 @@ services:
       - FALLBCK_TEMPORAL_NAMESPACE=default
       # Development only: no admin login. compose.sso.yml turns this off and configures OIDC.
       - FALLBCK_AUTH_INSECURE_DISABLE=${FALLBCK_AUTH_INSECURE_DISABLE:-true}
+      # Cron schedules and next-run display follow this timezone (default UTC)
+      - TZ=${TZ:-UTC}
       - FALLBCK_OIDC_ISSUER=${FALLBCK_OIDC_ISSUER:-}
       - FALLBCK_OIDC_CLIENT_ID=${FALLBCK_OIDC_CLIENT_ID:-}
       - FALLBCK_OIDC_CLIENT_SECRET=${FALLBCK_OIDC_CLIENT_SECRET:-}
