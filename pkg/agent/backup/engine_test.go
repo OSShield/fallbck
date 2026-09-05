@@ -117,6 +117,9 @@ func TestRunDirect(t *testing.T) {
 	dir := makeTree(t)
 	session := &temporal.BackupSessionInfo{
 		Datastore: "store1", BackupType: "host", BackupID: "node6", BackupTime: time.Now().Unix(),
+		// A stale/forged session namespace must be ignored; the effective namespace
+		// comes from the direct credentials (target), not the session.
+		Namespace:  "default",
 		PxarFormat: db.PxarFormatV1, BackupPaths: []string{dir},
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -124,7 +127,7 @@ func TestRunDirect(t *testing.T) {
 	res, err := Run(ctx, Options{
 		Session:     session,
 		ArchiveName: "root",
-		Direct:      &DirectOptions{Endpoint: fake.URL(), Fingerprint: "SHA256:" + fake.Fingerprint(), APIToken: "backup@pbs!fallbck=s3cret"},
+		Direct:      &DirectOptions{Endpoint: fake.URL(), Namespace: "production", Fingerprint: "SHA256:" + fake.Fingerprint(), APIToken: "backup@pbs!fallbck=s3cret"},
 	})
 	if err != nil {
 		t.Fatalf("Run direct: %v", err)
@@ -132,8 +135,12 @@ func TestRunDirect(t *testing.T) {
 	if res.Status != db.RunStatusCompleted || fake.Finished() != 1 {
 		t.Errorf("direct backup did not complete: %+v finished=%d", res, fake.Finished())
 	}
-	if q := fake.Upgrades()[0].URL.Query(); q.Get("store") != "store1" || q.Get("backup-id") != "node6" {
+	q := fake.Upgrades()[0].URL.Query()
+	if q.Get("store") != "store1" || q.Get("backup-id") != "node6" {
 		t.Errorf("unexpected upgrade query %s", fake.Upgrades()[0].URL.RawQuery)
+	}
+	if q.Get("ns") != "production" {
+		t.Errorf("direct backup used namespace %q, want the target's %q (session namespace must be ignored)", q.Get("ns"), "production")
 	}
 }
 

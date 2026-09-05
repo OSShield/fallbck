@@ -5,7 +5,7 @@ hostname: "web-server-01"
 server_url: "https://backup.example.com"
 data_dir: "/var/lib/fallbck/agent"
 task_queue: "fallbck-agent-auto-generated-uuid"
-namespace: "default"
+namespace: ""
 auth_token: "eyJ..."                 # bearer token issued at enrollment (file must be 0600)
 token_expires_at: 2027-08-25T00:00:00Z
 # server_ca_cert_path: "/var/lib/fallbck/agent/server-ca.crt"   # private CA for server_url
