@@ -176,6 +176,14 @@ func (a *K8sAgentActivities) workerEnv(ctx context.Context, session *temporal.Ba
 		{Name: k8sagent.EnvWorkerTicket, Value: volumeTicket},
 		{Name: k8sagent.EnvWorkerSession, Value: sessionJSON},
 	}
+	// Give workers the agent's log level (configured, or DEBUG env) so operators can
+	// see gopbs connect/upload detail in the worker pod logs
+	if lvl := a.Config.LogLevel; lvl != "" {
+		env = append(env, corev1.EnvVar{Name: "FALLBCK_LOG_LEVEL", Value: lvl})
+	}
+	if dbg := os.Getenv("DEBUG"); dbg != "" {
+		env = append(env, corev1.EnvVar{Name: "DEBUG", Value: dbg})
+	}
 	if session.DirectPBS {
 		if a.Credentials == nil {
 			return nil, errors.New("job requires direct PBS access but the agent has no credentials fetcher")

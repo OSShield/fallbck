@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -38,12 +39,19 @@ const (
 func RunWorker(ctx context.Context) error {
 	resultPath := envDefault(EnvWorkerResult, "/dev/termination-log")
 	outcome := runWorker(ctx)
+	// Log the outcome to stdout first: pod logs are the channel the agent can always
+	// read, even if the termination-message file is unwritable or the pod is killed.
+	if outcome.Error != "" {
+		slog.Error("Volume upload failed", "phase", outcome.Phase, "error", outcome.Error)
+	} else if outcome.Result != nil {
+		slog.Info("Volume upload completed", "snapshot", outcome.Result.SnapshotID, "bytes_uploaded", outcome.Result.BytesUploaded)
+	}
 	data, err := json.Marshal(outcome)
 	if err != nil {
 		data = []byte(`{"error":"failed to encode worker outcome"}`)
 	}
 	if err := os.WriteFile(resultPath, data, 0o644); err != nil {
-		fmt.Fprintf(os.Stderr, "writing result to %s: %v\n", resultPath, err)
+		slog.Warn("Could not write the termination message; the agent will read the error from the pod logs", "path", resultPath, "error", err)
 	}
 	if outcome.Error != "" {
 		return fmt.Errorf("%s", outcome.Error)

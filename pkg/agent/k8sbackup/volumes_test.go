@@ -3,6 +3,7 @@ package k8sbackup
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -266,5 +267,30 @@ func TestPlanVolumes(t *testing.T) {
 		if p.PVCName == "liveme" && p.Mode != spec.ModeSkipped {
 			t.Errorf("liveme without fallback: %+v", p)
 		}
+	}
+}
+
+func TestBackupVolumeKilledSurfacesReasonAndLogs(t *testing.T) {
+	fastPolling(t)
+	c, core, _ := volumeClients(t)
+	// Pod killed before it could write a termination message (empty message,
+	// OOMKilled, exit 137) — the failure must still surface the reason and the logs.
+	core.PrependReactor("create", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		pod := action.(k8stesting.CreateAction).GetObject().(*corev1.Pod)
+		pod.Status.Phase = corev1.PodFailed
+		pod.Status.ContainerStatuses = []corev1.ContainerStatus{{
+			State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Reason: "OOMKilled", ExitCode: 137}},
+		}}
+		return false, nil, nil
+	})
+	res, err := BackupVolume(context.Background(), c, testRequest(spec.ModeLive))
+	if err == nil || res.Status != "failed" {
+		t.Fatalf("expected failure: %+v %v", res, err)
+	}
+	if !strings.Contains(res.Error, "OOMKilled") || !strings.Contains(res.Error, "exit 137") {
+		t.Errorf("error missing kill reason/exit code: %q", res.Error)
+	}
+	if !strings.Contains(res.Error, "worker log") {
+		t.Errorf("error missing worker log tail: %q", res.Error)
 	}
 }
