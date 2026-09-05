@@ -378,10 +378,12 @@ func superviseWorker(ctx context.Context, c *Clients, ns, name string, timeout t
 }
 
 func parseOutcome(ctx context.Context, c *Clients, pod *corev1.Pod) (*workerOutcome, error) {
-	msg := ""
+	msg, reason, exit := "", "", int32(0)
 	for _, cs := range pod.Status.ContainerStatuses {
 		if cs.State.Terminated != nil {
 			msg = cs.State.Terminated.Message
+			reason = cs.State.Terminated.Reason
+			exit = cs.State.Terminated.ExitCode
 		}
 	}
 	var out workerOutcome
@@ -390,24 +392,55 @@ func parseOutcome(ctx context.Context, c *Clients, pod *corev1.Pod) (*workerOutc
 			out = workerOutcome{Error: strings.TrimSpace(msg)}
 		}
 	}
-	if pod.Status.Phase == corev1.PodFailed && out.Error == "" && out.Result == nil {
-		out.Error = "worker pod failed"
-		if tail := podLogTail(ctx, c, pod.Namespace, pod.Name); tail != "" {
-			out.Error += ": " + tail
+	if pod.Status.Phase != corev1.PodFailed || out.Result != nil {
+		return &out, nil
+	}
+	// The pod failed. Build the most informative error we can: the structured error
+	// from the termination message when present, plus the container's exit reason
+	// (OOMKilled, Error, …) and the worker's own log tail — which is the channel that
+	// survives an unwritable termination file or a killed process.
+	var b strings.Builder
+	if out.Error != "" {
+		b.WriteString(out.Error)
+	} else {
+		b.WriteString("worker pod failed")
+	}
+	if reason != "" && reason != "Error" {
+		fmt.Fprintf(&b, " (%s)", reason)
+	}
+	if exit != 0 {
+		fmt.Fprintf(&b, " [exit %d]", exit)
+	}
+	// Fetch the pod logs, retrying briefly to beat the kubelet's log-flush lag so the
+	// worker's final ERROR line is not missed.
+	tail := ""
+	for attempt := 0; attempt < 3; attempt++ {
+		if tail = podLogTail(ctx, c, pod.Namespace, pod.Name); tail != "" {
+			break
+		}
+		select {
+		case <-ctx.Done():
+		case <-time.After(time.Second):
 		}
 	}
+	if tail != "" {
+		b.WriteString("\n--- worker log ---\n")
+		b.WriteString(tail)
+	}
+	out.Error = b.String()
+	out.Result = nil
 	return &out, nil
 }
 
 func podLogTail(ctx context.Context, c *Clients, ns, name string) string {
-	lines := int64(20)
+	lines := int64(50)
 	req := c.Core.CoreV1().Pods(ns).GetLogs(name, &corev1.PodLogOptions{TailLines: &lines})
 	stream, err := req.Stream(ctx)
 	if err != nil {
 		return ""
 	}
 	defer stream.Close()
-	data, _ := io.ReadAll(io.LimitReader(stream, 4096))
+	data, _ := io.ReadAll(io.LimitReader(stream, 32*1024))
 	return strings.TrimSpace(string(data))
 }
 
