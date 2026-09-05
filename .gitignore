@@ -33,4 +33,4 @@ go.work.sum
 dist/
 
 *.local.yaml
-deploy/helm/fallbck-k8s-agent/*.tgz
+fallbck-k8s-agent*.tgz
