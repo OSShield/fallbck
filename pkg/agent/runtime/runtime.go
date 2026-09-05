@@ -53,6 +53,9 @@ type Agent struct {
 	// Logging is the process logging setup (SetupLogging); the heartbeat loop applies
 	// the server's per-agent debug toggle to it and failures attach its ring buffer
 	Logging *Logging
+	// PersistToken overrides where token rotations are stored (TokenStore.Persist);
+	// used by the kubernetes agent to write into its identity Secret
+	PersistToken func(cfg *config.AgentConfig) error
 }
 
 // FindDefaultConfig returns the first existing agent.yaml among the conventional
@@ -109,6 +112,9 @@ type TokenStore struct {
 	mu         sync.RWMutex
 	cfg        *config.AgentConfig
 	configPath string
+	// Persist overrides where rotations are stored (e.g. a Kubernetes Secret);
+	// default: rewrite the token fields of the config file
+	Persist func(cfg *config.AgentConfig) error
 }
 
 // NewTokenStore wraps the loaded configuration; rotations are written to configPath
@@ -134,6 +140,9 @@ func (t *TokenStore) Update(token string, expires time.Time) error {
 	defer t.mu.Unlock()
 	t.cfg.AuthToken = token
 	t.cfg.TokenExpiresAt = expires
+	if t.Persist != nil {
+		return t.Persist(t.cfg)
+	}
 	if t.configPath == "" {
 		return nil
 	}
@@ -212,6 +221,28 @@ func (c *Conns) Close() {
 	}
 }
 
+// DialTunnel opens only the agent-authenticated gRPC connection to the gateway
+// (PBS tunnel and other agent services); used by worker processes that need no
+// Temporal client.
+func DialTunnel(cfg *config.AgentConfig, store *TokenStore) (*grpc.ClientConn, error) {
+	hostPort, connOpts, err := ConnectionOptions(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("invalid agent configuration: %w", err)
+	}
+	transportCreds := credentials.NewTLS(connOpts.TLS)
+	if connOpts.TLSDisabled {
+		transportCreds = insecure.NewCredentials()
+	}
+	conn, err := grpc.NewClient(hostPort,
+		grpc.WithTransportCredentials(transportCreds),
+		grpc.WithPerRPCCredentials(tokenCredentials{store: store}),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create tunnel connection: %w", err)
+	}
+	return conn, nil
+}
+
 // Connect opens the Temporal client and the tunnel connection through the gateway,
 // both authenticated with the agent token
 func Connect(cfg *config.AgentConfig, store *TokenStore, identity string) (*Conns, error) {
@@ -230,17 +261,10 @@ func Connect(cfg *config.AgentConfig, store *TokenStore, identity string) (*Conn
 		return nil, fmt.Errorf("failed to connect to FallBCK server gateway at %s: %w", hostPort, err)
 	}
 
-	transportCreds := credentials.NewTLS(connOpts.TLS)
-	if connOpts.TLSDisabled {
-		transportCreds = insecure.NewCredentials()
-	}
-	tunnelConn, err := grpc.NewClient(hostPort,
-		grpc.WithTransportCredentials(transportCreds),
-		grpc.WithPerRPCCredentials(tokenCredentials{store: store}),
-	)
+	tunnelConn, err := DialTunnel(cfg, store)
 	if err != nil {
 		temporalClient.Close()
-		return nil, fmt.Errorf("failed to create tunnel connection: %w", err)
+		return nil, err
 	}
 	return &Conns{HostPort: hostPort, Temporal: temporalClient, Tunnel: tunnelConn}, nil
 }
@@ -254,6 +278,33 @@ func ServerHTTPClient(cfg *config.AgentConfig) *http.Client {
 		}
 	}
 	return httpClient
+}
+
+// TicketPost performs an agent-authenticated POST carrying a backup ticket, a JSON
+// body, and decodes the JSON response into out.
+func TicketPost(ctx context.Context, httpClient *http.Client, cfg *config.AgentConfig, store *TokenStore, path, ticket string, body, out any) error {
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	base := strings.TrimRight(cfg.ServerURL, "/")
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+path, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+store.Token())
+	req.Header.Set(api.BackupTicketHeader, ticket)
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(string(b)))
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
 }
 
 // TicketGet performs an agent-authenticated GET carrying a backup ticket and decodes
@@ -403,6 +454,7 @@ func Run(a Agent, cfg *config.AgentConfig, configPath string, register func(w wo
 	defer cancel()
 
 	store := NewTokenStore(cfg, configPath)
+	store.Persist = a.PersistToken
 	identity := fmt.Sprintf("%s@%s", a.Name, cfg.Hostname)
 
 	conns, err := Connect(cfg, store, identity)

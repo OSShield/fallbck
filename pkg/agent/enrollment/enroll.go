@@ -34,6 +34,8 @@ type Options struct {
 	AgentType string
 	// Version reported to the server (default AgentVersion)
 	Version string
+	// Hostname overrides the reported hostname (e.g. k8s-<cluster>); default os.Hostname()
+	Hostname string
 }
 
 // EnrollAgent enrolls a filesystem agent (see Enroll)
@@ -59,7 +61,10 @@ func Enroll(ctx context.Context, o Options) (*config.AgentConfig, error) {
 	serverURL := strings.TrimRight(o.ServerURL, "/")
 	token := o.Token
 
-	hostname, _ := os.Hostname()
+	hostname := o.Hostname
+	if hostname == "" {
+		hostname, _ = os.Hostname()
+	}
 	reqBody := api.EnrollRequest{
 		Token:     token,
 		Hostname:  hostname,

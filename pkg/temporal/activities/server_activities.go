@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/osshield/fallbck/pkg/dbbackup"
+	"github.com/osshield/fallbck/pkg/k8sbackup"
 	sdktemporal "go.temporal.io/sdk/temporal"
 	"log/slog"
 	"strings"
@@ -94,7 +95,14 @@ func (s *ServerActivities) PrepareBackupSession(ctx context.Context, jobID uuid.
 			fmt.Sprintf("job type %q cannot run on agent %s of type %q", jobType, agent.Hostname, agentType), "job_agent_mismatch", nil)
 	}
 	var sessionSpec *dbbackup.Spec
+	var k8sSpec *k8sbackup.Spec
 	passwordOnServer := false
+	if jobType == db.JobTypeKubernetes {
+		if job.K8sConfig == nil {
+			return nil, sdktemporal.NewNonRetryableApplicationError("kubernetes job has no configuration", "job_invalid", nil)
+		}
+		k8sSpec = job.K8sConfig
+	}
 	if jobType == db.JobTypeDatabase {
 		if job.DBConfig == nil {
 			return nil, sdktemporal.NewNonRetryableApplicationError("database job has no database configuration", "job_invalid", nil)
@@ -156,6 +164,7 @@ func (s *ServerActivities) PrepareBackupSession(ctx context.Context, jobID uuid.
 		JobName:            job.Name,
 		DBConfig:           sessionSpec,
 		DBPasswordOnServer: passwordOnServer,
+		K8sConfig:          k8sSpec,
 		BackupPaths:        job.BackupPaths,
 		ExcludePaths:       job.ExcludePaths,
 		RetentionPolicy:    job.RetentionPolicy,
@@ -237,6 +246,65 @@ func (s *ServerActivities) PruneJob(ctx context.Context, session *temporal.Backu
 		}
 	}
 
+	return nil
+}
+
+// PruneKubernetesJob applies the job's retention policy to every PBS group a
+// kubernetes cluster writes: the resources group and each k8s-<cluster>-pvc-* group —
+// including groups of PVCs deleted since earlier runs, which would otherwise never be
+// pruned. activeGroups are the groups touched by this run; orphaned volume groups can
+// additionally be forgotten entirely after volumes.forget_orphans_after_days.
+func (s *ServerActivities) PruneKubernetesJob(ctx context.Context, session *temporal.BackupSessionInfo, activeGroups []string) error {
+	if s.DB == nil || session == nil {
+		return nil
+	}
+	target, err := s.DB.GetTargetByID(ctx, session.TargetID)
+	if err != nil {
+		return fmt.Errorf("failed to fetch target for pruning: %w", err)
+	}
+	client := pbs.NewClient(target.Endpoint, target.AuthTokenEncrypted, target.TLSVerify, target.Fingerprint)
+	r := session.RetentionPolicy
+	hasRetention := r.KeepLast > 0 || r.KeepDaily > 0 || r.KeepWeekly > 0 || r.KeepMonthly > 0
+	forgetDays := 0
+	if session.K8sConfig != nil {
+		forgetDays = session.K8sConfig.Volumes.ForgetOrphansAfterDays
+	}
+	if !hasRetention && forgetDays == 0 {
+		return nil
+	}
+
+	prune := func(backupID string) {
+		if !hasRetention {
+			return
+		}
+		if err := client.PruneDatastore(ctx, target.Datastore, target.Namespace, session.BackupType, backupID,
+			r.KeepLast, r.KeepDaily, r.KeepWeekly, r.KeepMonthly); err != nil {
+			slog.Warn("PBS prune returned error", "group", backupID, "error", err)
+		}
+	}
+	prune(session.BackupID)
+
+	groups, err := client.ListGroups(ctx, target.Datastore, target.Namespace)
+	if err != nil {
+		return fmt.Errorf("listing PBS groups: %w", err)
+	}
+	active := map[string]bool{}
+	for _, g := range activeGroups {
+		active[g] = true
+	}
+	for _, g := range groups {
+		if g.BackupType != session.BackupType || !k8sbackup.IsVolumeGroup(session.BackupID, g.BackupID) {
+			continue
+		}
+		prune(g.BackupID)
+		if forgetDays > 0 && !active[g.BackupID] && g.LastBackup > 0 &&
+			time.Since(time.Unix(g.LastBackup, 0)) > time.Duration(forgetDays)*24*time.Hour {
+			slog.Info("Forgetting orphaned kubernetes volume group", "group", g.BackupID, "datastore", target.Datastore)
+			if err := client.DeleteGroup(ctx, target.Datastore, target.Namespace, g.BackupType, g.BackupID); err != nil {
+				slog.Warn("PBS group delete returned error", "group", g.BackupID, "error", err)
+			}
+		}
+	}
 	return nil
 }
 

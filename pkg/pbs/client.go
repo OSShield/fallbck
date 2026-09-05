@@ -28,9 +28,9 @@ func NewClient(endpoint, apiToken string, tlsVerify bool, fingerprint string) *C
 	}
 
 	transport := &http.Transport{
-		TLSClientConfig:     tlsConfig,
-		MaxIdleConns:        50,
-		IdleConnTimeout:     90 * time.Second,
+		TLSClientConfig:    tlsConfig,
+		MaxIdleConns:       50,
+		IdleConnTimeout:    90 * time.Second,
 		DisableCompression: false,
 	}
 

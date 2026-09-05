@@ -8,14 +8,17 @@ import (
 	"github.com/google/uuid"
 	"github.com/osshield/fallbck/pkg/config"
 	"github.com/osshield/fallbck/pkg/dbbackup"
+	"github.com/osshield/fallbck/pkg/k8sbackup"
 )
 
 // Agent / job types: each agent binary handles one kind of job
 const (
 	AgentTypeFilesystem = config.AgentTypeFilesystem
 	AgentTypeDatabase   = config.AgentTypeDatabase
+	AgentTypeKubernetes = config.AgentTypeKubernetes
 	JobTypeFilesystem   = config.AgentTypeFilesystem
 	JobTypeDatabase     = config.AgentTypeDatabase
+	JobTypeKubernetes   = config.AgentTypeKubernetes
 )
 
 // NormalizeAgentType maps "" to filesystem and reports unknown values
@@ -25,6 +28,8 @@ func NormalizeAgentType(t string) (string, bool) {
 		return AgentTypeFilesystem, true
 	case AgentTypeDatabase:
 		return AgentTypeDatabase, true
+	case AgentTypeKubernetes:
+		return AgentTypeKubernetes, true
 	}
 	return t, false
 }
@@ -137,9 +142,11 @@ type BackupJob struct {
 	JobType string `json:"job_type" db:"job_type"`
 	// DBConfig is the database job specification; the password is stored but never
 	// returned by the API (see Sanitize)
-	DBConfig  *dbbackup.Spec `json:"db_config,omitempty" db:"db_config"`
-	CreatedAt time.Time      `json:"created_at" db:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at" db:"updated_at"`
+	DBConfig *dbbackup.Spec `json:"db_config,omitempty" db:"db_config"`
+	// K8sConfig is the kubernetes job specification
+	K8sConfig *k8sbackup.Spec `json:"k8s_config,omitempty" db:"k8s_config"`
+	CreatedAt time.Time       `json:"created_at" db:"created_at"`
+	UpdatedAt time.Time       `json:"updated_at" db:"updated_at"`
 
 	// Joined fields for display
 	AgentName  string `json:"agent_name,omitempty"`
@@ -218,6 +225,9 @@ func (r *BackupRun) DurationString() string {
 // IsDatabase reports whether the job is a database backup
 func (j *BackupJob) IsDatabase() bool { return j.JobType == JobTypeDatabase }
 
+// IsKubernetes reports whether the job is a kubernetes backup
+func (j *BackupJob) IsKubernetes() bool { return j.JobType == JobTypeKubernetes }
+
 // Sanitize redacts the stored database password (HasPassword tells whether one exists)
 func (j *BackupJob) Sanitize() *BackupJob {
 	if j.JobType == "" {
@@ -229,10 +239,13 @@ func (j *BackupJob) Sanitize() *BackupJob {
 	return j
 }
 
-// Summary describes what the job backs up (paths or database target)
+// Summary describes what the job backs up (paths, database target or cluster scope)
 func (j *BackupJob) Summary() string {
 	if j.IsDatabase() {
 		return j.DBConfig.Summary()
+	}
+	if j.IsKubernetes() {
+		return j.K8sConfig.Summary()
 	}
 	return strings.Join(j.BackupPaths, ", ")
 }

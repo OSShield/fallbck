@@ -54,6 +54,7 @@ jobs:
           pg_dump --version; mariadb-dump --version; mongodump --version
       - name: Database engine tests against real servers
         run: go test -tags dbintegration -count=1 -run 'TestIntegration' -v ./pkg/agent/dbbackup/
+      
 
   release:
     name: GoReleaser
@@ -62,6 +63,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0 # changelog needs history and tags
+
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod

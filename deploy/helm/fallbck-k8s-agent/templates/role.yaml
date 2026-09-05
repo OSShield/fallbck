@@ -1,0 +1,16 @@
+# Identity Secret access (agent namespace only)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "fallbck-k8s-agent.name" . }}-identity
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "fallbck-k8s-agent.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: [{{ .Values.identitySecretName | quote }}]
+    verbs: ["get", "update", "patch"]
+  # create cannot be resourceName-scoped
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create"]

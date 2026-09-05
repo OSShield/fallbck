@@ -46,6 +46,22 @@ builds:
       - arm64
     binary: fallbck-db-agent
 
+  # Container-only (Helm chart install); archives but no linux packages
+  - id: fallbck-k8s-agent
+    main: ./cmd/fallbck-k8s-agent
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.AgentVersion={{ .Version }}
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    binary: fallbck-k8s-agent
+
 archives:
   - id: fallbck-server
     ids:
@@ -74,6 +90,17 @@ archives:
       - fallbck-db-agent
     name_template: >-
       {{ .ProjectName }}_db_agent_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+
+  - id: fallbck-k8s-agent
+    ids:
+      - fallbck-k8s-agent
+    name_template: >-
+      {{ .ProjectName }}_k8s_agent_
       {{- title .Os }}_
       {{- if eq .Arch "amd64" }}x86_64
       {{- else if eq .Arch "386" }}i386

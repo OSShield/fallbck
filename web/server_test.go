@@ -32,6 +32,8 @@ func TestUIRenderRoutes(t *testing.T) {
 		{"/jobs", http.StatusOK, "Backup Jobs"},
 		{"/jobs", http.StatusOK, `name="job_type"`},
 		{"/jobs", http.StatusOK, "runs in "},
+		{"/kubernetes", http.StatusOK, "Kubernetes Backup Jobs"},
+		{"/kubernetes", http.StatusOK, `name="k8s_volumes_mode"`},
 		{"/runs", http.StatusOK, "Duration"},
 		{"/runs", http.StatusOK, "modal-run-details"},
 		{"/agents", http.StatusOK, "Database agent"},
