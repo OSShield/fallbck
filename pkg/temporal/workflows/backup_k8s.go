@@ -12,6 +12,28 @@ import (
 	"go.temporal.io/sdk/workflow"
 )
 
+// maxAggregatedFailures / maxErrorMessageBytes bound the run's error text so the
+// finalize activity input and history stay within Temporal's payload limit.
+const (
+	maxAggregatedFailures = 25
+	maxErrorMessageBytes  = 24 * 1024
+)
+
+// joinFailures renders failed-volume messages, capping the count and total size
+func joinFailures(failed []string) string {
+	shown := failed
+	suffix := ""
+	if len(shown) > maxAggregatedFailures {
+		suffix = fmt.Sprintf("; … and %d more", len(shown)-maxAggregatedFailures)
+		shown = shown[:maxAggregatedFailures]
+	}
+	msg := strings.Join(shown, "; ") + suffix
+	if len(msg) > maxErrorMessageBytes {
+		msg = msg[:maxErrorMessageBytes] + "…(truncated)"
+	}
+	return msg
+}
+
 // kubernetesOutcome aggregates a kubernetes run for finalize/prune
 type kubernetesOutcome struct {
 	result       fbtemporal.BackupExecutionResult
@@ -117,10 +139,10 @@ func runKubernetesBackup(ctx workflow.Context, session *fbtemporal.BackupSession
 		out.err = resErr
 		out.result.ErrorMessage = "resource backup failed: " + resErr.Error()
 	case len(failed) > 0 && (!spec.Volumes.EffContinueOnError() || completed == 0 && len(failed) == len(results)):
-		out.err = fmt.Errorf("%d of %d volumes failed: %s", len(failed), len(results), strings.Join(failed, "; "))
+		out.err = fmt.Errorf("%d of %d volumes failed: %s", len(failed), len(results), joinFailures(failed))
 		out.result.ErrorMessage = out.err.Error()
 	case len(failed) > 0:
-		out.result.ErrorMessage = fmt.Sprintf("completed with %d failed volume(s): %s", len(failed), strings.Join(failed, "; "))
+		out.result.ErrorMessage = fmt.Sprintf("completed with %d failed volume(s): %s", len(failed), joinFailures(failed))
 		logger.Warn("Kubernetes backup completed with volume failures", "failed", len(failed))
 	}
 	return out
