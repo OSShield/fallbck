@@ -55,6 +55,8 @@ type K8sAgentActivities struct {
 	SpoolDir string
 	// LogTail returns the agent's recent log output, attached to failures
 	LogTail func() string
+	// ReportProgress posts live phase / per-PVC updates to the server (best-effort)
+	ReportProgress ProgressFunc
 
 	// Runs tracks in-flight run ids for the orphan sweep. It lives in a named field:
 	// worker.RegisterActivity(struct) validates every exported *method* of the struct,
@@ -131,6 +133,19 @@ func (a *K8sAgentActivities) DiscoverKubernetesBackup(ctx context.Context, sessi
 	if v, err := a.Clients.Discovery.ServerVersion(); err == nil && v != nil {
 		plan.ServerVersion = v.GitVersion
 	}
+	// Seed the live per-PVC table so the detail page shows the plan immediately
+	if len(plans) > 0 {
+		items := make(map[string]rundetail.ProgressItem, len(plans))
+		for _, v := range plans {
+			it := rundetail.ProgressItem{Name: v.Namespace + "/" + v.PVCName, Kind: "pvc", Mode: v.Mode, Status: "pending"}
+			if v.Mode == spec.ModeSkipped {
+				it.Status, it.Note = "skipped", v.SkipReason
+			}
+			items[v.GroupID] = it
+		}
+		reportItems(a.ReportProgress, ctx, session.Ticket, session.BackupRunID, items)
+	}
+	reportPhase(a.ReportProgress, ctx, session.Ticket, session.BackupRunID, fmt.Sprintf("backing up %d volume(s)", len(plans)))
 	slog.Info("Kubernetes backup planned", "cluster", a.ClusterName, "volumes", len(plans), "snapshot_crd", crd)
 	return plan, nil
 }
@@ -245,6 +260,24 @@ func (a *K8sAgentActivities) BackupKubernetesVolume(ctx context.Context, session
 	untrack := a.Runs.track(session.BackupRunID.String())
 	defer untrack()
 
+	pvcName := plan.Namespace + "/" + plan.PVCName
+	setItem := func(it rundetail.ProgressItem) {
+		reportItems(a.ReportProgress, ctx, session.Ticket, session.BackupRunID, map[string]rundetail.ProgressItem{plan.GroupID: it})
+	}
+	setItem(rundetail.ProgressItem{Name: pvcName, Kind: "pvc", Mode: plan.Mode, Status: "running", Note: "starting"})
+	stopVolProgress := startProgress(ctx, pt, 5*time.Second, func(phase string) {
+		setItem(rundetail.ProgressItem{Name: pvcName, Kind: "pvc", Mode: plan.Mode, Status: "running", Note: phase})
+	})
+	reportResult := func(res *spec.VolumeResult) {
+		stopVolProgress()
+		if res == nil {
+			return
+		}
+		setItem(rundetail.ProgressItem{Name: pvcName, Kind: "pvc", Mode: res.Mode, Consistency: res.Consistency,
+			Status: res.Status, BytesUploaded: res.BytesUploaded, SnapshotID: res.SnapshotID, Error: res.Error})
+	}
+	defer stopVolProgress()
+
 	pt.Set("preparing volume " + plan.Namespace + "/" + plan.PVCName)
 	if a.VolumeTicket == nil {
 		return nil, errors.New("agent has no volume-ticket fetcher")
@@ -275,9 +308,14 @@ func (a *K8sAgentActivities) BackupKubernetesVolume(ctx context.Context, session
 		Progress: pt.Set,
 	})
 	if err != nil {
+		if res == nil {
+			res = &spec.VolumeResult{Namespace: plan.Namespace, PVCName: plan.PVCName, GroupID: plan.GroupID, Mode: plan.Mode, Status: "failed", Error: err.Error()}
+		}
+		reportResult(res)
 		slog.Error("Kubernetes volume backup failed", "pvc", plan.Namespace+"/"+plan.PVCName, "error", err, "phase", pt.Current())
 		return res, backupFailure(ctx, err, pt, a.LogTail)
 	}
+	reportResult(res)
 	return res, nil
 }
 
@@ -293,6 +331,9 @@ func (a *K8sAgentActivities) BackupKubernetesResources(ctx context.Context, sess
 	}
 	untrack := a.Runs.track(session.BackupRunID.String())
 	defer untrack()
+	reportResPhase := func() { reportPhase(a.ReportProgress, ctx, session.Ticket, session.BackupRunID, pt.Current()) }
+	stopProgress := startProgress(ctx, pt, 5*time.Second, func(string) { reportResPhase() })
+	defer stopProgress()
 
 	spoolRoot := a.SpoolDir
 	if spoolRoot == "" {

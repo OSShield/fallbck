@@ -30,6 +30,7 @@ import (
 	"github.com/osshield/fallbck/pkg/agent/enrollment"
 	"github.com/osshield/fallbck/pkg/api"
 	"github.com/osshield/fallbck/pkg/config"
+	"github.com/osshield/fallbck/pkg/rundetail"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
 	"google.golang.org/grpc"
@@ -339,6 +340,20 @@ func PBSCredentialsFetcher(cfg *config.AgentConfig, store *TokenStore) func(ctx 
 		}
 		slog.Debug("Received PBS credentials for direct backup", "endpoint", creds.Endpoint, "datastore", creds.Datastore)
 		return &backup.DirectOptions{Endpoint: creds.Endpoint, Namespace: creds.Namespace, Fingerprint: creds.Fingerprint, TLSVerify: creds.TLSVerify, APIToken: creds.APIToken}, nil
+	}
+}
+
+// ProgressReporter returns a best-effort function that posts live run progress to the
+// server (phase and/or per-item statuses), authenticated with the run's backup ticket.
+func ProgressReporter(cfg *config.AgentConfig, store *TokenStore) func(ctx context.Context, ticket string, runID uuid.UUID, phase string, items map[string]rundetail.ProgressItem) error {
+	httpClient := ServerHTTPClient(cfg)
+	return func(ctx context.Context, ticket string, runID uuid.UUID, phase string, items map[string]rundetail.ProgressItem) error {
+		if ticket == "" || runID == uuid.Nil {
+			return nil
+		}
+		var out map[string]any
+		return TicketPost(ctx, httpClient, cfg, store, "/api/v1/agents/run-progress", ticket,
+			api.RunProgressRequest{RunID: runID, Phase: phase, Items: items}, &out)
 	}
 }
 

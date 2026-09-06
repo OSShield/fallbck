@@ -60,3 +60,31 @@ type Wrapper struct {
 func WrapManifest(detailType string, manifest []byte) json.RawMessage {
 	return Marshal(Wrapper{Type: detailType, Manifest: json.RawMessage(manifest)})
 }
+
+// ---- Live progress (backup_runs.progress) -----------------------------------
+
+// Progress is the live state of a running backup, updated mid-run and polled by the
+// detail page. It is cleared conceptually once the run finalizes (the page then shows
+// the full Details blob instead).
+type Progress struct {
+	// Phase is the current human-readable step (e.g. "uploading db/data (40s)")
+	Phase string `json:"phase,omitempty"`
+	// Items are per-unit statuses keyed by a stable id (PVC group, database name)
+	Items map[string]ProgressItem `json:"items,omitempty"`
+	// Counts summarise the items for a quick "3/8" headline
+	UpdatedAt string `json:"updated_at,omitempty"`
+}
+
+// ProgressItem is one live per-unit status (a PVC, a database)
+type ProgressItem struct {
+	Name string `json:"name"`
+	// Status: pending | running | completed | failed | skipped
+	Status        string `json:"status"`
+	Kind          string `json:"kind,omitempty"` // pvc | database
+	Mode          string `json:"mode,omitempty"`
+	Consistency   string `json:"consistency,omitempty"`
+	BytesUploaded int64  `json:"bytes_uploaded,omitempty"`
+	SnapshotID    string `json:"snapshot_id,omitempty"`
+	Note          string `json:"note,omitempty"`
+	Error         string `json:"error,omitempty"`
+}

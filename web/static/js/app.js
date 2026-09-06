@@ -638,6 +638,8 @@ function rdPre(text) {
 function rdMono(s) { return `<code style="font-family:var(--font-mono);font-size:12px;">${rdEsc(s)}</code>`; }
 function rdShort(h) { return h ? String(h).slice(0, 12) : ''; }
 
+let _runPollTimer = null;
+const RUN_ACTIVE = ['pending', 'running', 'cancelling'];
 async function loadRunDetail(runId) {
   const root = document.getElementById('run-detail-root');
   try {
@@ -646,8 +648,12 @@ async function loadRunDetail(runId) {
     const run = await resp.json();
     _runDetail = run;
     root.innerHTML = renderRun(run);
+    if (_runPollTimer) clearTimeout(_runPollTimer);
+    if (RUN_ACTIVE.includes(run.status)) {
+      _runPollTimer = setTimeout(() => loadRunDetail(runId), 3500);
+    }
   } catch (err) {
-    root.innerHTML = rdCard('Error', `<p style="color:var(--danger-text);">${rdEsc(err.message)}</p>`);
+    if (!_runDetail) root.innerHTML = rdCard('Error', `<p style="color:var(--danger-text);">${rdEsc(err.message)}</p>`);
   }
 }
 
@@ -663,7 +669,10 @@ function renderRun(run) {
   const type = d.type || 'filesystem';
   const typeLabel = { filesystem: 'Filesystem', database: 'Database', kubernetes: 'Kubernetes' }[type] || type;
 
-  let html = rdCard(run.job_name || 'Backup run', rdKV([
+  const active = RUN_ACTIVE.includes(run.status);
+  let html = '';
+  if (active) html += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;color:var(--text-muted);font-size:13px;"><span class="badge badge-warning"><span class="badge-dot"></span> Live</span> auto-refreshing every few seconds…</div>`;
+  html += rdCard(run.job_name || 'Backup run', rdKV([
     ['Status', rdStatus(run.status)],
     ['Type', rdEsc(typeLabel)],
     ['Agent', rdEsc(run.agent_name || '-')],
@@ -682,6 +691,8 @@ function renderRun(run) {
   if (run.error_message) {
     html += rdCard('Error', rdPre(run.error_message));
   }
+
+  if (active && run.progress) html += renderProgress(run.progress);
 
   if (type === 'database') html += renderDBDetail(d.manifest || {});
   else if (type === 'kubernetes') html += renderK8sDetail(d.manifest || {});
@@ -794,6 +805,29 @@ function renderK8sDetail(m) {
   if (m.restore && m.restore.commands && m.restore.commands.length)
     html += rdCard('Restore', (m.restore.summary ? `<p style="font-size:13px;margin-bottom:8px;">${rdEsc(m.restore.summary)}</p>` : '') + rdPre(m.restore.commands.join('\n')));
   return html;
+}
+
+function renderProgress(p) {
+  let body = '';
+  if (p.phase) body += `<div style="margin-bottom:12px;"><span style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">Current step</span><div style="font-size:14px;margin-top:2px;">${rdEsc(p.phase)}</div></div>`;
+  const items = p.items || {};
+  const keys = Object.keys(items).sort((a, b) => (items[a].name || a).localeCompare(items[b].name || b));
+  if (keys.length) {
+    const done = keys.filter(k => ['completed', 'skipped'].includes(items[k].status)).length;
+    const rows = keys.map(k => {
+      const it = items[k];
+      const st = it.status === 'completed' ? 'completed' : it.status === 'failed' ? 'failed' : it.status === 'skipped' ? 'cancelled' : it.status === 'running' ? 'running' : 'pending';
+      return [
+        rdEsc(it.name || k), rdStatus(st), rdEsc(it.mode || ''),
+        it.bytes_uploaded ? rdBytes(it.bytes_uploaded) : '-',
+        it.error ? `<span style="color:var(--danger-text);">${rdEsc(it.error.split('\n')[0].slice(0, 140))}</span>` : rdEsc(it.note || ''),
+      ];
+    });
+    body += `<div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;margin-bottom:4px;">Items (${done}/${keys.length} done)</div>` +
+      rdTable(['Item', 'Status', 'Mode', 'Uploaded', 'Detail'], rows);
+  }
+  if (!body) body = '<p style="color:var(--text-muted);font-size:13px;">Starting…</p>';
+  return rdCard('Live progress', body);
 }
 
 function downloadRunDetails() {

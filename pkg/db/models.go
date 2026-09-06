@@ -192,7 +192,10 @@ type BackupRun struct {
 	LogTail string `json:"log_tail,omitempty" db:"log_tail"`
 	// Details is a type-specific JSON blob (archives / databases / PVCs) for the run
 	// detail page; carries a top-level "type" discriminator. Empty for older runs.
-	Details   json.RawMessage `json:"details,omitempty" db:"details"`
+	Details json.RawMessage `json:"details,omitempty" db:"details"`
+	// Progress is the live state of a running backup (phase + per-item statuses),
+	// updated mid-run and polled by the detail page.
+	Progress  json.RawMessage `json:"progress,omitempty" db:"progress"`
 	CreatedAt time.Time       `json:"created_at" db:"created_at"`
 
 	// Joined fields

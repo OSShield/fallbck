@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"time"
 
 	"github.com/osshield/fallbck/pkg/agent/backup"
 	dbrun "github.com/osshield/fallbck/pkg/agent/dbbackup"
@@ -40,6 +41,8 @@ type DBAgentActivities struct {
 	Version  string
 	// LogTail returns the agent's recent log output, attached to failures
 	LogTail func() string
+	// ReportProgress posts live phase updates to the server (best-effort)
+	ReportProgress ProgressFunc
 }
 
 // NewDBAgentActivities creates a new DBAgentActivities instance
@@ -68,6 +71,9 @@ func (a *DBAgentActivities) ExecuteDatabaseBackup(ctx context.Context, session *
 	pt := newPhaseTracker()
 	stopHeartbeats := startHeartbeats(ctx, pt)
 	defer stopHeartbeats()
+	reportPh := func() { reportPhase(a.ReportProgress, ctx, session.Ticket, session.BackupRunID, pt.Current()) }
+	stopProgress := startProgress(ctx, pt, 5*time.Second, func(string) { reportPh() })
+	defer stopProgress()
 
 	failed := func(err error) (*temporal.BackupExecutionResult, error) {
 		return &temporal.BackupExecutionResult{Status: db.RunStatusFailed, ErrorMessage: err.Error()},
@@ -133,6 +139,7 @@ func (a *DBAgentActivities) ExecuteDatabaseBackup(ctx context.Context, session *
 		AgentVersion: a.Version,
 		Progress: func(p dbrun.Progress) {
 			pt.Set(p.Describe())
+			reportPh()
 		},
 	})
 	if err != nil {
