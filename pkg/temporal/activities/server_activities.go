@@ -197,6 +197,7 @@ func (s *ServerActivities) FinalizeBackupRun(ctx context.Context, session *tempo
 		ErrorMessage:  result.ErrorMessage,
 		PBSSnapshotID: result.SnapshotID,
 		LogTail:       truncateTail(result.LogTail, 16*1024),
+		Details:       result.Details,
 	}
 
 	if err := s.DB.UpdateRun(ctx, run); err != nil {

@@ -189,8 +189,11 @@ type BackupRun struct {
 	ErrorMessage  string     `json:"error_message" db:"error_message"`
 	PBSSnapshotID string     `json:"pbs_snapshot_id" db:"pbs_snapshot_id"`
 	// LogTail is the agent's recent log output captured when the run failed
-	LogTail   string    `json:"log_tail,omitempty" db:"log_tail"`
-	CreatedAt time.Time `json:"created_at" db:"created_at"`
+	LogTail string `json:"log_tail,omitempty" db:"log_tail"`
+	// Details is a type-specific JSON blob (archives / databases / PVCs) for the run
+	// detail page; carries a top-level "type" discriminator. Empty for older runs.
+	Details   json.RawMessage `json:"details,omitempty" db:"details"`
+	CreatedAt time.Time       `json:"created_at" db:"created_at"`
 
 	// Joined fields
 	JobName   string `json:"job_name,omitempty"`

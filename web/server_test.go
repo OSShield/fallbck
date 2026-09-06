@@ -35,7 +35,7 @@ func TestUIRenderRoutes(t *testing.T) {
 		{"/kubernetes", http.StatusOK, "Kubernetes Backup Jobs"},
 		{"/kubernetes", http.StatusOK, `name="k8s_volumes_mode"`},
 		{"/runs", http.StatusOK, "Duration"},
-		{"/runs", http.StatusOK, "modal-run-details"},
+		{"/runs/00000000-0000-0000-0000-000000000000", http.StatusOK, "run-detail-root"},
 		{"/agents", http.StatusOK, "Database agent"},
 		{"/runs", http.StatusOK, "Backup Executions"},
 		{"/tokens", http.StatusOK, "Enrollment Tokens"},

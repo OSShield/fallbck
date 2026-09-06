@@ -540,19 +540,6 @@ async function toggleAgentDebug(agentId, enable) {
   }
 }
 
-async function showRunDetails(runId) {
-  try {
-    const resp = await apiFetch(`/api/v1/runs/${runId}`);
-    if (!resp.ok) throw new Error('Failed to load run');
-    const run = await resp.json();
-    document.getElementById('run-details-status').innerText = run.status || '';
-    document.getElementById('run-details-error').innerText = run.error_message || '(no error message)';
-    document.getElementById('run-details-log').innerText = run.log_tail || '(no agent log captured for this run)';
-    openModal('modal-run-details');
-  } catch (err) {
-    showToast(err.message, 'error');
-  }
-}
 
 async function revokeToken(tokenId) {
   if (!confirm('Invalidate this enrollment token? Agents can no longer enroll with it.')) return;
@@ -597,4 +584,227 @@ async function deleteResource(type, id) {
   } catch (err) {
     showToast(err.message, 'error');
   }
+}
+
+// ===== Run detail page =========================================================
+
+let _runDetail = null;
+
+function rdBytes(n) {
+  if (n === undefined || n === null) return '-';
+  n = Number(n);
+  if (!isFinite(n)) return '-';
+  const u = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB'];
+  let i = 0;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return (i === 0 ? n : n.toFixed(2)) + ' ' + u[i];
+}
+function rdEsc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function rdStatus(s) {
+  const m = {
+    completed: ['badge-success', 'Completed'], running: ['badge-warning', 'Running'],
+    failed: ['badge-danger', 'Failed'], cancelling: ['badge-warning', 'Cancelling'],
+    cancelled: ['badge-neutral', 'Cancelled'], pending: ['badge-neutral', 'Pending'],
+  };
+  const [cls, label] = m[s] || ['badge-neutral', s || 'Unknown'];
+  return `<span class="badge ${cls}"><span class="badge-dot"></span> ${rdEsc(label)}</span>`;
+}
+function rdCard(title, body, opts) {
+  const o = opts || {};
+  return `<div class="card" style="margin-bottom: 16px;">
+    <div class="card-header"><h3 class="card-title">${rdEsc(title)}</h3>${o.actions || ''}</div>
+    <div style="padding: ${o.pad || '16px'};">${body}</div></div>`;
+}
+function rdKV(pairs) {
+  const cells = pairs.filter(p => p && p[1] !== undefined && p[1] !== null && p[1] !== '')
+    .map(([k, v]) => `<div><div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.03em;">${rdEsc(k)}</div><div style="font-size:14px;margin-top:2px;">${v}</div></div>`).join('');
+  return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;">${cells}</div>`;
+}
+function rdTable(headers, rows) {
+  if (!rows.length) return '<p style="color:var(--text-muted);font-size:13px;">None.</p>';
+  const th = headers.map(h => `<th>${rdEsc(h)}</th>`).join('');
+  const tr = rows.map(r => `<tr>${r.map(c => `<td style="font-size:13px;">${c}</td>`).join('')}</tr>`).join('');
+  return `<div class="table-container"><table><thead><tr>${th}</tr></thead><tbody>${tr}</tbody></table></div>`;
+}
+function rdChips(items) {
+  if (!items || !items.length) return '<span style="color:var(--text-muted);font-size:13px;">None.</span>';
+  return items.map(i => `<code style="display:inline-block;margin:2px 4px 2px 0;font-size:12px;">${rdEsc(i)}</code>`).join('');
+}
+function rdPre(text) {
+  return `<pre style="background:var(--bg-subtle);padding:12px;border-radius:var(--radius-sm);font-size:12px;white-space:pre-wrap;word-break:break-word;max-height:420px;overflow:auto;margin:0;">${rdEsc(text)}</pre>`;
+}
+function rdMono(s) { return `<code style="font-family:var(--font-mono);font-size:12px;">${rdEsc(s)}</code>`; }
+function rdShort(h) { return h ? String(h).slice(0, 12) : ''; }
+
+async function loadRunDetail(runId) {
+  const root = document.getElementById('run-detail-root');
+  try {
+    const resp = await apiFetch(`/api/v1/runs/${runId}`);
+    if (!resp.ok) throw new Error(resp.status === 404 ? 'Run not found' : 'Failed to load run');
+    const run = await resp.json();
+    _runDetail = run;
+    root.innerHTML = renderRun(run);
+  } catch (err) {
+    root.innerHTML = rdCard('Error', `<p style="color:var(--danger-text);">${rdEsc(err.message)}</p>`);
+  }
+}
+
+function renderRun(run) {
+  let duration = '-';
+  if (run.start_time) {
+    const end = run.end_time ? new Date(run.end_time) : new Date();
+    const secs = Math.max(0, Math.round((end - new Date(run.start_time)) / 1000));
+    duration = secs >= 3600 ? `${Math.floor(secs / 3600)}h ${Math.floor(secs % 3600 / 60)}m ${secs % 60}s`
+      : secs >= 60 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`;
+  }
+  const d = run.details || {};
+  const type = d.type || 'filesystem';
+  const typeLabel = { filesystem: 'Filesystem', database: 'Database', kubernetes: 'Kubernetes' }[type] || type;
+
+  let html = rdCard(run.job_name || 'Backup run', rdKV([
+    ['Status', rdStatus(run.status)],
+    ['Type', rdEsc(typeLabel)],
+    ['Agent', rdEsc(run.agent_name || '-')],
+    ['Started', run.start_time ? rdEsc(new Date(run.start_time).toLocaleString()) : '-'],
+    ['Duration', rdEsc(duration)],
+    ['PBS snapshot', run.pbs_snapshot_id ? rdMono(run.pbs_snapshot_id) : '-'],
+  ]));
+
+  html += rdCard('Transfer', rdKV([
+    ['Protected data', rdBytes(run.bytes_scanned)],
+    ['Uploaded to PBS', rdBytes(run.bytes_uploaded)],
+    ['Deduplication', run.dedup_ratio ? run.dedup_ratio.toFixed(2) + 'x' : '-'],
+    ['Chunks', run.chunk_count != null ? String(run.chunk_count) : '-'],
+  ]));
+
+  if (run.error_message) {
+    html += rdCard('Error', rdPre(run.error_message));
+  }
+
+  if (type === 'database') html += renderDBDetail(d.manifest || {});
+  else if (type === 'kubernetes') html += renderK8sDetail(d.manifest || {});
+  else if (d.archives || d.paths) html += renderFsDetail(d);
+
+  if (run.log_tail) html += rdCard('Agent log (captured at the run)', rdPre(run.log_tail));
+
+  if (run.details && Object.keys(run.details).length) {
+    html += `<details style="margin-bottom:16px;"><summary style="cursor:pointer;padding:12px 16px;background:var(--bg-subtle);border-radius:var(--radius-sm);font-weight:600;font-size:13px;">Raw details JSON</summary>${rdPre(JSON.stringify(run.details, null, 2))}</details>`;
+  }
+  return html;
+}
+
+function renderFsDetail(d) {
+  let body = '';
+  body += `<div style="margin-bottom:12px;"><div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">Paths</div>${rdChips(d.paths)}</div>`;
+  if (d.exclude_paths && d.exclude_paths.length)
+    body += `<div style="margin-bottom:12px;"><div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">Exclude patterns</div>${rdChips(d.exclude_paths)}</div>`;
+  const rows = (d.archives || []).map(a => [
+    rdMono(a.name), rdEsc(a.kind || ''), rdBytes(a.size_bytes),
+    String(a.chunks || 0), String(a.new_chunks || 0), String(a.reused_chunks || 0),
+    a.dedup ? a.dedup.toFixed(2) + 'x' : '-',
+  ]);
+  body += `<div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;margin-bottom:4px;">Archives</div>` +
+    rdTable(['Archive', 'Kind', 'Size', 'Chunks', 'New', 'Reused', 'Dedup'], rows);
+  if (d.warnings && d.warnings.length)
+    body += `<div style="margin-top:12px;font-size:11px;color:var(--text-muted);text-transform:uppercase;">Warnings</div>` +
+      rdTable(['Path', 'Message'], d.warnings.map(w => [rdMono(w.path || ''), rdEsc(w.message)]));
+  return rdCard('Filesystem archives (format ' + rdEsc(d.format || '-') + ')', body);
+}
+
+function renderDBDetail(m) {
+  const srv = m.server || {};
+  let html = rdCard('Database server', rdKV([
+    ['Engine', rdEsc(m.engine)], ['Version', rdEsc(srv.version || '-')],
+    ['Host', rdEsc((srv.host || '') + (srv.port ? ':' + srv.port : ''))],
+    ['Flavor', rdEsc(srv.flavor || '')], ['Replica', srv.is_replica ? 'yes' : ''],
+  ]));
+  const dbRows = (m.databases || []).map(db => [
+    rdEsc(db.name), rdEsc(db.format || ''), rdBytes(db.size_bytes),
+    db.sha256 ? rdMono(rdShort(db.sha256)) : '-', db.duration_ms ? (db.duration_ms / 1000).toFixed(1) + 's' : '-',
+  ]);
+  html += rdCard('Databases', rdTable(['Database', 'Format', 'Size', 'SHA256', 'Duration'], dbRows));
+
+  if (m.postgres && m.postgres.basebackup) {
+    const b = m.postgres.basebackup;
+    html += rdCard('PostgreSQL basebackup', rdKV([
+      ['Mode', rdEsc(m.postgres.mode)], ['Timeline', b.timeline], ['Compression', rdEsc(b.compression)],
+      ['WAL start', rdMono(b.wal_start_lsn || '')], ['WAL end', rdMono(b.wal_end_lsn || '')],
+      ['WAL files', rdEsc([b.wal_start_file, b.wal_end_file].filter(Boolean).join(' … '))],
+    ]));
+  }
+  if (m.mysql && m.mysql.binlog) {
+    const bl = m.mysql.binlog;
+    html += rdCard('MySQL binary logs', rdKV([
+      ['Enabled', bl.enabled ? 'yes' : 'no'], ['Position', rdEsc((bl.file || '') + ':' + (bl.position ?? ''))],
+      ['GTID', rdMono(bl.gtid || '')], ['Covers from', bl.covers_from ? rdMono(bl.covers_from.file + ':' + bl.covers_from.position) : ''],
+      ['Covers to', bl.covers_to ? rdMono(bl.covers_to.file + ':' + bl.covers_to.position) : ''],
+      ['Binlog files', bl.files ? String(bl.files.length) : '0'],
+      ['Chain gap', bl.chain_gap ? 'yes' : ''], ['Chain reset', bl.chain_reset ? 'yes' : ''],
+    ]));
+  }
+  if (m.mongodb) {
+    html += rdCard('MongoDB', rdKV([
+      ['Oplog', m.mongodb.oplog ? 'captured' : 'no'], ['Read preference', rdEsc(m.mongodb.read_preference || '')],
+      ['Databases', (m.mongodb.databases || []).join(', ')], ['Per-database', m.mongodb.per_database ? 'yes' : 'no'],
+    ]));
+  }
+  if ((m.warnings && m.warnings.length) || (m.notes && m.notes.length)) {
+    let b = '';
+    if (m.notes && m.notes.length) b += '<div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">Notes</div><ul style="margin:4px 0 12px 18px;font-size:13px;">' + m.notes.map(n => `<li>${rdEsc(n)}</li>`).join('') + '</ul>';
+    if (m.warnings && m.warnings.length) b += '<div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">Warnings</div><ul style="margin:4px 0 0 18px;font-size:13px;">' + m.warnings.map(n => `<li>${rdEsc(n)}</li>`).join('') + '</ul>';
+    html += rdCard('Notes & warnings', b);
+  }
+  if (m.restore && m.restore.commands && m.restore.commands.length)
+    html += rdCard('Restore', (m.restore.summary ? `<p style="font-size:13px;margin-bottom:8px;">${rdEsc(m.restore.summary)}</p>` : '') + rdPre(m.restore.commands.join('\n')));
+  return html;
+}
+
+function renderK8sDetail(m) {
+  const k = m.kubernetes || {};
+  const res = m.resources || {};
+  let html = rdCard('Cluster', rdKV([
+    ['Cluster', rdEsc((m.generator || {}).cluster || '')], ['Server version', rdEsc(k.server_version || '')],
+    ['CSI snapshots', k.snapshot_crd ? 'available' : 'not available'],
+    ['Secrets included', res.secrets_included ? 'yes' : 'no'],
+  ]));
+
+  const vols = m.volumes || [];
+  const vrows = vols.map(v => [
+    rdEsc(v.namespace + '/' + v.pvc), rdEsc(v.mode || ''), rdEsc(v.consistency || ''),
+    rdStatus(v.status === 'completed' ? 'completed' : v.status === 'skipped' ? 'cancelled' : 'failed'),
+    rdBytes(v.bytes_uploaded), v.snapshot_id ? rdMono(rdShort(v.snapshot_id.split('/').pop())) : '-',
+    v.error ? `<span style="color:var(--danger-text);">${rdEsc(v.error.split('\n')[0].slice(0, 160))}</span>` : '',
+  ]);
+  const okCount = vols.filter(v => v.status === 'completed').length;
+  html += rdCard(`Persistent volumes (${okCount}/${vols.length} ok)`,
+    rdTable(['PVC', 'Mode', 'Consistency', 'Status', 'Uploaded', 'Snapshot', 'Error'], vrows));
+
+  const counts = res.counts || {};
+  const crows = Object.keys(counts).sort().map(k => [rdMono(k), String(counts[k])]);
+  let resBody = `<div style="margin-bottom:12px;"><div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">Namespaces</div>${rdChips(res.namespaces)}</div>`;
+  resBody += `<div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;margin-bottom:4px;">Resource counts</div>` + rdTable(['Group/Resource', 'Count'], crows);
+  if (res.excluded && res.excluded.length) resBody += `<div style="margin-top:12px;font-size:11px;color:var(--text-muted);text-transform:uppercase;">Excluded types</div>${rdChips(res.excluded)}`;
+  if (res.failed_groups && res.failed_groups.length) resBody += `<div style="margin-top:12px;font-size:11px;color:var(--danger-text);text-transform:uppercase;">Discovery-failed API groups</div>${rdChips(res.failed_groups)}`;
+  html += rdCard('API resources', resBody);
+
+  const warns = (m.warnings || []).concat(res.warnings || []);
+  if (warns.length) html += rdCard('Warnings', '<ul style="margin:0 0 0 18px;font-size:13px;">' + warns.map(w => `<li>${rdEsc(w)}</li>`).join('') + '</ul>');
+  if (m.restore && m.restore.commands && m.restore.commands.length)
+    html += rdCard('Restore', (m.restore.summary ? `<p style="font-size:13px;margin-bottom:8px;">${rdEsc(m.restore.summary)}</p>` : '') + rdPre(m.restore.commands.join('\n')));
+  return html;
+}
+
+function downloadRunDetails() {
+  if (!_runDetail) return;
+  const blob = new Blob([JSON.stringify(_runDetail, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `run-${_runDetail.id || 'details'}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }

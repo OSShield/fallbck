@@ -79,6 +79,9 @@ func TestRunFormats(t *testing.T) {
 			if !strings.Contains(joined, "opening PBS session") || !strings.Contains(joined, "uploading root.") || !strings.Contains(joined, "finalizing snapshot") {
 				t.Errorf("phases not reported: %v", phases)
 			}
+			if len(res.Details) == 0 || !strings.Contains(string(res.Details), `"type":"filesystem"`) || !strings.Contains(string(res.Details), `"archives"`) {
+				t.Errorf("run details missing filesystem archives: %s", res.Details)
+			}
 			if fake.Finished() != 1 {
 				t.Errorf("finished sessions = %d", fake.Finished())
 			}

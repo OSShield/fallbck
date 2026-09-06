@@ -10,6 +10,7 @@ import (
 	"time"
 
 	dbspec "github.com/osshield/fallbck/pkg/dbbackup"
+	"github.com/osshield/fallbck/pkg/rundetail"
 	"github.com/osshield/fallbck/pkg/temporal"
 	"github.com/osshield/gopbs"
 )
@@ -236,6 +237,7 @@ func Run(ctx context.Context, o RunOptions) (*temporal.BackupExecutionResult, er
 	if err != nil {
 		return nil, err
 	}
+	result.Details = rundetail.WrapManifest(rundetail.TypeDatabase, data)
 
 	// State (only after a successful upload: a failed run must not advance the chain)
 	record := res.State

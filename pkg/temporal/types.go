@@ -1,6 +1,7 @@
 package temporal
 
 import (
+	"encoding/json"
 	"github.com/osshield/fallbck/pkg/dbbackup"
 	"github.com/osshield/fallbck/pkg/k8sbackup"
 	"time"
@@ -64,6 +65,9 @@ type BackupExecutionResult struct {
 	Duration      time.Duration `json:"duration"`
 	// LogTail carries the agent's recent log lines when a run fails (shown in the Runs UI)
 	LogTail string `json:"log_tail,omitempty"`
+	// Details is a type-specific JSON blob (archives / databases / PVCs) persisted on
+	// the run for the detail page; carries a top-level "type" discriminator.
+	Details json.RawMessage `json:"details,omitempty"`
 }
 
 // BackupFailureDetails travel as application-error details from a failed agent

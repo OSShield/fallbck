@@ -491,17 +491,21 @@ func (d *DB) CreateRun(ctx context.Context, run *BackupRun) error {
 }
 
 func (d *DB) UpdateRun(ctx context.Context, run *BackupRun) error {
+	details := run.Details
+	if len(details) == 0 {
+		details = json.RawMessage("{}")
+	}
 	query := `
 		UPDATE backup_runs
 		SET status = $1, start_time = $2, end_time = $3, bytes_scanned = $4,
 		    bytes_uploaded = $5, dedup_ratio = $6, chunk_count = $7,
-		    error_message = $8, pbs_snapshot_id = $9, log_tail = $10
-		WHERE id = $11
+		    error_message = $8, pbs_snapshot_id = $9, log_tail = $10, details = $11
+		WHERE id = $12
 	`
 	_, err := d.Pool.Exec(ctx, query,
 		run.Status, run.StartTime, run.EndTime, run.BytesScanned,
 		run.BytesUploaded, run.DedupRatio, run.ChunkCount,
-		run.ErrorMessage, run.PBSSnapshotID, run.LogTail, run.ID,
+		run.ErrorMessage, run.PBSSnapshotID, run.LogTail, []byte(details), run.ID,
 	)
 	return err
 }
