@@ -341,6 +341,38 @@ function updateDBTarget(form = jobForm()) {
   const label = form.querySelector('#db-host-label');
   const mssql = form.elements['db_engine'] && form.elements['db_engine'].value === 'mssql';
   if (label) label.innerText = k8s ? 'Host (optional when a Service is given)' : mssql ? 'Host (host\\instance for a named instance)' : 'Host (or unix socket path)';
+  updateDBProfiles(form);
+}
+
+// updateDBProfiles fills the credential-profile datalist with the names the selected
+// agent reported in its inventory (names, engine, user and host only: the agent
+// never sends passwords), narrowed to the chosen engine. The form's agent select
+// carries them in data-db-profiles ("name:engine,..."); a fixed-agent form
+// (onboarding) sets form.dataset.dbProfiles instead.
+function updateDBProfiles(form = jobForm()) {
+  const list = form.querySelector('#db-profile-list');
+  const hint = form.querySelector('#db-profile-hint');
+  if (!list) return;
+  const sel = form.elements['agent_id'];
+  let raw = form.dataset.dbProfiles || '';
+  let host = form.dataset.hostname || '';
+  let chosen = true;
+  if (sel && sel.tagName === 'SELECT') {
+    const opt = sel.options[sel.selectedIndex];
+    chosen = !!(opt && opt.value);
+    raw = chosen ? (opt.dataset.dbProfiles || '') : '';
+    host = chosen ? (opt.dataset.hostname || '') : '';
+  }
+  const engine = form.elements['db_engine'] ? form.elements['db_engine'].value : '';
+  const all = raw.split(',').filter(Boolean).map(p => { const i = p.indexOf(':'); return i < 0 ? { name: p, engine: '' } : { name: p.slice(0, i), engine: p.slice(i + 1) }; });
+  const match = all.filter(p => !engine || !p.engine || p.engine === engine);
+  list.innerHTML = '';
+  match.forEach(p => { const o = document.createElement('option'); o.value = p.name; list.appendChild(o); });
+  if (!hint) return;
+  if (!chosen) hint.innerText = 'Choose an agent to see the profiles configured on it.';
+  else if (match.length) hint.innerText = `Profiles on ${host || 'the agent'} for ${engine || 'this engine'}: ${match.map(p => p.name).join(', ')}`;
+  else if (all.length) hint.innerText = `${host || 'The agent'} has no ${engine} profile (${all.map(p => p.name + ' [' + p.engine + ']').join(', ')}). Create one there: fallbck-agent database profile create --name <name> --engine ${engine} ...`;
+  else hint.innerText = `No profiles reported by ${host || 'the agent'} yet. Create one on the host: fallbck-agent database profile create --name <name> --engine ${engine || '<engine>'} --user <user> --ask-password`;
 }
 
 function setDBEngine(engine, form = jobForm()) {
@@ -358,6 +390,7 @@ function setDBEngine(engine, form = jobForm()) {
   const typeEl = form.elements['job_type'];
   filterJobAgents(form, typeEl ? typeEl.value : (form.dataset.jobType || 'filesystem'));
   updateDBTarget(form);
+  updateDBProfiles(form);
 }
 
 // loadJobIntoForm fills every field of a job form from an API job record
@@ -744,6 +777,47 @@ async function submitK8sJobForm(e) {
     setTimeout(() => window.location.reload(), 800);
   } catch (err) {
     showToast(err.message, 'error');
+  }
+}
+
+// Agent status page: both actions reach the agent through a Temporal activity on
+// its task queue, so they need it online; the API answers 504 when it is not
+async function refreshAgentInventory(agentId) {
+  const btn = document.getElementById('agent-refresh-btn');
+  if (btn) { btn.disabled = true; btn.innerText = 'Refreshing…'; }
+  try {
+    const resp = await apiFetch(`/api/v1/agents/${agentId}/inventory`, { method: 'POST' });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.error || `Inventory refresh failed (${resp.status})`);
+    }
+    showToast('Inventory refreshed', 'success');
+    setTimeout(() => window.location.reload(), 500);
+  } catch (err) {
+    showToast(err.message, 'error');
+    if (btn) { btn.disabled = false; btn.innerText = 'Refresh inventory'; }
+  }
+}
+
+async function loadAgentLogs(agentId) {
+  const btn = document.getElementById('agent-logs-btn');
+  const card = document.getElementById('agent-logs-card');
+  const pre = document.getElementById('agent-logs-pre');
+  const meta = document.getElementById('agent-logs-meta');
+  if (btn) { btn.disabled = true; btn.innerText = 'Fetching…'; }
+  try {
+    const resp = await apiFetch(`/api/v1/agents/${agentId}/logs`, { method: 'POST' });
+    const body = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(body.error || `Log fetch failed (${resp.status})`);
+    const text = (body.lines || '').replace(/\s+$/, '');
+    const count = text ? text.split('\n').length : 0;
+    if (pre) pre.innerText = text || '(the agent has no buffered log lines)';
+    if (meta) meta.innerText = `${count} lines · level ${body.level || '?'} · ${body.at ? new Date(body.at).toLocaleString() : ''}`;
+    if (card) { card.hidden = false; card.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerText = 'View logs'; }
   }
 }
 

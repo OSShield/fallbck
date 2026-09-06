@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"github.com/osshield/fallbck/pkg/dbbackup"
 	"github.com/osshield/fallbck/pkg/dockerbackup"
+	"github.com/osshield/fallbck/pkg/inventory"
 	"github.com/osshield/fallbck/pkg/k8sbackup"
 	"github.com/osshield/fallbck/pkg/pvebackup"
 	"time"
@@ -97,3 +98,19 @@ type BackupHeartbeatProgress struct {
 	BytesUploaded int64   `json:"bytes_uploaded"`
 	Percent       float64 `json:"percent"`
 }
+
+// AgentOpsRequest names the agent (its task queue) and the operator action the
+// AgentOpsWorkflow runs there: "logs" or "inventory"
+type AgentOpsRequest struct {
+	AgentTaskQueue string `json:"agent_task_queue"`
+	Action         string `json:"action"`
+}
+
+// AgentOpsResult carries whichever the action produced
+type AgentOpsResult struct {
+	Logs      *inventory.LogsResult `json:"logs,omitempty"`
+	Inventory *inventory.Detail     `json:"inventory,omitempty"`
+}
+
+// AgentOpsWorkflowName is the workflow type the API starts by name
+const AgentOpsWorkflowName = "AgentOpsWorkflow"

@@ -82,12 +82,12 @@ func (d *DB) UpsertAgent(ctx context.Context, agent *Agent) error {
 
 func (d *DB) GetAgentByID(ctx context.Context, id uuid.UUID) (*Agent, error) {
 	query := `
-		SELECT id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, debug_logging, pve_host, docker_host, db_tools, db_engines
+		SELECT id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, debug_logging, pve_host, docker_host, db_tools, db_engines, inventory, inventory_at, inventory_detail, inventory_detail_at
 		FROM agents WHERE id = $1
 	`
 	row := d.Pool.QueryRow(ctx, query, id)
 	var a Agent
-	err := row.Scan(&a.ID, &a.Hostname, &a.IPAddress, &a.OS, &a.Arch, &a.Version, &a.TaskQueue, &a.Status, &a.LastSeenAt, &a.CreatedAt, &a.UpdatedAt, &a.AgentType, &a.DebugLogging, &a.PVEHost, &a.DockerHost, &a.DBTools, &a.DBEngines)
+	err := row.Scan(&a.ID, &a.Hostname, &a.IPAddress, &a.OS, &a.Arch, &a.Version, &a.TaskQueue, &a.Status, &a.LastSeenAt, &a.CreatedAt, &a.UpdatedAt, &a.AgentType, &a.DebugLogging, &a.PVEHost, &a.DockerHost, &a.DBTools, &a.DBEngines, &a.Inventory, &a.InventoryAt, &a.InventoryDetail, &a.InventoryDetailAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -99,7 +99,7 @@ func (d *DB) GetAgentByID(ctx context.Context, id uuid.UUID) (*Agent, error) {
 
 func (d *DB) ListAgents(ctx context.Context) ([]*Agent, error) {
 	query := `
-		SELECT id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, debug_logging, pve_host, docker_host, db_tools, db_engines
+		SELECT id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, debug_logging, pve_host, docker_host, db_tools, db_engines, inventory, inventory_at, inventory_detail, inventory_detail_at
 		FROM agents ORDER BY hostname ASC
 	`
 	rows, err := d.Pool.Query(ctx, query)
@@ -111,7 +111,7 @@ func (d *DB) ListAgents(ctx context.Context) ([]*Agent, error) {
 	var agents []*Agent
 	for rows.Next() {
 		var a Agent
-		if err := rows.Scan(&a.ID, &a.Hostname, &a.IPAddress, &a.OS, &a.Arch, &a.Version, &a.TaskQueue, &a.Status, &a.LastSeenAt, &a.CreatedAt, &a.UpdatedAt, &a.AgentType, &a.DebugLogging, &a.PVEHost, &a.DockerHost, &a.DBTools, &a.DBEngines); err != nil {
+		if err := rows.Scan(&a.ID, &a.Hostname, &a.IPAddress, &a.OS, &a.Arch, &a.Version, &a.TaskQueue, &a.Status, &a.LastSeenAt, &a.CreatedAt, &a.UpdatedAt, &a.AgentType, &a.DebugLogging, &a.PVEHost, &a.DockerHost, &a.DBTools, &a.DBEngines, &a.Inventory, &a.InventoryAt, &a.InventoryDetail, &a.InventoryDetailAt); err != nil {
 			return nil, err
 		}
 		agents = append(agents, &a)
@@ -123,9 +123,16 @@ func (d *DB) ListAgents(ctx context.Context) ([]*Agent, error) {
 // debug-logging setting for the response.
 func (d *DB) UpdateAgentHeartbeat(ctx context.Context, id uuid.UUID, status AgentStatus, caps AgentCapabilities) (bool, error) {
 	now := time.Now().UTC()
-	query := `UPDATE agents SET last_seen_at = $1, status = $2, updated_at = $1, pve_host = $4, docker_host = $5, db_tools = $6, db_engines = $7 WHERE id = $3 RETURNING debug_logging`
+	// An inventory summary in the heartbeat replaces the stored one; nil keeps it
+	query := `UPDATE agents SET last_seen_at = $1, status = $2, updated_at = $1, pve_host = $4, docker_host = $5, db_tools = $6, db_engines = $7,
+		inventory = COALESCE($8, inventory), inventory_at = CASE WHEN $8::jsonb IS NULL THEN inventory_at ELSE $1 END
+		WHERE id = $3 RETURNING debug_logging`
 	var debug bool
-	if err := d.Pool.QueryRow(ctx, query, now, status, id, caps.PVEHost, caps.DockerHost, caps.DBTools, enginesOrEmpty(caps.DBEngines)).Scan(&debug); err != nil {
+	var inv []byte
+	if len(caps.Inventory) > 0 {
+		inv = caps.Inventory
+	}
+	if err := d.Pool.QueryRow(ctx, query, now, status, id, caps.PVEHost, caps.DockerHost, caps.DBTools, enginesOrEmpty(caps.DBEngines), inv).Scan(&debug); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return false, ErrNotFound
 		}
@@ -707,6 +714,55 @@ func (d *DB) ListRuns(ctx context.Context, limit int) ([]*BackupRun, error) {
 		runs = append(runs, &r)
 	}
 	return runs, rows.Err()
+}
+
+// ListRunsByAgent is ListRuns restricted to one agent (the agent status page)
+func (d *DB) ListRunsByAgent(ctx context.Context, agentID uuid.UUID, limit int) ([]*BackupRun, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := d.Pool.Query(ctx, `
+		SELECT r.id, r.job_id, r.agent_id, r.target_id, r.workflow_id, r.run_id, r.status,
+		       r.start_time, r.end_time, r.bytes_scanned, r.bytes_uploaded, r.dedup_ratio,
+		       r.chunk_count, r.error_message, r.pbs_snapshot_id, r.log_tail, r.created_at,
+		       j.name as job_name, a.hostname as agent_name
+		FROM backup_runs r
+		JOIN backup_jobs j ON r.job_id = j.id
+		JOIN agents a ON r.agent_id = a.id
+		WHERE r.agent_id = $1
+		ORDER BY r.created_at DESC
+		LIMIT $2`, agentID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var runs []*BackupRun
+	for rows.Next() {
+		var r BackupRun
+		if err := rows.Scan(
+			&r.ID, &r.JobID, &r.AgentID, &r.TargetID, &r.WorkflowID, &r.RunID, &r.Status,
+			&r.StartTime, &r.EndTime, &r.BytesScanned, &r.BytesUploaded, &r.DedupRatio,
+			&r.ChunkCount, &r.ErrorMessage, &r.PBSSnapshotID, &r.LogTail, &r.CreatedAt,
+			&r.JobName, &r.AgentName,
+		); err != nil {
+			return nil, err
+		}
+		runs = append(runs, &r)
+	}
+	return runs, rows.Err()
+}
+
+// SetAgentInventoryDetail stores the on-demand full inventory
+func (d *DB) SetAgentInventoryDetail(ctx context.Context, id uuid.UUID, detail []byte) error {
+	tag, err := d.Pool.Exec(ctx, `UPDATE agents SET inventory_detail = $2, inventory_detail_at = NOW(), updated_at = NOW() WHERE id = $1`, id, detail)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // enginesOrEmpty keeps the NOT NULL text[] column happy: a nil slice would be sent as NULL

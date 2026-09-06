@@ -80,6 +80,8 @@ func (s *ServerAPI) RegisterRoutes(r chi.Router, admin, agent Middleware) {
 			r.Delete("/agents/{id}", s.HandleDeleteAgent)
 			r.Post("/agents/{id}/debug", s.HandleSetAgentDebug)
 			r.Post("/agents/{id}/merge", s.HandleMergeAgent)
+			r.Post("/agents/{id}/logs", s.HandleAgentLogs)
+			r.Post("/agents/{id}/inventory", s.HandleAgentInventory)
 
 			// Enrollment tokens
 			r.Post("/tokens", s.HandleCreateToken)
@@ -253,7 +255,7 @@ func (s *ServerAPI) HandleAgentHeartbeat(w http.ResponseWriter, r *http.Request)
 		status = db.AgentStatus(req.Status)
 	}
 
-	debug, err := s.DB.UpdateAgentHeartbeat(r.Context(), claims.AgentID, status, db.AgentCapabilities{PVEHost: req.PVEHost, DockerHost: req.DockerHost, DBTools: req.DBTools || len(req.DBEngines) > 0, DBEngines: db.CleanDBEngines(req.DBEngines)})
+	debug, err := s.DB.UpdateAgentHeartbeat(r.Context(), claims.AgentID, status, db.AgentCapabilities{PVEHost: req.PVEHost, DockerHost: req.DockerHost, DBTools: req.DBTools || len(req.DBEngines) > 0, DBEngines: db.CleanDBEngines(req.DBEngines), Inventory: req.Inventory})
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			s.writeError(w, http.StatusUnauthorized, "agent no longer exists")

@@ -757,6 +757,8 @@ function obRenderDetails() {
   const form = document.getElementById('job-form');
   const a = ob.agent || {};
   form.dataset.agentType = a.agent_type || 'filesystem';
+  form.dataset.hostname = a.hostname || '';
+  form.dataset.dbProfiles = ((a.inventory && a.inventory.profiles) || []).map(p => `${p.name}:${p.engine || ''}`).join(',');
   form.dataset.jobType = ob.backupType;
   form.elements['agent_id'].value = ob.agentId;
   form.elements['target_id'].value = ob.targetId;

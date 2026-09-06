@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+	"github.com/osshield/fallbck/pkg/agenthealth"
 	"github.com/osshield/fallbck/pkg/auth"
 	"github.com/osshield/fallbck/pkg/config"
 	"github.com/osshield/fallbck/pkg/db"
@@ -91,6 +93,7 @@ func (u *UIHandler) RegisterRoutes(r chi.Router) {
 		})
 		r.Get("/dashboard", u.HandleDashboard)
 		r.Get("/agents", u.HandleAgents)
+		r.Get("/agents/{id}", u.HandleAgentDetail)
 		r.Get("/onboarding", u.HandleOnboarding)
 		r.Get("/targets", u.HandleTargets)
 		r.Get("/jobs", u.HandleJobs)
@@ -269,8 +272,11 @@ func (u *UIHandler) HandleLogout(w http.ResponseWriter, r *http.Request) {
 
 func (u *UIHandler) renderPage(w http.ResponseWriter, r *http.Request, pageTemplate string, data map[string]interface{}) {
 	tmpl, err := template.New("layout").Funcs(template.FuncMap{
-		"formatBytes": formatBytes,
-		"formatTime":  formatTime,
+		"formatBytes":  formatBytes,
+		"formatUBytes": func(b uint64) string { return formatBytes(int64(b)) },
+		"formatTime":   formatTime,
+		"since":        since,
+		"uptime":       uptime,
 	}).ParseFS(Content, "templates/layout.html", "templates/partials/*.html", "templates/"+pageTemplate)
 
 	if err != nil {
@@ -306,8 +312,9 @@ func (u *UIHandler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 		runs, _ = u.DB.ListRuns(ctx, 10)
 	}
 	onlineCount := 0
+	now := time.Now()
 	for _, a := range agents {
-		if a.Status == db.AgentStatusOnline {
+		if agenthealth.EffectiveStatus(a, now) == db.AgentStatusOnline {
 			onlineCount++
 		}
 	}
@@ -343,11 +350,70 @@ func (u *UIHandler) HandleAgents(w http.ResponseWriter, r *http.Request) {
 	if u.DB != nil {
 		agents, _ = u.DB.ListAgents(ctx)
 	}
+	// The stored status only changes on heartbeats, so a vanished agent stays
+	// "online" in the row; the display uses the heartbeat age instead
+	now := time.Now()
+	stale := map[uuid.UUID]bool{}
+	for _, a := range agents {
+		stale[a.ID] = agenthealth.Stale(a, now)
+	}
 
 	u.renderPage(w, r, "agents.html", map[string]interface{}{
 		"Title":     "Agents",
 		"ActiveNav": "agents",
 		"Agents":    agents,
+		"Stale":     stale,
+	})
+}
+
+// HandleAgentDetail renders the status page of one agent: connectivity, alerts,
+// the inventory summary it sends with heartbeats (credential profile names, client
+// tools, disk space), the stored full inventory (type-specific resources), its jobs
+// and recent runs. The page's Refresh and Logs buttons reach the agent through the
+// API (Temporal activities on the agent's queue).
+func (u *UIHandler) HandleAgentDetail(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil || u.DB == nil {
+		http.NotFound(w, r)
+		return
+	}
+	agent, err := u.DB.GetAgentByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, "database error", http.StatusInternalServerError)
+		return
+	}
+	now := time.Now()
+	var jobs []*db.BackupJob
+	if all, err := u.DB.ListJobs(ctx); err == nil {
+		for _, j := range all {
+			if j.AgentID == agent.ID {
+				jobs = append(jobs, j)
+			}
+		}
+	}
+	last, _ := u.DB.LatestRunByJob(ctx)
+	for _, j := range jobs {
+		j.LastRun = last[j.ID]
+	}
+	runs, _ := u.DB.ListRunsByAgent(ctx, agent.ID, 20)
+	alerts := agenthealth.Evaluate(agenthealth.Input{Agent: agent, Jobs: jobs, LastRuns: last, ServerVersion: u.deps.Version, Now: now})
+
+	u.renderPage(w, r, "agent_detail.html", map[string]interface{}{
+		"Title":     agent.Hostname,
+		"ActiveNav": "agents",
+		"Agent":     agent,
+		"Status":    agenthealth.EffectiveStatus(agent, now),
+		"Stale":     agenthealth.Stale(agent, now),
+		"Alerts":    alerts,
+		"Summary":   agenthealth.Summary(agent),
+		"Detail":    agenthealth.Detail(agent),
+		"Jobs":      jobs,
+		"Runs":      runs,
 	})
 }
 
@@ -409,12 +475,13 @@ func (u *UIHandler) HandleJobs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	u.renderPage(w, r, "jobs.html", map[string]interface{}{
-		"Title":     "Backup Jobs",
-		"ActiveNav": "jobs",
-		"Timezone":  u.timezone(),
-		"Jobs":      jobs,
-		"Agents":    agents,
-		"Targets":   targets,
+		"Title":         "Backup Jobs",
+		"ActiveNav":     "jobs",
+		"Timezone":      u.timezone(),
+		"Jobs":          jobs,
+		"Agents":        agents,
+		"AgentProfiles": agentProfiles(agents),
+		"Targets":       targets,
 	})
 }
 
@@ -662,4 +729,51 @@ func formatTime(t interface{}) string {
 	default:
 		return fmt.Sprintf("%v", t)
 	}
+}
+
+// since renders how long ago t was ("3m ago"); "-" for nil
+func since(t *time.Time) string {
+	if t == nil || t.IsZero() {
+		return "-"
+	}
+	d := time.Since(*t)
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds ago", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 48*time.Hour:
+		return fmt.Sprintf("%dh %dm ago", int(d.Hours()), int(d.Minutes())%60)
+	}
+	return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+}
+
+// uptime renders seconds as "3d 4h" / "4h 12m" / "12m"
+func uptime(seconds int64) string {
+	d := time.Duration(seconds) * time.Second
+	switch {
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 48*time.Hour:
+		return fmt.Sprintf("%dh %dm", int(d.Hours()), int(d.Minutes())%60)
+	}
+	return fmt.Sprintf("%dd %dh", int(d.Hours()/24), int(d.Hours())%24)
+}
+
+// agentProfiles lists each agent's credential profiles as "name:engine,..." for the
+// job form's profile picker (data-db-profiles); the names are all the agent reports
+func agentProfiles(agents []*db.Agent) map[uuid.UUID]string {
+	out := map[uuid.UUID]string{}
+	for _, a := range agents {
+		s := agenthealth.Summary(a)
+		if s == nil {
+			continue
+		}
+		parts := make([]string, 0, len(s.Profiles))
+		for _, p := range s.Profiles {
+			parts = append(parts, p.Name+":"+p.Engine)
+		}
+		out[a.ID] = strings.Join(parts, ",")
+	}
+	return out
 }

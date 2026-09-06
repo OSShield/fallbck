@@ -80,6 +80,8 @@ type AgentCapabilities struct {
 	DockerHost bool
 	DBTools    bool
 	DBEngines  []string
+	// Inventory is the summary attached to this heartbeat (nil: none this time)
+	Inventory json.RawMessage
 }
 
 // CleanDBEngines keeps the known engine names, canonical and without duplicates
@@ -162,11 +164,17 @@ type Agent struct {
 	// (pg_dump, mysqldump/mariadb-dump, mongodump) and can therefore run database jobs
 	DBTools bool `json:"db_tools" db:"db_tools"`
 	// DBEngines are the database engines the agent reported (see CanRunDBEngine)
-	DBEngines  []string    `json:"db_engines" db:"db_engines"`
-	Status     AgentStatus `json:"status" db:"status"`
-	LastSeenAt *time.Time  `json:"last_seen_at" db:"last_seen_at"`
-	CreatedAt  time.Time   `json:"created_at" db:"created_at"`
-	UpdatedAt  time.Time   `json:"updated_at" db:"updated_at"`
+	DBEngines []string `json:"db_engines" db:"db_engines"`
+	// Inventory is the compact summary the agent attaches to a heartbeat every few
+	// minutes (inventory.Summary); InventoryDetail the on-demand full inventory
+	Inventory         json.RawMessage `json:"inventory,omitempty" db:"inventory"`
+	InventoryAt       *time.Time      `json:"inventory_at,omitempty" db:"inventory_at"`
+	InventoryDetail   json.RawMessage `json:"inventory_detail,omitempty" db:"inventory_detail"`
+	InventoryDetailAt *time.Time      `json:"inventory_detail_at,omitempty" db:"inventory_detail_at"`
+	Status            AgentStatus     `json:"status" db:"status"`
+	LastSeenAt        *time.Time      `json:"last_seen_at" db:"last_seen_at"`
+	CreatedAt         time.Time       `json:"created_at" db:"created_at"`
+	UpdatedAt         time.Time       `json:"updated_at" db:"updated_at"`
 }
 
 // EnrollmentToken represents a one-time or multi-use token for agent onboarding
