@@ -3,7 +3,7 @@
   <div>
     <p style="color: var(--text-muted); font-size: 14px;">Configure Proxmox Backup Server (PBS) datastores for deduplicated chunk storage.</p>
   </div>
-  <button class="btn btn-primary" onclick="openModal('modal-add-target')">
+  <button class="btn btn-primary" onclick="newTarget()">
     <svg style="width: 16px; height: 16px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
     Add PBS Target
   </button>
@@ -46,7 +46,8 @@
                 <span class="badge badge-warning">Skip Verify</span>
               {{end}}
             </td>
-            <td style="text-align: right;">
+            <td style="text-align: right; display: flex; justify-content: flex-end; gap: 8px;">
+              <button class="btn btn-secondary btn-sm" onclick="editTarget('{{.ID}}')">Edit</button>
               <button class="btn btn-secondary btn-sm" style="color: var(--danger-text);" onclick="deleteResource('targets', '{{.ID}}')">Delete</button>
             </td>
           </tr>
@@ -57,7 +58,7 @@
               <div class="empty-state">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/></svg>
                 <p>No PBS backup targets configured.</p>
-                <button class="btn btn-primary btn-sm" onclick="openModal('modal-add-target')">Add your first PBS Target</button>
+                <button class="btn btn-primary btn-sm" onclick="newTarget()">Add your first PBS Target</button>
               </div>
             </td>
           </tr>
@@ -71,10 +72,10 @@
 <div id="modal-add-target" class="modal-backdrop">
   <div class="modal-content">
     <div class="modal-header">
-      <h3>Add Proxmox Backup Server Target</h3>
+      <h3 id="target-modal-title">Add Proxmox Backup Server Target</h3>
       <button class="close-btn" onclick="closeModal('modal-add-target')">&times;</button>
     </div>
-    <form onsubmit="submitTargetForm(event)">
+    <form id="target-form" data-target-id="" onsubmit="submitTargetForm(event)">
       <div class="modal-body">
         <div class="form-group">
           <label>Target Display Name</label>
@@ -107,8 +108,8 @@
 
         <div class="form-group">
           <label>PBS API Token (user@realm!tokenid:secret — needs Datastore.Backup on the datastore)</label>
-          <input type="password" name="auth_token" class="form-control" placeholder="user@pbs!fallbck:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" required>
-          <span class="form-text">Encrypted on the server. Agents never receive this token directly.</span>
+          <input type="password" id="target-token" name="auth_token" class="form-control" placeholder="user@pbs!fallbck:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
+          <span class="form-text" id="target-token-hint">Encrypted on the server. Agents never receive this token directly.</span>
         </div>
 
         <div class="form-group">
@@ -123,7 +124,7 @@
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" onclick="closeModal('modal-add-target')">Cancel</button>
-        <button type="submit" class="btn btn-primary">Save Target</button>
+        <button type="submit" id="target-submit" class="btn btn-primary">Save Target</button>
       </div>
     </form>
   </div>

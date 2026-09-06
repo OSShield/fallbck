@@ -83,6 +83,11 @@ func TestAdminMiddlewareIsApplied(t *testing.T) {
 		t.Errorf("PUT job: expected admin middleware to apply, got %d", rr.Code)
 	}
 	rr = httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPut, "/api/v1/targets/00000000-0000-0000-0000-000000000000", nil))
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("PUT target: expected admin middleware to apply, got %d", rr.Code)
+	}
+	rr = httptest.NewRecorder()
 	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/api/v1/agents/heartbeat", nil))
 	if rr.Code != http.StatusUnauthorized {
 		t.Errorf("heartbeat: expected agent middleware to apply, got %d", rr.Code)

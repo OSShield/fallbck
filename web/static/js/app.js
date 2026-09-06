@@ -156,10 +156,55 @@ async function prepareAgentWizard(os = 'linux') {
 }
 
 // 6. Action Handlers for Target, Job, and Run Creation
+function targetForm() { return document.getElementById('target-form'); }
+
+function newTarget() {
+  const form = targetForm();
+  form.reset();
+  form.dataset.targetId = '';
+  document.getElementById('target-modal-title').innerText = 'Add Proxmox Backup Server Target';
+  document.getElementById('target-submit').innerText = 'Save Target';
+  const tok = document.getElementById('target-token');
+  tok.required = true;
+  tok.placeholder = 'user@pbs!fallbck:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx';
+  document.getElementById('target-token-hint').innerText = 'Encrypted on the server. Agents never receive this token directly.';
+  form.elements['tls_verify'].checked = true;
+  openModal('modal-add-target');
+}
+
+async function editTarget(id) {
+  try {
+    const resp = await apiFetch(`/api/v1/targets/${id}`);
+    if (!resp.ok) throw new Error('Failed to load target');
+    const t = await resp.json();
+    const form = targetForm();
+    form.reset();
+    form.dataset.targetId = t.id;
+    form.elements['name'].value = t.name || '';
+    form.elements['endpoint'].value = t.endpoint || '';
+    form.elements['datastore'].value = t.datastore || '';
+    form.elements['namespace'].value = t.namespace || '';
+    form.elements['fingerprint'].value = t.fingerprint || '';
+    form.elements['pxar_format'].value = t.pxar_format || 'v1';
+    form.elements['tls_verify'].checked = !!t.tls_verify;
+    const tok = document.getElementById('target-token');
+    tok.value = '';
+    tok.required = false;
+    tok.placeholder = t.has_token ? 'leave blank to keep the current token' : 'no token stored — enter one';
+    document.getElementById('target-token-hint').innerText = 'Leave blank to keep the stored token, or enter a new one to replace it.';
+    document.getElementById('target-modal-title').innerText = 'Edit PBS Target';
+    document.getElementById('target-submit').innerText = 'Save Changes';
+    openModal('modal-add-target');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
 async function submitTargetForm(e) {
   e.preventDefault();
   const form = e.target;
   const formData = new FormData(form);
+  const id = form.dataset.targetId || '';
 
   const payload = {
     name: formData.get('name'),
@@ -174,8 +219,8 @@ async function submitTargetForm(e) {
   };
 
   try {
-    const resp = await apiFetch('/api/v1/targets', {
-      method: 'POST',
+    const resp = await apiFetch(id ? `/api/v1/targets/${id}` : '/api/v1/targets', {
+      method: id ? 'PUT' : 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
@@ -185,7 +230,7 @@ async function submitTargetForm(e) {
       throw new Error(errData.error || 'Failed to save target');
     }
 
-    showToast('Backup target added successfully!', 'success');
+    showToast(id ? 'Backup target updated' : 'Backup target added successfully!', 'success');
     closeModal('modal-add-target');
     setTimeout(() => window.location.reload(), 800);
   } catch (err) {

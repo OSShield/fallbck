@@ -97,6 +97,7 @@ func (s *ServerAPI) RegisterRoutes(r chi.Router, admin, agent Middleware) {
 			r.Post("/targets", s.HandleCreateTarget)
 			r.Get("/targets", s.HandleListTargets)
 			r.Get("/targets/{id}", s.HandleGetTarget)
+			r.Put("/targets/{id}", s.HandleUpdateTarget)
 			r.Delete("/targets/{id}", s.HandleDeleteTarget)
 
 			// Jobs
@@ -465,6 +466,75 @@ func (s *ServerAPI) HandleCreateTarget(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.writeJSON(w, http.StatusCreated, target.Sanitize())
+}
+
+// HandleUpdateTarget replaces a target's configuration. The API token is optional on
+// update: leave auth_token blank to keep the stored token, or supply a new one to
+// replace it. The path ID wins over any ID in the body.
+func (s *ServerAPI) HandleUpdateTarget(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "Invalid target ID")
+		return
+	}
+	existing, err := s.DB.GetTargetByID(r.Context(), id)
+	if err != nil {
+		s.writeError(w, http.StatusNotFound, "Target not found")
+		return
+	}
+	var req CreateTargetRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	if req.Name == "" || req.Endpoint == "" || req.Datastore == "" {
+		s.writeError(w, http.StatusBadRequest, "Name, Endpoint, and Datastore are required")
+		return
+	}
+	// Token: keep the stored one when the field is blank, else normalise the new value
+	token := existing.AuthTokenEncrypted
+	if strings.TrimSpace(req.AuthToken) != "" {
+		normalized, err := pbs.NormalizeAPIToken(req.AuthToken)
+		if err != nil {
+			s.writeError(w, http.StatusBadRequest, "Invalid PBS API token: expected user@realm!tokenid:secret")
+			return
+		}
+		token = normalized
+	}
+	if req.TargetType == "" {
+		req.TargetType = existing.TargetType
+	}
+	switch req.PxarFormat {
+	case "":
+		req.PxarFormat = db.PxarFormatV1
+	case db.PxarFormatV1, db.PxarFormatV2:
+	default:
+		s.writeError(w, http.StatusBadRequest, "pxar_format must be v1 or v2")
+		return
+	}
+	target := &db.BackupTarget{
+		ID:                 existing.ID,
+		Name:               req.Name,
+		TargetType:         req.TargetType,
+		Endpoint:           strings.TrimRight(req.Endpoint, "/"),
+		Datastore:          req.Datastore,
+		Namespace:          req.Namespace,
+		AuthTokenEncrypted: token,
+		Fingerprint:        strings.TrimSpace(req.Fingerprint),
+		TLSVerify:          req.TLSVerify,
+		PxarFormat:         req.PxarFormat,
+	}
+	if err := s.DB.UpdateTarget(r.Context(), target); err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			s.writeError(w, http.StatusNotFound, "Target not found")
+			return
+		}
+		slog.Error("Failed to update target", "error", err)
+		s.writeError(w, http.StatusInternalServerError, "Failed to update target")
+		return
+	}
+	slog.Info("Backup target updated", "target_id", id, "name", target.Name, "namespace", target.Namespace)
+	s.writeJSON(w, http.StatusOK, target.Sanitize())
 }
 
 // HandleListTargets returns all backup targets
