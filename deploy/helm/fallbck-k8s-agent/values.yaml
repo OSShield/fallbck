@@ -30,8 +30,12 @@ worker:
   image: ""
   pullPolicy: IfNotPresent
   resources:
-    requests: {cpu: 100m, memory: 128Mi}
-    limits: {memory: 512Mi}
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 2Gi}
+  # Bounds gopbs upload concurrency inside the worker via GOMAXPROCS. Without it the
+  # worker uses the node's CPU count, so peak memory scales with node size and large
+  # volumes OOM. Keep it small (2) unless volumes are huge and you raise the memory limit.
+  maxProcs: 2
   # Container securityContext for workers. Default (set by the agent when empty):
   # root with all capabilities dropped except DAC_READ_SEARCH, read-only rootfs —
   # needed to read arbitrarily-owned PVC files. Override for PSS-restricted namespaces.

@@ -39,6 +39,8 @@ spec:
               value: {{ .Values.worker.pullPolicy | quote }}
             - name: FALLBCK_WORKER_RESOURCES
               value: {{ .Values.worker.resources | toJson | quote }}
+            - name: FALLBCK_WORKER_MAX_PROCS
+              value: {{ .Values.worker.maxProcs | quote }}
             {{- if .Values.worker.securityContext }}
             - name: FALLBCK_WORKER_SECURITY_CONTEXT
               value: {{ .Values.worker.securityContext | toJson | quote }}
