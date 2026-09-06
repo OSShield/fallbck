@@ -70,6 +70,17 @@ func Run(ctx context.Context, o RunOptions) (*temporal.BackupExecutionResult, er
 	}
 
 	creds, err := dbspec.ResolveCredentials(spec, o.Password, cfg.Profiles)
+	if errors.Is(err, dbspec.ErrNoCredentials) {
+		// Nothing configured: as root on the database host, use what the engine
+		// grants the local superuser without a password
+		local, lerr := localCredentials(ctx, spec)
+		if lerr != nil {
+			return nil, &PrecheckError{Msg: "resolving credentials", Err: err,
+				Hint: "passwordless local authentication does not apply: " + lerr.Error()}
+		}
+		slog.Info("No credentials configured; using passwordless local authentication", "engine", spec.Engine, "method", local.Source, "host", local.Host, "user", local.User, "run_as", local.RunAs)
+		creds, err = local, nil
+	}
 	if err != nil {
 		return nil, &PrecheckError{Msg: "resolving credentials", Err: err}
 	}

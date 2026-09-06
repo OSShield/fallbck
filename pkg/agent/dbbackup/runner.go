@@ -24,6 +24,9 @@ type Command struct {
 	Env    []string
 	Dir    string
 	Stdout io.Writer
+	// RunAs names the OS user to run the tool as (peer / socket authentication on the
+	// database host); "" keeps the agent's own user. Unix only; the agent must be root.
+	RunAs string
 }
 
 // Result describes a finished command
@@ -171,6 +174,11 @@ func (r *execRunner) Run(ctx context.Context, c Command) (Result, error) {
 	stderr := newRingWriter(64*1024, func(line string) { slog.Debug("tool output", "tool", c.Name, "stderr", line) })
 	cmd.Stderr = stderr
 	configureKill(cmd)
+	if c.RunAs != "" {
+		if err := configureUser(cmd, c.RunAs); err != nil {
+			return Result{}, fmt.Errorf("%s: running as OS user %s: %w", c.Name, c.RunAs, err)
+		}
+	}
 	cmd.WaitDelay = r.KillGrace
 	slog.Debug("Running tool", "tool", c.Name, "path", c.Path, "args", c.Args)
 

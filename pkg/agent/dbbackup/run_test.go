@@ -16,8 +16,7 @@ import (
 const pgDumpScript = `
 case "$1" in --version) echo "pg_dump (PostgreSQL) @VER@ (Debian @VER@-1.pgdg120+1)"; exit 0;; esac
 ` + logArgs + `
-for a in "$@"; do case "$a" in --file=*) f=${a#--file=};; esac; done
-[ -n "$f" ] && echo "PGDMP fake dump" > "$f"
+echo "PGDMP fake dump"
 exit ${FAKE_EXIT:-0}
 `
 
