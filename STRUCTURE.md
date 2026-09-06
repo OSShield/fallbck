@@ -67,5 +67,6 @@ Database jobs (`job_type: database`, `db_config`) follow the same path with `fal
 | `cmd/fallbck-k8s-agent` | in-cluster Kubernetes agent (Helm-installed; `worker` mode uploads one volume) |
 | `pkg/k8sbackup` | kubernetes job spec, discovery plan, run manifest (shared) |
 | `pkg/agent/k8sbackup` | resource dump, PVC snapshot/clone, worker pods, Secret identity, orphan sweep |
+| `pkg/rundetail` | type-specific per-run detail blob (archives / databases / PVCs) stored on the run and rendered by the /runs/<id> page |
 | `pkg/db` | pgx pool, versioned migrations, repositories |
 | `pkg/integration` | end-to-end test: embedded Temporal + gateway + agent worker (`go test -tags sqlite`) |

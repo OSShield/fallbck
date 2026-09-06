@@ -14,6 +14,7 @@ import (
 
 	"github.com/osshield/fallbck/pkg/db"
 	fbpbs "github.com/osshield/fallbck/pkg/pbs"
+	"github.com/osshield/fallbck/pkg/rundetail"
 	"github.com/osshield/fallbck/pkg/temporal"
 	"github.com/osshield/gopbs"
 	"github.com/osshield/gopbs/archive"
@@ -175,6 +176,15 @@ func Run(ctx context.Context, opts Options) (*temporal.BackupExecutionResult, er
 	duration := time.Since(start)
 	slog.Info("PBS backup completed", "snapshot", snapshot, "archive", result.ArchiveName, "size", size, "chunks", chunks, "new_chunks", newChunks, "duration", duration)
 
+	detail := rundetail.Filesystem{
+		Type: rundetail.TypeFilesystem, Format: s.PxarFormat, SnapshotID: snapshot,
+		Paths: s.BackupPaths, ExcludePaths: s.ExcludePaths,
+		Archives: archiveStats(result),
+	}
+	for _, w := range result.Warnings {
+		detail.Warnings = append(detail.Warnings, rundetail.Warning{Path: w.Path, Message: w.Err.Error()})
+	}
+
 	return &temporal.BackupExecutionResult{
 		Status:        db.RunStatusCompleted,
 		BytesScanned:  int64(size),
@@ -183,5 +193,33 @@ func Run(ctx context.Context, opts Options) (*temporal.BackupExecutionResult, er
 		ChunkCount:    int(chunks),
 		SnapshotID:    snapshot,
 		Duration:      duration,
+		Details:       rundetail.Marshal(detail),
 	}, nil
+}
+
+// archiveStats renders each uploaded archive's stats for the run detail page
+func archiveStats(result *gopbs.BackupResult) []rundetail.ArchiveStat {
+	entries := []struct {
+		name, kind string
+		st         pbs.UploadStats
+	}{
+		{result.ArchiveName, "pxar", result.Archive},
+		{"payload", "payload", result.Payload},
+		{"catalog", "catalog", result.Catalog},
+	}
+	var out []rundetail.ArchiveStat
+	for _, e := range entries {
+		if e.st.Size == 0 && e.st.ChunkCount == 0 {
+			continue
+		}
+		a := rundetail.ArchiveStat{
+			Name: e.name, Kind: e.kind, SizeBytes: e.st.Size,
+			Chunks: e.st.ChunkCount, NewChunks: e.st.NewChunks, ReusedChunks: e.st.ReusedChunks,
+		}
+		if e.st.NewChunks > 0 {
+			a.Dedup = float64(e.st.ChunkCount) / float64(e.st.NewChunks)
+		}
+		out = append(out, a)
+	}
+	return out
 }

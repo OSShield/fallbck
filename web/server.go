@@ -94,6 +94,7 @@ func (u *UIHandler) RegisterRoutes(r chi.Router) {
 		r.Get("/jobs", u.HandleJobs)
 		r.Get("/kubernetes", u.HandleKubernetes)
 		r.Get("/runs", u.HandleRuns)
+		r.Get("/runs/{id}", u.HandleRunDetail)
 		r.Get("/tokens", u.HandleTokens)
 		r.Get("/apikeys", u.HandleAPIKeys)
 
@@ -450,6 +451,16 @@ func (u *UIHandler) HandleRuns(w http.ResponseWriter, r *http.Request) {
 		"Title":     "History & Runs",
 		"ActiveNav": "runs",
 		"Runs":      runs,
+	})
+}
+
+// HandleRunDetail renders the per-run detail page; the page loads the run (with its
+// type-specific details blob) from the API and renders client-side.
+func (u *UIHandler) HandleRunDetail(w http.ResponseWriter, r *http.Request) {
+	u.renderPage(w, r, "run_detail.html", map[string]interface{}{
+		"Title":     "Run Details",
+		"ActiveNav": "runs",
+		"RunID":     chi.URLParam(r, "id"),
 	})
 }
 

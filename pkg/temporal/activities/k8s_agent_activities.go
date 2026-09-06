@@ -15,6 +15,7 @@ import (
 	"github.com/osshield/fallbck/pkg/db"
 	spec "github.com/osshield/fallbck/pkg/k8sbackup"
 	"github.com/osshield/fallbck/pkg/proxy"
+	"github.com/osshield/fallbck/pkg/rundetail"
 	"github.com/osshield/fallbck/pkg/temporal"
 	"github.com/osshield/gopbs"
 	"github.com/osshield/gopbs/pbs"
@@ -364,6 +365,9 @@ func (a *K8sAgentActivities) BackupKubernetesResources(ctx context.Context, sess
 		slog.Error("Kubernetes resource backup failed", "error", err, "phase", pt.Current())
 		return nil, backupFailure(ctx, err, pt, a.LogTail)
 	}
+	// The manifest already carries per-volume results, resource counts, warnings and
+	// the restore runbook — surface all of it on the run detail page.
+	result.Details = rundetail.WrapManifest(rundetail.TypeKubernetes, data)
 	return result, nil
 }
 

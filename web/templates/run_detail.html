@@ -1,0 +1,12 @@
+{{define "content"}}
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+  <a href="/runs" class="btn btn-secondary btn-sm">&larr; Back to runs</a>
+  <button class="btn btn-secondary btn-sm" onclick="downloadRunDetails()">Download details JSON</button>
+</div>
+
+<div id="run-detail-root">
+  <div class="card"><div style="padding: 24px; color: var(--text-muted);">Loading run…</div></div>
+</div>
+
+<script>document.addEventListener('DOMContentLoaded', function () { loadRunDetail('{{.RunID}}'); });</script>
+{{end}}

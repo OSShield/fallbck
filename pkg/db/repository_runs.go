@@ -12,13 +12,17 @@ import (
 )
 
 const runColumns = `id, job_id, agent_id, target_id, workflow_id, run_id, status, start_time, end_time,
-	bytes_scanned, bytes_uploaded, dedup_ratio, chunk_count, error_message, pbs_snapshot_id, log_tail, created_at`
+	bytes_scanned, bytes_uploaded, dedup_ratio, chunk_count, error_message, pbs_snapshot_id, log_tail, details, created_at`
 
 func scanRun(row pgx.Row) (*BackupRun, error) {
 	var r BackupRun
+	var details []byte
 	err := row.Scan(&r.ID, &r.JobID, &r.AgentID, &r.TargetID, &r.WorkflowID, &r.RunID, &r.Status,
 		&r.StartTime, &r.EndTime, &r.BytesScanned, &r.BytesUploaded, &r.DedupRatio,
-		&r.ChunkCount, &r.ErrorMessage, &r.PBSSnapshotID, &r.LogTail, &r.CreatedAt)
+		&r.ChunkCount, &r.ErrorMessage, &r.PBSSnapshotID, &r.LogTail, &details, &r.CreatedAt)
+	if len(details) > 0 && string(details) != "{}" {
+		r.Details = details
+	}
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
