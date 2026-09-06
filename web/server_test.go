@@ -29,6 +29,7 @@ func TestUIRenderRoutes(t *testing.T) {
 		{"/dashboard", http.StatusOK, "Connected Agents"},
 		{"/agents", http.StatusOK, "Enrolled Agents"},
 		{"/targets", http.StatusOK, "PBS Targets"},
+		{"/targets", http.StatusOK, `id="target-form"`},
 		{"/jobs", http.StatusOK, "Backup Jobs"},
 		{"/jobs", http.StatusOK, `name="job_type"`},
 		{"/jobs", http.StatusOK, "runs in "},

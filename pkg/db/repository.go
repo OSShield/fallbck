@@ -244,6 +244,31 @@ func (d *DB) CreateTarget(ctx context.Context, target *BackupTarget) error {
 	).Scan(&target.ID)
 }
 
+// UpdateTarget replaces a target's editable fields (name, endpoint, datastore,
+// namespace, token, fingerprint, TLS, format). The caller supplies the final values,
+// including AuthTokenEncrypted (kept unchanged by loading the existing row first when
+// the operator leaves the token field blank).
+func (d *DB) UpdateTarget(ctx context.Context, target *BackupTarget) error {
+	if target.PxarFormat == "" {
+		target.PxarFormat = PxarFormatV1
+	}
+	target.UpdatedAt = time.Now().UTC()
+	tag, err := d.Pool.Exec(ctx, `
+		UPDATE backup_targets
+		SET name = $2, target_type = $3, endpoint = $4, datastore = $5, namespace = $6,
+		    auth_token_encrypted = $7, fingerprint = $8, tls_verify = $9, pxar_format = $10, updated_at = $11
+		WHERE id = $1`,
+		target.ID, target.Name, target.TargetType, target.Endpoint, target.Datastore, target.Namespace,
+		target.AuthTokenEncrypted, target.Fingerprint, target.TLSVerify, target.PxarFormat, target.UpdatedAt)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (d *DB) GetTargetByID(ctx context.Context, id uuid.UUID) (*BackupTarget, error) {
 	query := `
 		SELECT id, name, target_type, endpoint, datastore, namespace, auth_token_encrypted, fingerprint, tls_verify, pxar_format, created_at, updated_at
