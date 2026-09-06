@@ -294,3 +294,41 @@ func TestBackupVolumeKilledSurfacesReasonAndLogs(t *testing.T) {
 		t.Errorf("error missing worker log tail: %q", res.Error)
 	}
 }
+
+func TestBackupVolumePinsToVolumeAttachmentNode(t *testing.T) {
+	fastPolling(t)
+	pvName := "pv-xyz"
+	// A live RWO PVC bound to pv-xyz, attached (per the CSI VolumeAttachment) to
+	// node-7, with no consumer pod running — the worker must still land on node-7.
+	va := &storagev1.VolumeAttachment{
+		ObjectMeta: metav1.ObjectMeta{Name: "csi-att"},
+		Spec:       storagev1.VolumeAttachmentSpec{NodeName: "node-7", Source: storagev1.VolumeAttachmentSource{PersistentVolumeName: &pvName}},
+		Status:     storagev1.VolumeAttachmentStatus{Attached: true},
+	}
+	pvc := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: "data", Namespace: "app"},
+		Spec:       corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}, VolumeName: pvName},
+		Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound},
+	}
+	core := k8sfake.NewSimpleClientset(pvc, va)
+	scheme := runtime.NewScheme()
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, map[schema.GroupVersionResource]string{
+		snapshotGVR: "VolumeSnapshotList", snapshotClassGVR: "VolumeSnapshotClassList",
+	})
+	c := &Clients{Discovery: core.Discovery(), Dynamic: dyn, Core: core}
+	succeedPods(core, corev1.PodSucceeded, successMessage(t))
+
+	req := testRequest(spec.ModeLive)
+	req.Plan.PVName = pvName
+	if _, err := BackupVolume(context.Background(), c, req); err != nil {
+		t.Fatalf("BackupVolume: %v", err)
+	}
+	for _, a := range core.Actions() {
+		if a.GetVerb() == "create" && a.GetResource().Resource == "pods" {
+			pod := a.(k8stesting.CreateAction).GetObject().(*corev1.Pod)
+			if pod.Spec.NodeName != "node-7" {
+				t.Errorf("worker not pinned to the attached node: %q", pod.Spec.NodeName)
+			}
+		}
+	}
+}

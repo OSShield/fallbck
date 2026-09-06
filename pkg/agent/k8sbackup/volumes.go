@@ -135,10 +135,14 @@ func BackupVolume(ctx context.Context, c *Clients, req VolumeBackupRequest) (*sp
 
 	if plan.Mode == spec.ModeLive {
 		res.Consistency = "crash-consistent-live"
-		// An attached RWO volume is only mountable on its node
+		// An attached RWO volume is only mountable on the node it is attached to, so the
+		// worker must land there; a wrong node would fail with a multi-attach error.
 		if isRWO(ctx, c, plan) {
-			if node, err := attachedNode(ctx, c, plan.Namespace, plan.PVCName); err == nil {
+			if node := attachedNode(ctx, c, plan.Namespace, plan.PVCName, plan.PVName); node != "" {
 				nodeName = node
+			} else {
+				slog.Info("Could not determine the node of a live RWO volume; scheduling the worker unpinned (may fail if the volume is attached elsewhere)",
+					"pvc", plan.Namespace+"/"+plan.PVCName)
 			}
 		}
 	} else {
@@ -170,6 +174,7 @@ func BackupVolume(ctx context.Context, c *Clients, req VolumeBackupRequest) (*sp
 		if outcome.Phase != "" {
 			res.Error += " [phase: " + outcome.Phase + "]"
 		}
+		res.Error = truncate(res.Error, maxVolumeErrorBytes)
 		return res, fmt.Errorf("volume %s/%s: %s", plan.Namespace, plan.PVCName, res.Error)
 	}
 	res.Status = "completed"
@@ -266,24 +271,37 @@ func isRWO(ctx context.Context, c *Clients, plan spec.VolumePlan) bool {
 	return true
 }
 
-// attachedNode finds the node of a Running pod that mounts the PVC
-func attachedNode(ctx context.Context, c *Clients, ns, pvcName string) (string, error) {
+// attachedNode determines the node a live RWO volume is attached to: first the CSI
+// VolumeAttachment for the PV (authoritative, independent of pod phase), then any
+// non-terminated pod that mounts the PVC. Empty means undetermined.
+func attachedNode(ctx context.Context, c *Clients, ns, pvcName, pvName string) string {
+	if pvName != "" {
+		if vas, err := c.Core.StorageV1().VolumeAttachments().List(ctx, metav1.ListOptions{}); err == nil {
+			for i := range vas.Items {
+				va := &vas.Items[i]
+				if va.Status.Attached && va.Spec.Source.PersistentVolumeName != nil && *va.Spec.Source.PersistentVolumeName == pvName && va.Spec.NodeName != "" {
+					return va.Spec.NodeName
+				}
+			}
+		}
+	}
 	pods, err := c.Core.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return "", err
+		return ""
 	}
 	for i := range pods.Items {
 		pod := &pods.Items[i]
-		if pod.Status.Phase != corev1.PodRunning || pod.Spec.NodeName == "" {
+		// Any scheduled pod that is not finished still holds the attachment
+		if pod.Spec.NodeName == "" || pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
 			continue
 		}
 		for _, v := range pod.Spec.Volumes {
 			if v.PersistentVolumeClaim != nil && v.PersistentVolumeClaim.ClaimName == pvcName {
-				return pod.Spec.NodeName, nil
+				return pod.Spec.NodeName
 			}
 		}
 	}
-	return "", fmt.Errorf("no running pod mounts %s/%s", ns, pvcName)
+	return ""
 }
 
 // ---- worker pod -------------------------------------------------------------
@@ -424,12 +442,37 @@ func parseOutcome(ctx context.Context, c *Clients, pod *corev1.Pod) (*workerOutc
 		}
 	}
 	if tail != "" {
-		b.WriteString("\n--- worker log ---\n")
-		b.WriteString(tail)
+		// Only the tail end of the log carries the failure; the full worker log is in
+		// the pod's own logs (kubectl) — keep this small so aggregated volume results
+		// stay well within Temporal's payload limit.
+		b.WriteString("\n--- worker log (tail) ---\n")
+		b.WriteString(lastBytes(tail, 1500))
 	}
-	out.Error = b.String()
+	out.Error = truncate(b.String(), maxVolumeErrorBytes)
 	out.Result = nil
 	return &out, nil
+}
+
+// maxVolumeErrorBytes bounds one volume's error text; many failing volumes are
+// aggregated into one activity input and the run record, which Temporal caps at 2 MiB.
+const maxVolumeErrorBytes = 3000
+
+func truncate(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "…(truncated)"
+}
+
+func lastBytes(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	cut := s[len(s)-n:]
+	if i := strings.IndexByte(cut, '\n'); i >= 0 && i < len(cut)-1 {
+		cut = cut[i+1:]
+	}
+	return cut
 }
 
 func podLogTail(ctx context.Context, c *Clients, ns, name string) string {

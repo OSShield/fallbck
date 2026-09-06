@@ -102,6 +102,9 @@ func (s *ServerActivities) PrepareBackupSession(ctx context.Context, jobID uuid.
 			return nil, sdktemporal.NewNonRetryableApplicationError("kubernetes job has no configuration", "job_invalid", nil)
 		}
 		k8sSpec = job.K8sConfig
+		// Kubernetes snapshots use the PBS "ct" (container) backup type; the group id
+		// stays k8s-<cluster> (agent hostname), volumes append -pvc-<ns>-<name>
+		claims.BackupType = "ct"
 	}
 	if jobType == db.JobTypeDatabase {
 		if job.DBConfig == nil {
