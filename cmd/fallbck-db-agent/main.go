@@ -93,6 +93,7 @@ func main() {
 			acts.Hostname = cfg.Hostname
 			acts.Version = AgentVersion
 			acts.LogTail = logging.Tail
+			acts.ReportProgress = runtime.ProgressReporter(cfg, store)
 			w.RegisterActivity(acts)
 			return nil
 		})

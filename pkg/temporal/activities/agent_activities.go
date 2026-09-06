@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"time"
 
 	"github.com/osshield/fallbck/pkg/agent/backup"
 	"github.com/osshield/fallbck/pkg/db"
@@ -28,6 +29,8 @@ type AgentActivities struct {
 	Credentials func(ctx context.Context, ticket string) (*backup.DirectOptions, error)
 	// LogTail returns the agent's recent log output, attached to failures
 	LogTail func() string
+	// ReportProgress posts live phase updates to the server (best-effort)
+	ReportProgress ProgressFunc
 }
 
 // NewAgentActivities creates a new AgentActivities instance
@@ -52,8 +55,11 @@ func (a *AgentActivities) ExecuteFilesystemBackup(ctx context.Context, session *
 	pt := newPhaseTracker()
 	stopHeartbeats := startHeartbeats(ctx, pt)
 	defer stopHeartbeats()
+	reportPh := func() { reportPhase(a.ReportProgress, ctx, session.Ticket, session.BackupRunID, pt.Current()) }
+	stopProgress := startProgress(ctx, pt, 5*time.Second, func(string) { reportPh() })
+	defer stopProgress()
 
-	opts := backup.Options{Session: session, Workers: a.Workers, OnPhase: pt.Set}
+	opts := backup.Options{Session: session, Workers: a.Workers, OnPhase: func(p string) { pt.Set(p); reportPh() }}
 	if session.DirectPBS {
 		if a.Credentials == nil {
 			return nil, errors.New("job requires direct PBS access but the agent has no credentials fetcher")

@@ -68,6 +68,7 @@ func main() {
 			acts.Tunnel = conns.Tunnel
 			acts.Credentials = runtime.PBSCredentialsFetcher(cfg, store)
 			acts.LogTail = logging.Tail
+			acts.ReportProgress = runtime.ProgressReporter(cfg, store)
 			w.RegisterActivity(acts)
 			return nil
 		})

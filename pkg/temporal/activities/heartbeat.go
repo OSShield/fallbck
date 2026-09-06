@@ -3,6 +3,8 @@ package activities
 import (
 	"context"
 	"fmt"
+	"github.com/google/uuid"
+	"github.com/osshield/fallbck/pkg/rundetail"
 	"sync"
 	"time"
 
@@ -66,6 +68,47 @@ func startHeartbeats(ctx context.Context, pt *phaseTracker) (stop func()) {
 				return
 			case <-t.C:
 				beat()
+			}
+		}
+	}()
+	var once sync.Once
+	return func() { once.Do(func() { close(done) }) }
+}
+
+// ProgressFunc posts live run progress (phase and/or per-item statuses) to the server.
+type ProgressFunc func(ctx context.Context, ticket string, runID uuid.UUID, phase string, items map[string]rundetail.ProgressItem) error
+
+// reportPhase / reportItems are nil-safe, best-effort progress helpers
+func reportPhase(fn ProgressFunc, ctx context.Context, ticket string, runID uuid.UUID, phase string) {
+	if fn != nil {
+		_ = fn(ctx, ticket, runID, phase, nil)
+	}
+}
+func reportItems(fn ProgressFunc, ctx context.Context, ticket string, runID uuid.UUID, items map[string]rundetail.ProgressItem) {
+	if fn != nil {
+		_ = fn(ctx, ticket, runID, "", items)
+	}
+}
+
+// startProgress calls fn immediately and every interval with the current phase, until
+// the returned stop function runs or ctx ends. Used to push live progress to the server.
+func startProgress(ctx context.Context, pt *phaseTracker, interval time.Duration, fn func(phase string)) (stop func()) {
+	if fn == nil {
+		return func() {}
+	}
+	fn(pt.Current())
+	done := make(chan struct{})
+	go func() {
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-done:
+				return
+			case <-t.C:
+				fn(pt.Current())
 			}
 		}
 	}()

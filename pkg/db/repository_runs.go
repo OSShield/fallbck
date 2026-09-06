@@ -12,16 +12,19 @@ import (
 )
 
 const runColumns = `id, job_id, agent_id, target_id, workflow_id, run_id, status, start_time, end_time,
-	bytes_scanned, bytes_uploaded, dedup_ratio, chunk_count, error_message, pbs_snapshot_id, log_tail, details, created_at`
+	bytes_scanned, bytes_uploaded, dedup_ratio, chunk_count, error_message, pbs_snapshot_id, log_tail, details, progress, created_at`
 
 func scanRun(row pgx.Row) (*BackupRun, error) {
 	var r BackupRun
-	var details []byte
+	var details, progress []byte
 	err := row.Scan(&r.ID, &r.JobID, &r.AgentID, &r.TargetID, &r.WorkflowID, &r.RunID, &r.Status,
 		&r.StartTime, &r.EndTime, &r.BytesScanned, &r.BytesUploaded, &r.DedupRatio,
-		&r.ChunkCount, &r.ErrorMessage, &r.PBSSnapshotID, &r.LogTail, &details, &r.CreatedAt)
+		&r.ChunkCount, &r.ErrorMessage, &r.PBSSnapshotID, &r.LogTail, &details, &progress, &r.CreatedAt)
 	if len(details) > 0 && string(details) != "{}" {
 		r.Details = details
+	}
+	if len(progress) > 0 && string(progress) != "{}" {
+		r.Progress = progress
 	}
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -99,4 +102,37 @@ func (d *DB) UpdateJob(ctx context.Context, job *BackupJob) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// SetRunPhase records the current phase of an active run (jsonb_set: no read-modify-write)
+func (d *DB) SetRunPhase(ctx context.Context, runID uuid.UUID, phase, updatedAt string) error {
+	_, err := d.Pool.Exec(ctx, `
+		UPDATE backup_runs
+		SET progress = jsonb_set(jsonb_set(coalesce(progress,'{}'::jsonb), '{phase}', to_jsonb($2::text)), '{updated_at}', to_jsonb($3::text))
+		WHERE id = $1 AND status IN ('pending','running','cancelling')`, runID, phase, updatedAt)
+	return err
+}
+
+// SetRunItems merges per-item statuses into an active run's progress. Each item is
+// written at progress.items.<key> so concurrent per-item updates never clobber.
+func (d *DB) SetRunItems(ctx context.Context, runID uuid.UUID, updatedAt string, items map[string][]byte) error {
+	batch := &pgx.Batch{}
+	for key, val := range items {
+		batch.Queue(`
+			UPDATE backup_runs
+			SET progress = jsonb_set(
+				jsonb_set(coalesce(progress,'{}'::jsonb), '{items}', coalesce(progress->'items','{}'::jsonb), true),
+				ARRAY['items', $2::text], $3::jsonb, true)
+			WHERE id = $1 AND status IN ('pending','running','cancelling')`, runID, key, val)
+	}
+	batch.Queue(`UPDATE backup_runs SET progress = jsonb_set(coalesce(progress,'{}'::jsonb),'{updated_at}', to_jsonb($2::text)) WHERE id = $1 AND status IN ('pending','running','cancelling')`, runID, updatedAt)
+	br := d.Pool.SendBatch(ctx, batch)
+	defer br.Close()
+	for range items {
+		if _, err := br.Exec(); err != nil {
+			return err
+		}
+	}
+	_, err := br.Exec()
+	return err
 }

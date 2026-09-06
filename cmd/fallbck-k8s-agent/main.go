@@ -168,6 +168,7 @@ func runAgent(logging *runtime.Logging) {
 		acts.WorkerSecurityContextJSON = os.Getenv("FALLBCK_WORKER_SECURITY_CONTEXT")
 		acts.SpoolDir = dataDir + "/spool"
 		acts.LogTail = logging.Tail
+		acts.ReportProgress = runtime.ProgressReporter(cfg, store)
 		acts.Credentials = runtime.PBSCredentialsFetcher(cfg, store)
 		acts.VolumeTicket = func(ctx context.Context, sessionTicket, volumeBackupID string) (string, error) {
 			var resp api.VolumeTicketResponse
