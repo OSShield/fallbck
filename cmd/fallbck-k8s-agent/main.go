@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/osshield/fallbck/pkg/agent/enrollment"
@@ -161,6 +162,9 @@ func runAgent(logging *runtime.Logging) {
 		acts.WorkerImage = workerImage
 		acts.WorkerImagePullPolicy = os.Getenv("FALLBCK_WORKER_PULL_POLICY")
 		acts.WorkerResourcesJSON = os.Getenv("FALLBCK_WORKER_RESOURCES")
+		if n, err := strconv.Atoi(os.Getenv("FALLBCK_WORKER_MAX_PROCS")); err == nil && n > 0 {
+			acts.WorkerMaxProcs = n
+		}
 		acts.WorkerSecurityContextJSON = os.Getenv("FALLBCK_WORKER_SECURITY_CONTEXT")
 		acts.SpoolDir = dataDir + "/spool"
 		acts.LogTail = logging.Tail

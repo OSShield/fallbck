@@ -43,6 +43,8 @@ type K8sAgentActivities struct {
 	WorkerImagePullPolicy     string
 	WorkerResourcesJSON       string
 	WorkerSecurityContextJSON string
+	// WorkerMaxProcs bounds gopbs concurrency (GOMAXPROCS) inside worker pods; 0 = 2
+	WorkerMaxProcs int
 	// Credentials fetches PBS connection details for jobs in direct mode
 	Credentials func(ctx context.Context, ticket string) (*backup.DirectOptions, error)
 	// VolumeTicket mints a per-volume backup ticket from the session ticket
@@ -177,6 +179,13 @@ func (a *K8sAgentActivities) workerEnv(ctx context.Context, session *temporal.Ba
 		{Name: k8sagent.EnvWorkerTicket, Value: volumeTicket},
 		{Name: k8sagent.EnvWorkerSession, Value: sessionJSON},
 	}
+	// Bound gopbs upload concurrency so peak memory does not scale with the node's CPU
+	// count (a common cause of worker OOMKills on large volumes)
+	maxProcs := a.WorkerMaxProcs
+	if maxProcs <= 0 {
+		maxProcs = 2
+	}
+	env = append(env, corev1.EnvVar{Name: "GOMAXPROCS", Value: fmt.Sprintf("%d", maxProcs)})
 	// Give workers the agent's log level (configured, or DEBUG env) so operators can
 	// see gopbs connect/upload detail in the worker pod logs
 	if lvl := a.Config.LogLevel; lvl != "" {
