@@ -22,13 +22,13 @@ identitySecretName: fallbck-k8s-agent-identity
 image:
   repository: oci.fi/fallbck/k8s-agent
   tag: latest
-  pullPolicy: IfNotPresent
+  pullPolicy: Always
 
 # Worker pods (one per volume, run in the volume's namespace)
 worker:
   # Defaults to the agent image
   image: ""
-  pullPolicy: IfNotPresent
+  pullPolicy: Always
   resources:
     requests: {cpu: 100m, memory: 256Mi}
     limits: {memory: 2Gi}
