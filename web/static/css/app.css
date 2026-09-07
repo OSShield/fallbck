@@ -22,7 +22,7 @@ dialog{padding:0;width:min(820px,calc(100vw - 48px));max-height:calc(100dvh - 48
  thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
  tr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 24px;padding:18px;border-bottom:1px solid var(--rule)}
  tr:last-child{border-bottom:0}
- .table-container table td{display:grid;grid-template-columns:90px minmax(0,1fr);gap:8px;padding:8px 0;border:0;min-width:0;font-size:0.8125rem}
+ .table-container table td{display:grid;grid-template-columns:100px minmax(0,1fr);gap:8px;padding:8px 0;border:0;min-width:0;font-size:0.8125rem}
  .table-container table td:before{content:attr(data-label);font:0.75rem/1.6 var(--mono);text-transform:uppercase;color:var(--muted)}
  .table-container td>.cell-detail{grid-column:2;margin-top:0}
  .table-container td>.status{padding:0}
@@ -59,6 +59,7 @@ dialog{padding:0;width:min(820px,calc(100vw - 48px));max-height:calc(100dvh - 48
   border-radius: 3px;
   background: var(--surface);
   justify-self: start;
+  align-self: start;
   max-width: 100%;
   white-space: normal;
 }
