@@ -1,6 +1,8 @@
 package web
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
@@ -12,6 +14,8 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+	"github.com/osshield/fallbck/pkg/api"
 	"github.com/osshield/fallbck/pkg/auth"
 	"github.com/osshield/fallbck/pkg/config"
 	"github.com/osshield/fallbck/pkg/db"
@@ -20,6 +24,7 @@ import (
 
 // Deps are the collaborators the UI needs beyond the database and config
 type Deps struct {
+	API          *api.ServerAPI
 	TokenManager *auth.TokenManager
 	// OIDC is nil when admin authentication is disabled (development)
 	OIDC *auth.OIDC
@@ -84,6 +89,7 @@ func (u *UIHandler) RegisterRoutes(r chi.Router) {
 		r.Use(u.deps.Admin.RequireAdmin)
 
 		r.Post("/auth/logout", u.HandleLogout)
+		u.registerUIRoutes(r)
 
 		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, "/dashboard", http.StatusFound)
@@ -110,7 +116,7 @@ func (u *UIHandler) RegisterRoutes(r chi.Router) {
 // SecurityHeaders sets a conservative set of browser security headers. The embedded
 // Temporal UI (SvelteKit) needs inline scripts/styles, so its prefix gets a looser CSP.
 func SecurityHeaders(next http.Handler) http.Handler {
-	const appCSP = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+	const appCSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
 	const temporalCSP = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'"
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
@@ -256,9 +262,14 @@ func (u *UIHandler) HandleAuthCallback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, safeNext(state.Next), http.StatusFound)
 }
 
-// HandleLogout clears the session (called via fetch from the UI)
+// HandleLogout clears the session.
 func (u *UIHandler) HandleLogout(w http.ResponseWriter, r *http.Request) {
 	auth.ClearSessionCookie(w, u.cookieOpts)
+	if r.Header.Get("HX-Request") == "true" {
+		w.Header().Set("HX-Redirect", "/login")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write([]byte(`{"status":"logged_out"}`))
 }
@@ -269,7 +280,17 @@ func (u *UIHandler) renderPage(w http.ResponseWriter, r *http.Request, pageTempl
 	tmpl, err := template.New("layout").Funcs(template.FuncMap{
 		"formatBytes": formatBytes,
 		"formatTime":  formatTime,
-	}).ParseFS(Content, "templates/layout.html", "templates/"+pageTemplate)
+		"shortID": func(v any) string {
+			s := fmt.Sprint(v)
+			if len(s) > 8 {
+				return s[:8]
+			}
+			return s
+		},
+		"join":       strings.Join,
+		"prettyJSON": prettyJSON,
+		"keyStatus":  keyStatus,
+	}).ParseFS(Content, "templates/layout.html", "templates/components.html", "templates/"+pageTemplate)
 
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Template rendering error: %v", err), http.StatusInternalServerError)
@@ -283,11 +304,24 @@ func (u *UIHandler) renderPage(w http.ResponseWriter, r *http.Request, pageTempl
 	data["TemporalUI"] = u.temporalProxy != nil
 	data["TemporalUIPath"] = temporalui.PublicPath + "/"
 	data["Version"] = u.deps.Version
+	data["Timezone"] = u.timezone()
+	data["Path"] = r.URL.Path
+	data["PageNumber"] = map[string]string{"dashboard": "01", "agents": "02", "targets": "03", "jobs": "04", "kubernetes": "05", "runs": "06", "tokens": "07", "apikeys": "08"}[fmt.Sprint(data["ActiveNav"])]
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := tmpl.ExecuteTemplate(w, "layout", data); err != nil {
-		http.Error(w, fmt.Sprintf("Template execution error: %v", err), http.StatusInternalServerError)
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Add("Vary", "HX-Request")
+	name := "layout"
+	if r.Header.Get("HX-Request") == "true" {
+		name = "app"
 	}
+	var output bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&output, name, data); err != nil {
+		slog.Error("UI template execution failed", "error", err)
+		http.Error(w, "Unable to render this page. Please try again.", http.StatusInternalServerError)
+		return
+	}
+	_, _ = w.Write(output.Bytes())
 }
 
 func (u *UIHandler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
@@ -298,10 +332,27 @@ func (u *UIHandler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 	var runs []*db.BackupRun
 
 	if u.DB != nil {
-		agents, _ = u.DB.ListAgents(ctx)
-		targets, _ = u.DB.ListTargets(ctx)
-		jobs, _ = u.DB.ListJobs(ctx)
-		runs, _ = u.DB.ListRuns(ctx, 10)
+		var err error
+		agents, err = u.DB.ListAgents(ctx)
+		if err != nil {
+			u.renderLoadError(w, r, err)
+			return
+		}
+		targets, err = u.DB.ListTargets(ctx)
+		if err != nil {
+			u.renderLoadError(w, r, err)
+			return
+		}
+		jobs, err = u.DB.ListJobs(ctx)
+		if err != nil {
+			u.renderLoadError(w, r, err)
+			return
+		}
+		runs, err = u.DB.ListRuns(ctx, 10)
+		if err != nil {
+			u.renderLoadError(w, r, err)
+			return
+		}
 	}
 	onlineCount := 0
 	for _, a := range agents {
@@ -318,13 +369,13 @@ func (u *UIHandler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 			dedupCount++
 		}
 	}
-	avgDedup := 1.00
+	avgDedup := 0.00
 	if dedupCount > 0 {
 		avgDedup = totalDedup / float64(dedupCount)
 	}
 
 	u.renderPage(w, r, "dashboard.html", map[string]interface{}{
-		"Title":            "Dashboard",
+		"Title":            "Overview",
 		"ActiveNav":        "dashboard",
 		"AgentCount":       len(agents),
 		"OnlineAgentCount": onlineCount,
@@ -332,6 +383,7 @@ func (u *UIHandler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 		"JobCount":         len(jobs),
 		"AvgDedup":         fmt.Sprintf("%.2f", avgDedup),
 		"RecentRuns":       runs,
+		"Agents":           agents, "Targets": targets, "Jobs": jobs,
 	})
 }
 
@@ -339,7 +391,12 @@ func (u *UIHandler) HandleAgents(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var agents []*db.Agent
 	if u.DB != nil {
-		agents, _ = u.DB.ListAgents(ctx)
+		var err error
+		agents, err = u.DB.ListAgents(ctx)
+		if err != nil {
+			u.renderLoadError(w, r, err)
+			return
+		}
 	}
 
 	u.renderPage(w, r, "agents.html", map[string]interface{}{
@@ -353,7 +410,12 @@ func (u *UIHandler) HandleTargets(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var targets []*db.BackupTarget
 	if u.DB != nil {
-		targets, _ = u.DB.ListTargets(ctx)
+		var err error
+		targets, err = u.DB.ListTargets(ctx)
+		if err != nil {
+			u.renderLoadError(w, r, err)
+			return
+		}
 	}
 
 	u.renderPage(w, r, "targets.html", map[string]interface{}{
@@ -370,9 +432,22 @@ func (u *UIHandler) HandleJobs(w http.ResponseWriter, r *http.Request) {
 	var targets []*db.BackupTarget
 
 	if u.DB != nil {
-		jobs, _ = u.DB.ListJobs(ctx)
-		agents, _ = u.DB.ListAgents(ctx)
-		targets, _ = u.DB.ListTargets(ctx)
+		var err error
+		jobs, err = u.DB.ListJobs(ctx)
+		if err != nil {
+			u.renderLoadError(w, r, err)
+			return
+		}
+		agents, err = u.DB.ListAgents(ctx)
+		if err != nil {
+			u.renderLoadError(w, r, err)
+			return
+		}
+		targets, err = u.DB.ListTargets(ctx)
+		if err != nil {
+			u.renderLoadError(w, r, err)
+			return
+		}
 	}
 	// Kubernetes jobs and agents live on their own page
 	jobs = filterJobs(jobs, func(j *db.BackupJob) bool { return !j.IsKubernetes() })
@@ -396,9 +471,22 @@ func (u *UIHandler) HandleKubernetes(w http.ResponseWriter, r *http.Request) {
 	var targets []*db.BackupTarget
 
 	if u.DB != nil {
-		jobs, _ = u.DB.ListJobs(ctx)
-		agents, _ = u.DB.ListAgents(ctx)
-		targets, _ = u.DB.ListTargets(ctx)
+		var err error
+		jobs, err = u.DB.ListJobs(ctx)
+		if err != nil {
+			u.renderLoadError(w, r, err)
+			return
+		}
+		agents, err = u.DB.ListAgents(ctx)
+		if err != nil {
+			u.renderLoadError(w, r, err)
+			return
+		}
+		targets, err = u.DB.ListTargets(ctx)
+		if err != nil {
+			u.renderLoadError(w, r, err)
+			return
+		}
 	}
 	jobs = filterJobs(jobs, func(j *db.BackupJob) bool { return j.IsKubernetes() })
 	agents = filterAgents(agents, func(a *db.Agent) bool { return a.AgentType == db.AgentTypeKubernetes })
@@ -444,7 +532,12 @@ func (u *UIHandler) HandleRuns(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var runs []*db.BackupRun
 	if u.DB != nil {
-		runs, _ = u.DB.ListRuns(ctx, 100)
+		var err error
+		runs, err = u.DB.ListRuns(ctx, 100)
+		if err != nil {
+			u.renderLoadError(w, r, err)
+			return
+		}
 	}
 
 	u.renderPage(w, r, "runs.html", map[string]interface{}{
@@ -454,21 +547,49 @@ func (u *UIHandler) HandleRuns(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// HandleRunDetail renders the per-run detail page; the page loads the run (with its
-// type-specific details blob) from the API and renders client-side.
+// HandleRunDetail renders the run on the server, including live progress.
 func (u *UIHandler) HandleRunDetail(w http.ResponseWriter, r *http.Request) {
-	u.renderPage(w, r, "run_detail.html", map[string]interface{}{
-		"Title":     "Run Details",
-		"ActiveNav": "runs",
-		"RunID":     chi.URLParam(r, "id"),
-	})
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		http.Error(w, "Invalid run ID", http.StatusBadRequest)
+		return
+	}
+	if u.DB == nil {
+		http.Error(w, "Run not found", http.StatusNotFound)
+		return
+	}
+	run, err := u.DB.GetRunByID(r.Context(), id)
+	if err != nil {
+		http.Error(w, "Run not found", http.StatusNotFound)
+		return
+	}
+	if r.URL.Query().Get("download") == "json" {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Content-Disposition", `attachment; filename="run-`+id.String()+`.json"`)
+		_ = json.NewEncoder(w).Encode(run)
+		return
+	}
+	data := runDetailData(run)
+	data["Title"] = "Run details"
+	data["ActiveNav"] = "runs"
+	if r.URL.Query().Get("fragment") == "run" {
+		u.renderFragment(w, "run-panel", data, "run_detail.html")
+		return
+	}
+	u.renderPage(w, r, "run_detail.html", data)
 }
 
 func (u *UIHandler) HandleTokens(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var tokens []*db.EnrollmentToken
 	if u.DB != nil {
-		tokens, _ = u.DB.ListEnrollmentTokens(ctx)
+		var err error
+		tokens, err = u.DB.ListEnrollmentTokens(ctx)
+		if err != nil {
+			u.renderLoadError(w, r, err)
+			return
+		}
 	}
 
 	u.renderPage(w, r, "tokens.html", map[string]interface{}{
@@ -482,7 +603,12 @@ func (u *UIHandler) HandleAPIKeys(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var keys []*db.APIKey
 	if u.DB != nil {
-		keys, _ = u.DB.ListAPIKeys(ctx)
+		var err error
+		keys, err = u.DB.ListAPIKeys(ctx)
+		if err != nil {
+			u.renderLoadError(w, r, err)
+			return
+		}
 	}
 
 	u.renderPage(w, r, "apikeys.html", map[string]interface{}{

@@ -297,6 +297,7 @@ func main() {
 	}
 
 	uiHandler := web.NewUIHandler(database, cfg, web.Deps{
+		API:          serverAPI,
 		TokenManager: tokenManager,
 		OIDC:         oidcProvider,
 		Admin:        adminAuth,

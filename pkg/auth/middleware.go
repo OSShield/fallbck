@@ -143,6 +143,15 @@ func (a *AdminAuth) RequireAdmin(next http.Handler) http.Handler {
 }
 
 func (a *AdminAuth) reject(w http.ResponseWriter, r *http.Request, err error) {
+	if r.Header.Get("HX-Request") == "true" && !strings.HasPrefix(r.URL.Path, "/api/") && (errors.Is(err, ErrInvalidAPIKey) || errors.Is(err, ErrInvalidToken)) {
+		next := "/dashboard"
+		if current, parseErr := url.Parse(r.Header.Get("HX-Current-URL")); parseErr == nil && current.Host == r.Host {
+			next = current.RequestURI()
+		}
+		w.Header().Set("HX-Redirect", a.LoginPath+"?next="+url.QueryEscape(next))
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
 	if !wantsHTML(r) {
 		if errors.Is(err, ErrInvalidAPIKey) || errors.Is(err, ErrInvalidToken) {
 			writeJSONError(w, http.StatusUnauthorized, "authentication required")
