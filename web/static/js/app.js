@@ -30,15 +30,21 @@
     if (returnFocus?.isConnected) returnFocus.focus();
   }
   function notify(message) {
-    const host = document.getElementById('notifications');
+    const formErrors = dialog()?.open ? document.getElementById('form-errors') : null;
+    const secretScroll = dialog()?.open ? document.querySelector('#dialog-body .dialog-scroll') : null;
+    const host = formErrors || secretScroll || document.getElementById('notifications');
+    const previousFocus = document.activeElement;
     if (!host) return;
     const box = document.createElement('div');
     box.className = 'notice error'; box.setAttribute('role', 'alert');
-    box.textContent = message;
+    box.tabIndex = -1; box.textContent = message;
     const close = document.createElement('button');
     close.className = 'btn btn-small'; close.textContent = 'Dismiss';
-    close.addEventListener('click', () => box.remove()); box.append(close);
-    host.replaceChildren(box);
+    close.addEventListener('click', () => {
+      box.remove(); if (previousFocus?.isConnected) previousFocus.focus();
+    }); box.append(close);
+    if (secretScroll && !formErrors) host.prepend(box); else host.replaceChildren(box);
+    box.focus();
   }
   document.addEventListener('click', async event => {
     const target = event.target.closest('button, a');
@@ -50,6 +56,14 @@
       document.documentElement.dataset.theme = theme;
       try { localStorage.setItem('fallbck.theme', theme); } catch (_) {}
       themeLabel();
+    }
+    if (target.matches('[data-live-control]')) {
+      const paused = target.getAttribute('aria-pressed') !== 'true';
+      target.setAttribute('aria-pressed', String(paused));
+      target.textContent = paused ? 'Resume live updates' : 'Pause live updates';
+      document.getElementById('live-update-status').textContent = paused
+        ? 'Live updates paused. The backup continues in the background.'
+        : 'Live updates resumed. Updates pause while you use the record.';
     }
     if (target.matches('[data-menu]')) {
       const expanded = target.getAttribute('aria-expanded') !== 'true';
@@ -65,6 +79,16 @@
   });
   document.addEventListener('change', event => { if (event.target.closest('#resource-form')) fields(); });
   document.addEventListener('keydown', event => {
+    if (event.key === 'Tab' && dialog()?.open) {
+      const stops = [...dialog().querySelectorAll('a[href],button,input,select,textarea,[tabindex]')]
+        .filter(element => element.tabIndex >= 0 && !element.matches(':disabled') && element.getClientRects().length);
+      const first = stops[0], last = stops[stops.length - 1];
+      if (event.shiftKey && (document.activeElement === first || !stops.includes(document.activeElement))) {
+        event.preventDefault(); last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault(); first?.focus();
+      }
+    }
     if (event.key === 'Escape') {
       const menu = document.querySelector('[data-menu]');
       if (menu?.getAttribute('aria-expanded') === 'true') { menu.click(); menu.focus(); }
@@ -75,7 +99,24 @@
     const done = document.querySelector('[data-secret-done]');
     if (done) done.click(); else closeDialog();
   });
+  function holdRunUpdate(event) {
+    if (event.detail.ctx?.sourceElement?.id !== 'run-panel') return false;
+    const panel = document.getElementById('run-panel');
+    const paused = document.querySelector('[data-live-control]')?.getAttribute('aria-pressed') === 'true';
+    // Do not replace controls being used, open disclosures or selected log text.
+    const selection = document.getSelection();
+    const interacting = panel?.contains(document.activeElement) || panel?.querySelector('details[open]') ||
+      (selection && !selection.isCollapsed && panel?.contains(selection.anchorNode)) || dialog()?.open;
+    if (paused || interacting) { event.preventDefault(); return true; }
+    return false;
+  }
+  document.addEventListener('htmx:before:swap', event => {
+    // Keep the form intact when authentication middleware rejects a request.
+    if (event.detail.ctx?.response?.status === 403) event.preventDefault();
+    holdRunUpdate(event);
+  });
   document.addEventListener('htmx:before:request', event => {
+    if (holdRunUpdate(event)) return;
     event.detail.ctx?.sourceElement?.setAttribute('aria-busy', 'true');
   });
   document.addEventListener('htmx:after:request', event => {
@@ -83,6 +124,15 @@
   });
   document.addEventListener('htmx:after:swap', event => {
     const target = event.detail.ctx?.target;
+    if (target === '#notifications' || target?.id === 'notifications') {
+      document.querySelector('#notifications [role="alert"]')?.focus();
+    }
+    const liveControl = document.querySelector('[data-live-control]');
+    if (liveControl && !document.getElementById('run-panel')?.hasAttribute('hx-trigger')) {
+      liveControl.disabled = true;
+      liveControl.textContent = 'Live updates finished';
+      document.getElementById('live-update-status').textContent = 'This run has finished. The final record is shown below.';
+    }
     if (target === '#dialog-body' || target?.id === 'dialog-body' || document.getElementById('dialog-body')?.children.length && !dialog()?.open) {
       fields(); if (!dialog().open) dialog().showModal();
       document.getElementById('dialog-title')?.focus();
