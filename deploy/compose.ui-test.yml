@@ -1,0 +1,46 @@
+# Disposable, network-isolated verification stack. No production or development data.
+name: fallbck-ui-test
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ui_test
+      POSTGRES_PASSWORD: ui_test_disposable
+      POSTGRES_DB: ui_test
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U ui_test -d ui_test"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+  server:
+    image: fallbck-server:frontend
+    command: ["--dev", "--web-dir", "/app/web"]
+    environment:
+      FALLBCK_HTTP_PORT: 8080
+      FALLBCK_HTTP_BIND: 0.0.0.0
+      FALLBCK_PUBLIC_URL: http://localhost:18081
+      FALLBCK_JWT_SECRET: disposable-ui-test-secret-not-for-any-real-system
+      FALLBCK_DATA_DIR: /tmp/fallbck-ui-test
+      FALLBCK_DB_URL: postgres://ui_test:ui_test_disposable@postgres:5432/ui_test?sslmode=disable
+      FALLBCK_AUTH_INSECURE_DISABLE: "true"
+      FALLBCK_TEMPORAL_MODE: embedded
+    volumes:
+      - ../web:/app/web:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+  browser-gateway:
+    image: nginx:alpine
+    ports:
+      - "127.0.0.1:18081:8080"
+    volumes:
+      - ./nginx.ui-test.conf:/etc/nginx/conf.d/default.conf:ro
+    networks: [default, browser]
+    depends_on: [server]
+networks:
+  default:
+    internal: true
+  browser: {}
+

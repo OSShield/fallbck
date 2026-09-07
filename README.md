@@ -124,11 +124,35 @@ Publishing to the package repositories needs the `PKG_UPLOAD_PASSWORD` repositor
 
 ## Development
 
+### Frontend (Docker)
+
+From the repository root:
+
+```bash
+docker compose -f deploy/docker-compose.yml -f deploy/compose.frontend.yml up -d --build
+open http://localhost:8081
+```
+
+Edit `web/templates/*.html`, `web/static/css/app.css`, and `web/static/js/app.js`,
+then refresh the browser. These files are mounted into the server and read from
+disk, so frontend changes do not require a rebuild. Go changes require rerunning
+the command above. No Node.js installation or frontend bundler is needed.
+
+The UI runs without login, with PostgreSQL on `localhost:5433` and the embedded
+Temporal UI at `http://localhost:8081/temporal/`. Both published ports are bound to
+localhost. Stop the stack while preserving database data with:
+
+```bash
+docker compose -f deploy/docker-compose.yml -f deploy/compose.frontend.yml down
+```
+
+See [frontend architecture and verification](docs/frontend.md) for the HTMX UI and disposable test stack.
+
+### Go
+
 ```bash
 go build ./... && go test ./...
 go test -tags sqlite ./pkg/temporal/embedded/ ./pkg/integration/   # boots the real Temporal server in-process
 ```
 
-`go.mod` currently `replace`s `github.com/osshield/gopbs` with a sibling checkout (`../gopbs-fallbck`, branch `fallbck-session-dialer`) that adds `pbs.Config.DialSession`; until that change is merged and tagged, Docker and CI builds need the replace pointed at a published version.
-
-Requires Go 1.26+. The server binary is large (~175 MB) because it embeds the Temporal server and Web UI; the Dockerfiles use BuildKit cache mounts to keep rebuilds fast.
+Requires Go 1.27+. The server binary is large (~175 MB) because it embeds the Temporal server and Web UI; the Dockerfiles use BuildKit cache mounts to keep rebuilds fast.
