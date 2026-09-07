@@ -41,6 +41,7 @@ func main() {
 	configPath := flag.String("config", "", "Path to server YAML configuration file")
 	portFlag := flag.Int("port", 0, "Override HTTP port")
 	devFlag := flag.Bool("dev", false, "Development mode: permits auth.insecure_disable and UI preview without Postgres/Temporal")
+	webDir := flag.String("web-dir", "", "Serve templates and static assets from this directory (requires --dev)")
 	flag.Parse()
 
 	logLevel := config.LogLevel()
@@ -62,6 +63,21 @@ func main() {
 	}
 	if cfg.Auth.InsecureDisable {
 		slog.Warn("!!! ADMIN AUTHENTICATION IS DISABLED (auth.insecure_disable) — development only, never expose this instance !!!")
+	}
+	if *webDir != "" {
+		if !*devFlag {
+			slog.Error("--web-dir requires --dev")
+			os.Exit(1)
+		}
+		for _, subdir := range []string{"templates", "static"} {
+			info, err := os.Stat(*webDir + "/" + subdir)
+			if err != nil || !info.IsDir() {
+				slog.Error("Invalid web directory", "path", *webDir, "missing_directory", subdir)
+				os.Exit(1)
+			}
+		}
+		web.Content = os.DirFS(*webDir)
+		slog.Info("Serving frontend files from disk", "path", *webDir)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

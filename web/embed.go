@@ -7,7 +7,10 @@ import (
 )
 
 //go:embed static templates
-var Content embed.FS
+var embeddedContent embed.FS
+
+// Content defaults to embedded assets; development mode can use files on disk.
+var Content fs.FS = embeddedContent
 
 // StaticFS returns the sub-filesystem for static assets
 func StaticFS() http.FileSystem {

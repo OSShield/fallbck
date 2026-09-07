@@ -1,0 +1,15 @@
+# Local frontend development: refresh the browser after editing web/ files.
+# docker compose -f deploy/docker-compose.yml -f deploy/compose.frontend.yml up -d --build
+services:
+  postgres:
+    ports: !override
+      - "127.0.0.1:5433:5432"
+  server:
+    image: fallbck-server:frontend
+    command: ["--dev", "--web-dir", "/app/web"]
+    environment:
+      FALLBCK_PUBLIC_URL: http://localhost:8081
+    ports: !override
+      - "127.0.0.1:8081:8080"
+    volumes:
+      - ../web:/app/web:ro
