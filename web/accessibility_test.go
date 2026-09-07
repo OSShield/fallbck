@@ -205,3 +205,15 @@ func TestStatusHasTextAndDistinctShape(t *testing.T) {
 	}
 	exportAccessibilityFixture(t, "statuses", `<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Status review</title><link rel="stylesheet" href="/static/css/app.css"><script src="/static/js/theme.js"></script><script src="/static/js/app.js" defer></script></head><body><main><h1>Status indicators</h1><button class="btn" data-theme-toggle>Dark</button><p style="display:flex;flex-wrap:wrap;gap:16px;padding:24px 0">`+gallery.String()+`</p></main></body></html>`)
 }
+
+func TestFrontendAssetsRevalidate(t *testing.T) {
+	router := chi.NewRouter()
+	NewUIHandler(nil, config.DefaultServerConfig(), Deps{}).RegisterRoutes(router)
+	for _, path := range []string{"/static/css/app.css", "/static/js/app.js"} {
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+		if w.Code != 200 || w.Header().Get("Cache-Control") != "no-cache" {
+			t.Errorf("%s must revalidate so accessibility fixes reach existing clients", path)
+		}
+	}
+}

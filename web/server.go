@@ -78,7 +78,11 @@ func NewUIHandler(database *db.DB, cfg *config.ServerConfig, deps Deps) *UIHandl
 func (u *UIHandler) RegisterRoutes(r chi.Router) {
 	// ---- public ----
 	fileServer := http.FileServer(StaticFS())
-	r.Handle("/static/*", http.StripPrefix("/static/", fileServer))
+	r.Handle("/static/*", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		// These URLs serve live files in development and may change between releases.
+		w.Header().Set("Cache-Control", "no-cache")
+		http.StripPrefix("/static/", fileServer).ServeHTTP(w, req)
+	}))
 	r.Get("/install-agent.sh", u.HandleInstallScript)
 	r.Get("/login", u.HandleLoginPage)
 	r.Get("/auth/login", u.HandleAuthLogin)

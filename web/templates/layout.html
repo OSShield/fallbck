@@ -1,5 +1,5 @@
 {{define "layout"}}<!doctype html>
-<html lang="en" data-theme="light"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{.Title}} / FallBCK</title><meta name="color-scheme" content="light dark"><link rel="icon" href="/static/mark.svg" type="image/svg+xml"><link rel="stylesheet" href="/static/css/app.css"><script src="/static/js/theme.js"></script><script src="/static/vendor/htmx-4.0.0.js" defer></script><script src="/static/js/app.js" defer></script></head>
+<html lang="en" data-theme="light"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{.Title}} / FallBCK</title><meta name="color-scheme" content="light dark"><link rel="icon" href="/static/mark.svg" type="image/svg+xml"><link rel="stylesheet" href="/static/css/app.css?v={{.Version}}"><script src="/static/js/theme.js?v={{.Version}}"></script><script src="/static/vendor/htmx-4.0.0.js" defer></script><script src="/static/js/app.js?v={{.Version}}" defer></script></head>
 <body hx-headers:inherited='{"X-Requested-With":"fallbck"}'><a class="skip-link" href="#main">Skip to content</a>
 <div id="notifications" class="notifications" aria-live="polite"></div>
 {{template "app" .}}
