@@ -28,3 +28,11 @@ func keyStatus(key *db.APIKey) string {
 	}
 	return "active"
 }
+
+// Keep navigation, document language and headings available on error pages.
+func (u *UIHandler) renderMessagePage(w http.ResponseWriter, r *http.Request, title, message string, status int) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
+	u.renderPage(w, r, "message.html", map[string]any{"Title": title, "Message": message, "ActiveNav": "runs"})
+}

@@ -551,16 +551,16 @@ func (u *UIHandler) HandleRuns(w http.ResponseWriter, r *http.Request) {
 func (u *UIHandler) HandleRunDetail(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		http.Error(w, "Invalid run ID", http.StatusBadRequest)
+		u.renderMessagePage(w, r, "Invalid run ID", "Check the run address or select a run from the history.", http.StatusBadRequest)
 		return
 	}
 	if u.DB == nil {
-		http.Error(w, "Run not found", http.StatusNotFound)
+		u.renderMessagePage(w, r, "Run not found", "This run may have been removed. Select another run from the history.", http.StatusNotFound)
 		return
 	}
 	run, err := u.DB.GetRunByID(r.Context(), id)
 	if err != nil {
-		http.Error(w, "Run not found", http.StatusNotFound)
+		u.renderMessagePage(w, r, "Run not found", "This run may have been removed. Select another run from the history.", http.StatusNotFound)
 		return
 	}
 	if r.URL.Query().Get("download") == "json" {
