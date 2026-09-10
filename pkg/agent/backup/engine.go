@@ -169,7 +169,7 @@ func Run(ctx context.Context, opts Options) (*temporal.BackupExecutionResult, er
 		dedup = float64(chunks)
 	}
 	for _, w := range result.Warnings {
-		slog.Warn("Backup warning", "path", w.Path, "message", w.Err)
+		slog.Warn("Backup warning", "path", w.Path, "message", warningMessage(w))
 	}
 
 	snapshot := fmt.Sprintf("%s/%s/%s", result.Ref.Type, result.Ref.ID, result.Ref.Time.UTC().Format("2006-01-02T15:04:05Z"))
@@ -181,9 +181,7 @@ func Run(ctx context.Context, opts Options) (*temporal.BackupExecutionResult, er
 		Paths: s.BackupPaths, ExcludePaths: s.ExcludePaths,
 		Archives: archiveStats(result),
 	}
-	for _, w := range result.Warnings {
-		detail.Warnings = append(detail.Warnings, rundetail.Warning{Path: w.Path, Message: w.Err.Error()})
-	}
+	detail.Warnings = detailWarnings(result.Warnings)
 
 	return &temporal.BackupExecutionResult{
 		Status:        db.RunStatusCompleted,
@@ -195,6 +193,40 @@ func Run(ctx context.Context, opts Options) (*temporal.BackupExecutionResult, er
 		Duration:      duration,
 		Details:       rundetail.Marshal(detail),
 	}, nil
+}
+
+// warningMessage renders a gopbs archiver warning. Only skipped entries and bad
+// exclude patterns carry an error; size-changed and torn-file warnings (files written
+// while they were read: WAL segments, journals, append-only logs) describe the change
+// with sizes instead, so Err must never be dereferenced blindly.
+func warningMessage(w archive.Warning) string {
+	switch w.Kind {
+	case archive.WarnSizeChanged:
+		return fmt.Sprintf("file size changed while it was read (archived %d bytes, source yielded %d); the archived copy was padded or truncated", w.Bound, w.Actual)
+	case archive.WarnTorn:
+		if w.Err != nil {
+			return "file changed while it was read (could not re-stat: " + w.Err.Error() + "); the archived copy may mix old and new content"
+		}
+		return fmt.Sprintf("file changed while it was read (size %d → %d); the archived copy may mix old and new content", w.Bound, w.Actual)
+	case archive.WarnBadPattern:
+		if w.Err != nil {
+			return "ignored an invalid .pxarexclude pattern: " + w.Err.Error()
+		}
+		return "ignored an invalid .pxarexclude pattern"
+	}
+	if w.Err != nil {
+		return "skipped: " + w.Err.Error()
+	}
+	return "skipped"
+}
+
+// detailWarnings maps archiver warnings onto the run detail record
+func detailWarnings(warnings []archive.Warning) []rundetail.Warning {
+	out := make([]rundetail.Warning, 0, len(warnings))
+	for _, w := range warnings {
+		out = append(out, rundetail.Warning{Path: w.Path, Message: warningMessage(w)})
+	}
+	return out
 }
 
 // archiveStats renders each uploaded archive's stats for the run detail page

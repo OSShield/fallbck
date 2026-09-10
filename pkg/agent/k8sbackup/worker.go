@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"time"
 
 	"github.com/osshield/fallbck/pkg/agent/backup"
@@ -38,7 +39,7 @@ const (
 // can read it from the pod status.
 func RunWorker(ctx context.Context) error {
 	resultPath := envDefault(EnvWorkerResult, "/dev/termination-log")
-	outcome := runWorker(ctx)
+	outcome := runWorkerSafely(ctx)
 	// Log the outcome to stdout first: pod logs are the channel the agent can always
 	// read, even if the termination-message file is unwritable or the pod is killed.
 	if outcome.Error != "" {
@@ -58,6 +59,22 @@ func RunWorker(ctx context.Context) error {
 	}
 	return nil
 }
+
+// runWorkerSafely turns a panic in the worker into a reported outcome. Without it a
+// crash after the PBS snapshot was finalised leaves no termination message, and the
+// agent can only guess from the exit code (and would retry a backup that succeeded).
+func runWorkerSafely(ctx context.Context) (outcome workerOutcome) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("Worker panicked", "panic", r, "stack", string(debug.Stack()))
+			outcome = workerOutcome{Error: fmt.Sprintf("worker panic: %v", r), Phase: "panic"}
+		}
+	}()
+	return runWorkerFn(ctx)
+}
+
+// runWorkerFn is the worker body; replaced in tests
+var runWorkerFn = runWorker
 
 func runWorker(ctx context.Context) workerOutcome {
 	fail := func(phase string, err error) workerOutcome {

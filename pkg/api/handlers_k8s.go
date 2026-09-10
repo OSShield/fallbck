@@ -25,9 +25,11 @@ type VolumeTicketRequest struct {
 	VolumeBackupID string `json:"volume_backup_id"`
 }
 
-// VolumeTicketResponse carries the freshly minted ticket
+// VolumeTicketResponse carries the freshly minted ticket and the snapshot timestamp
+// embedded in it (the worker must use the same one)
 type VolumeTicketResponse struct {
-	Ticket string `json:"ticket"`
+	Ticket     string `json:"ticket"`
+	BackupTime int64  `json:"backup_time"`
 }
 
 // WorkerTokenResponse carries a short-lived agent bearer for worker pods
@@ -76,7 +78,9 @@ func (s *ServerAPI) k8sTicketContext(w http.ResponseWriter, r *http.Request) (*a
 // HandleVolumeTicket mints a per-volume backup ticket for a kubernetes run: identical
 // claims to the session ticket, with the backup group swapped to the volume's group
 // (which must extend the session group with "-pvc-"). Fetched just-in-time per volume
-// so retried volumes always hold a fresh ticket.
+// so retried volumes always hold a fresh ticket, with a fresh snapshot timestamp: PBS
+// refuses a backup whose time is not newer than the group's latest snapshot, so a
+// retry after an attempt that finalised its snapshot must not reuse the run's time.
 func (s *ServerAPI) HandleVolumeTicket(w http.ResponseWriter, r *http.Request) {
 	_, claims, ok := s.k8sTicketContext(w, r)
 	if !ok {
@@ -92,6 +96,7 @@ func (s *ServerAPI) HandleVolumeTicket(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusForbidden, "volume_backup_id must extend the run's backup group with -pvc-<namespace>-<name>")
 		return
 	}
+	backupTime := freshBackupTime(claims.BackupTime)
 	ticket, err := s.TokenManager.CreateBackupTicket(auth.BackupTicketClaims{
 		JobID:      claims.JobID,
 		AgentID:    claims.AgentID,
@@ -100,7 +105,7 @@ func (s *ServerAPI) HandleVolumeTicket(w http.ResponseWriter, r *http.Request) {
 		Namespace:  claims.Namespace,
 		BackupType: claims.BackupType,
 		BackupID:   req.VolumeBackupID,
-		BackupTime: claims.BackupTime,
+		BackupTime: backupTime,
 	}, volumeTicketTTL)
 	if err != nil {
 		slog.Error("Failed to mint volume ticket", "error", err)
@@ -108,7 +113,7 @@ func (s *ServerAPI) HandleVolumeTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slog.Debug("Volume ticket issued", "agent_id", claims.AgentID, "job_id", claims.JobID, "group", req.VolumeBackupID)
-	s.writeJSON(w, http.StatusOK, VolumeTicketResponse{Ticket: ticket})
+	s.writeJSON(w, http.StatusOK, VolumeTicketResponse{Ticket: ticket, BackupTime: backupTime})
 }
 
 // HandleWorkerToken mints a short-lived secondary agent bearer for a run's worker pods

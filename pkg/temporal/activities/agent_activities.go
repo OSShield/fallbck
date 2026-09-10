@@ -27,6 +27,9 @@ type AgentActivities struct {
 	// Credentials fetches PBS connection details for jobs in direct mode
 	// (GET /api/v1/agents/pbs-credentials with the run's ticket)
 	Credentials func(ctx context.Context, ticket string) (*backup.DirectOptions, error)
+	// RefreshTicket re-issues the run's ticket with a fresh snapshot timestamp for
+	// retries (POST /api/v1/agents/ticket/refresh); nil keeps the session's timestamp
+	RefreshTicket TicketRefreshFunc
 	// LogTail returns the agent's recent log output, attached to failures
 	LogTail func() string
 	// ReportProgress posts live phase updates to the server (best-effort)
@@ -42,8 +45,10 @@ func NewAgentActivities() *AgentActivities {
 // into PBS through the server-side tunnel.
 func (a *AgentActivities) ExecuteFilesystemBackup(ctx context.Context, session *temporal.BackupSessionInfo) (*temporal.BackupExecutionResult, error) {
 	info := activity.GetInfo(ctx)
+	session = sessionForAttempt(ctx, session, a.RefreshTicket)
 	slog.Info("Agent activity started: ExecuteFilesystemBackup",
 		"activity_id", info.ActivityID,
+		"attempt", info.Attempt,
 		"job_id", session.JobID,
 		"paths", session.BackupPaths,
 		"datastore", session.Datastore,

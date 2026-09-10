@@ -47,10 +47,14 @@ type K8sAgentActivities struct {
 	WorkerMaxProcs int
 	// Credentials fetches PBS connection details for jobs in direct mode
 	Credentials func(ctx context.Context, ticket string) (*backup.DirectOptions, error)
-	// VolumeTicket mints a per-volume backup ticket from the session ticket
-	VolumeTicket func(ctx context.Context, sessionTicket, volumeBackupID string) (string, error)
+	// VolumeTicket mints a per-volume backup ticket from the session ticket; the
+	// returned snapshot timestamp is the one embedded in the ticket (fresh per attempt)
+	VolumeTicket func(ctx context.Context, sessionTicket, volumeBackupID string) (ticket string, backupTime int64, err error)
 	// WorkerToken mints a short-lived agent bearer for worker pods
 	WorkerToken func(ctx context.Context, sessionTicket string) (string, time.Time, error)
+	// RefreshTicket re-issues the session ticket with a fresh snapshot timestamp when
+	// the resources upload is retried; nil keeps the session's timestamp
+	RefreshTicket TicketRefreshFunc
 	// SpoolDir stages the resource dump (default <data dir>/spool)
 	SpoolDir string
 	// LogTail returns the agent's recent log output, attached to failures
@@ -180,10 +184,15 @@ func (a *K8sAgentActivities) cachedWorkerToken(ctx context.Context, session *tem
 
 // workerEnv assembles the worker pod's environment: credentials, session identity and
 // transport settings. Everything is short-lived (2h ticket, 6h worker token).
-func (a *K8sAgentActivities) workerEnv(ctx context.Context, session *temporal.BackupSessionInfo, groupID, volumeTicket string) ([]corev1.EnvVar, error) {
+func (a *K8sAgentActivities) workerEnv(ctx context.Context, session *temporal.BackupSessionInfo, groupID, volumeTicket string, backupTime int64) ([]corev1.EnvVar, error) {
 	workerSession := *session
 	workerSession.BackupID = groupID
 	workerSession.Ticket = ""
+	if backupTime > 0 {
+		// The snapshot time the worker reports must match the ticket the tunnel opens
+		// the PBS session with
+		workerSession.BackupTime = backupTime
+	}
 	workerSession.K8sConfig = nil
 	workerSession.BackupPaths = nil
 	sessionJSON, err := jsonMarshal(workerSession)
@@ -282,11 +291,11 @@ func (a *K8sAgentActivities) BackupKubernetesVolume(ctx context.Context, session
 	if a.VolumeTicket == nil {
 		return nil, errors.New("agent has no volume-ticket fetcher")
 	}
-	ticket, err := a.VolumeTicket(ctx, session.Ticket, plan.GroupID)
+	ticket, backupTime, err := a.VolumeTicket(ctx, session.Ticket, plan.GroupID)
 	if err != nil {
 		return nil, backupFailure(ctx, fmt.Errorf("fetching volume ticket: %w", err), pt, a.LogTail)
 	}
-	env, err := a.workerEnv(ctx, session, plan.GroupID, ticket)
+	env, err := a.workerEnv(ctx, session, plan.GroupID, ticket, backupTime)
 	if err != nil {
 		return nil, backupFailure(ctx, err, pt, a.LogTail)
 	}
@@ -322,6 +331,7 @@ func (a *K8sAgentActivities) BackupKubernetesVolume(ctx context.Context, session
 // BackupKubernetesResources dumps every selected API resource and uploads it together
 // with the run manifest (which embeds the per-volume outcomes; it runs last).
 func (a *K8sAgentActivities) BackupKubernetesResources(ctx context.Context, session *temporal.BackupSessionInfo, plan *spec.Plan, volumes []spec.VolumeResult) (*temporal.BackupExecutionResult, error) {
+	session = sessionForAttempt(ctx, session, a.RefreshTicket)
 	pt := newPhaseTracker()
 	stop := startHeartbeats(ctx, pt)
 	defer stop()

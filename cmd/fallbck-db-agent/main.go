@@ -93,6 +93,7 @@ func main() {
 			acts := activities.NewDBAgentActivities()
 			acts.Tunnel = conns.Tunnel
 			acts.Credentials = runtime.PBSCredentialsFetcher(cfg, store)
+			acts.RefreshTicket = runtime.TicketRefresher(cfg, store)
 			acts.DBPassword = dbPasswordFetcher(cfg, store)
 			acts.Config = dbCfg
 			acts.Hostname = cfg.Hostname
