@@ -504,6 +504,28 @@ func applyProfileEnv(c *dbbackup.Config, environ []string) {
 	}
 }
 
+// ServerTLSConfig builds the client TLS configuration for ServerURL: the operator's
+// private CA (ServerCACertPath) and/or InsecureSkipVerify. Used by every connection
+// the agent makes to the server (enrollment, HTTP API, Temporal and tunnel gRPC).
+func (c *AgentConfig) ServerTLSConfig() (*tls.Config, error) {
+	tlsCfg := &tls.Config{InsecureSkipVerify: c.InsecureSkipVerify} //nolint:gosec // operator-controlled setting
+	if u, err := url.Parse(c.ServerURL); err == nil {
+		tlsCfg.ServerName = u.Hostname()
+	}
+	if c.ServerCACertPath != "" {
+		pem, err := os.ReadFile(c.ServerCACertPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read server CA bundle: %w", err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(pem) {
+			return nil, fmt.Errorf("server CA bundle %s contains no certificates", c.ServerCACertPath)
+		}
+		tlsCfg.RootCAs = pool
+	}
+	return tlsCfg, nil
+}
+
 // Save writes the agent configuration to path with owner-only permissions (it holds the token)
 func (c *AgentConfig) Save(path string) error {
 	data, err := yaml.Marshal(c)

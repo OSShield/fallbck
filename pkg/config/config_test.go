@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -158,4 +159,39 @@ func TestTimezoneConfig(t *testing.T) {
 	if cfg.ScheduleLocation().String() != "Europe/Stockholm" {
 		t.Errorf("ScheduleLocation = %v", cfg.ScheduleLocation())
 	}
+}
+
+func TestAgentServerTLSConfig(t *testing.T) {
+	t.Run("defaults", func(t *testing.T) {
+		cfg := &AgentConfig{ServerURL: "https://backup.example.com:8443"}
+		tlsCfg, err := cfg.ServerTLSConfig()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if tlsCfg.ServerName != "backup.example.com" || tlsCfg.InsecureSkipVerify || tlsCfg.RootCAs != nil {
+			t.Fatalf("unexpected config: %+v", tlsCfg)
+		}
+	})
+	t.Run("insecure", func(t *testing.T) {
+		tlsCfg, err := (&AgentConfig{ServerURL: "https://x", InsecureSkipVerify: true}).ServerTLSConfig()
+		if err != nil || !tlsCfg.InsecureSkipVerify {
+			t.Fatalf("insecure_skip_verify not applied (err=%v)", err)
+		}
+	})
+	t.Run("missing CA file", func(t *testing.T) {
+		_, err := (&AgentConfig{ServerURL: "https://x", ServerCACertPath: filepath.Join(t.TempDir(), "nope.crt")}).ServerTLSConfig()
+		if err == nil {
+			t.Fatal("expected an error for a missing CA bundle")
+		}
+	})
+	t.Run("CA file without certificates", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "empty.crt")
+		if err := os.WriteFile(path, []byte("not a pem"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := (&AgentConfig{ServerURL: "https://x", ServerCACertPath: path}).ServerTLSConfig()
+		if err == nil || !strings.Contains(err.Error(), "contains no certificates") {
+			t.Fatalf("expected a no-certificates error, got %v", err)
+		}
+	})
 }

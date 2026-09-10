@@ -39,6 +39,8 @@ Exclude patterns use `proxmox-backup-client --exclude` syntax (`*.tmp`, `/var/ca
 
 A job with several paths produces one `root.pxar` archive with each path at the top level under its basename (`/etc` → `etc`); paths that share a basename are named after their full path instead (`/etc/mydir` → `etc-mydir`, `/var/lib/mydir` → `var-lib-mydir`). A single-path job archives that directory directly, named after it.
 
+If the server (or the reverse proxy in front of it) uses a private or self-signed certificate, pass `--ca-cert <pem bundle>` (or, for testing only, `--insecure-skip-verify`) to `enroll`; the setting is used for the enrollment request itself and persisted in `agent.yaml` (`server_ca_cert_path` / `insecure_skip_verify`). The Kubernetes agent takes the same settings from the Helm values `server.caCert` / `server.insecureSkipVerify`.
+
 The agent needs exactly one endpoint: the server's public URL. It receives a bearer token at enrollment, polls its own Temporal task queue through the server's gateway, and streams backups into PBS through a session the server opens on its behalf (the agent never holds PBS credentials). A job can instead be set to **direct PBS access** (server-side job option `direct_pbs`): the agent then fetches the target's connection details and API token for that run and talks to PBS itself — useful when the agent has a better path to PBS than the server does.
 
 ### Database agent

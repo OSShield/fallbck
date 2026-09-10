@@ -1,8 +1,10 @@
 # The FallBCK server (reverse proxy) URL — required
 server:
   url: ""
-  # PEM bundle of a private CA to trust for server.url (inline)
+  # PEM bundle of a private CA to trust for server.url (inline). Applies to enrollment,
+  # the agent's API/gRPC connections and the worker pods.
   caCert: ""
+  # Skip certificate verification for server.url (testing only)
   insecureSkipVerify: false
 
 # Cluster name — required; becomes the agent identity (k8s-<clusterName>) and the PBS
