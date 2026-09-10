@@ -3,10 +3,13 @@ package activities
 import (
 	"context"
 	"fmt"
-	"github.com/google/uuid"
-	"github.com/osshield/fallbck/pkg/rundetail"
+	"log/slog"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/osshield/fallbck/pkg/rundetail"
 
 	"github.com/osshield/fallbck/pkg/temporal"
 	"go.temporal.io/sdk/activity"
@@ -116,9 +119,48 @@ func startProgress(ctx context.Context, pt *phaseTracker, interval time.Duration
 	return func() { once.Do(func() { close(done) }) }
 }
 
+// TicketRefreshFunc re-issues a run's backup ticket with a fresh snapshot timestamp
+type TicketRefreshFunc func(ctx context.Context, ticket string) (ticket2 string, backupTime int64, err error)
+
+// sessionForAttempt returns the session a backup attempt should run with. The first
+// attempt uses the session as prepared; a retry re-issues the ticket so the snapshot
+// gets a new timestamp: PBS refuses a backup whose time is not newer than the group's
+// latest snapshot, and the previous attempt may well have finalised its snapshot before
+// failing. When the refresh fails the attempt proceeds with the original session (and
+// gets the snapshot-conflict diagnosis from backupFailure if PBS refuses it).
+func sessionForAttempt(ctx context.Context, session *temporal.BackupSessionInfo, refresh TicketRefreshFunc) *temporal.BackupSessionInfo {
+	attempt := activity.GetInfo(ctx).Attempt
+	if attempt <= 1 || refresh == nil {
+		return session
+	}
+	ticket, backupTime, err := refresh(ctx, session.Ticket)
+	if err != nil {
+		slog.Warn("Could not re-issue the backup ticket for the retry; reusing the previous snapshot timestamp", "attempt", attempt, "error", err)
+		return session
+	}
+	fresh := *session
+	fresh.Ticket = ticket
+	fresh.BackupTime = backupTime
+	slog.Info("Retrying with a new snapshot timestamp", "attempt", attempt, "backup_id", fresh.BackupID, "previous_time", session.BackupTime, "backup_time", backupTime)
+	return &fresh
+}
+
+// snapshotConflictMarker is PBS's response when a backup's timestamp is not newer than
+// the group's latest snapshot; it reaches the agent through the tunnel's error string
+const snapshotConflictMarker = "backup timestamp is older than last backup"
+
+// isSnapshotConflict reports whether PBS refused the session because a snapshot at (or
+// after) the requested timestamp already exists
+func isSnapshotConflict(err error) bool {
+	return err != nil && strings.Contains(err.Error(), snapshotConflictMarker)
+}
+
 // backupFailure wraps an activity failure with the current phase and the agent's log
 // tail so the workflow can surface both on the run record. Cancellations pass through
-// untouched (they must stay cancellations).
+// untouched (they must stay cancellations). A snapshot conflict is reported as
+// non-retryable with an explanation: retrying with the same timestamp cannot succeed,
+// and the most likely cause is a previous attempt that completed the upload but failed
+// before it could report.
 func backupFailure(ctx context.Context, err error, pt *phaseTracker, logTail func() string) error {
 	if err == nil || ctx.Err() != nil {
 		return err
@@ -127,6 +169,12 @@ func backupFailure(ctx context.Context, err error, pt *phaseTracker, logTail fun
 	if logTail != nil {
 		tail = logTail()
 	}
+	details := temporal.BackupFailureDetails{Phase: pt.Current(), LogTail: tail}
+	if isSnapshotConflict(err) {
+		msg := fmt.Sprintf("%v [phase: %s] — PBS already holds a snapshot of this backup group at or after the requested timestamp; "+
+			"a previous attempt most likely completed the upload but failed before reporting. Check the group in PBS before re-running.", err, pt.Current())
+		return sdktemporal.NewNonRetryableApplicationError(msg, ErrTypeBackupFailed, nil, details)
+	}
 	msg := fmt.Sprintf("%v [phase: %s]", err, pt.Current())
-	return sdktemporal.NewApplicationError(msg, ErrTypeBackupFailed, temporal.BackupFailureDetails{Phase: pt.Current(), LogTail: tail})
+	return sdktemporal.NewApplicationError(msg, ErrTypeBackupFailed, details)
 }

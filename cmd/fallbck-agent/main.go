@@ -72,6 +72,7 @@ func main() {
 			acts := activities.NewAgentActivities()
 			acts.Tunnel = conns.Tunnel
 			acts.Credentials = runtime.PBSCredentialsFetcher(cfg, store)
+			acts.RefreshTicket = runtime.TicketRefresher(cfg, store)
 			acts.LogTail = logging.Tail
 			acts.ReportProgress = runtime.ProgressReporter(cfg, store)
 			w.RegisterActivity(acts)

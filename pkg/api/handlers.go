@@ -67,6 +67,7 @@ func (s *ServerAPI) RegisterRoutes(r chi.Router, admin, agent Middleware) {
 			r.Post("/agents/token/rotate", s.HandleRotateAgentToken)
 			r.Get("/agents/pbs-credentials", s.HandlePBSCredentials)
 			r.Get("/agents/db-credentials", s.HandleDBCredentials)
+			r.Post("/agents/ticket/refresh", s.HandleRefreshTicket)
 			r.Post("/agents/volume-ticket", s.HandleVolumeTicket)
 			r.Post("/agents/token/worker", s.HandleWorkerToken)
 			r.Post("/agents/run-progress", s.HandleRunProgress)

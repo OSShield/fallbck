@@ -342,6 +342,23 @@ func PBSCredentialsFetcher(cfg *config.AgentConfig, store *TokenStore) func(ctx 
 	}
 }
 
+// TicketRefresher returns a function that re-issues a run's backup ticket with a fresh
+// snapshot timestamp (POST /api/v1/agents/ticket/refresh); retried backup activities
+// use it so PBS does not reject the retry as older than the previous attempt's snapshot.
+func TicketRefresher(cfg *config.AgentConfig, store *TokenStore) func(ctx context.Context, ticket string) (string, int64, error) {
+	httpClient := ServerHTTPClient(cfg)
+	return func(ctx context.Context, ticket string) (string, int64, error) {
+		var resp api.TicketRefreshResponse
+		if err := TicketPost(ctx, httpClient, cfg, store, "/api/v1/agents/ticket/refresh", ticket, struct{}{}, &resp); err != nil {
+			return "", 0, fmt.Errorf("refreshing backup ticket: %w", err)
+		}
+		if resp.Ticket == "" || resp.BackupTime <= 0 {
+			return "", 0, errors.New("refreshing backup ticket: server returned no ticket")
+		}
+		return resp.Ticket, resp.BackupTime, nil
+	}
+}
+
 // ProgressReporter returns a best-effort function that posts live run progress to the
 // server (phase and/or per-item statuses), authenticated with the run's backup ticket.
 func ProgressReporter(cfg *config.AgentConfig, store *TokenStore) func(ctx context.Context, ticket string, runID uuid.UUID, phase string, items map[string]rundetail.ProgressItem) error {

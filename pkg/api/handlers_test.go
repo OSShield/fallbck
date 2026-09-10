@@ -6,8 +6,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/osshield/fallbck/pkg/auth"
 	"github.com/osshield/fallbck/pkg/config"
 )
@@ -140,5 +142,73 @@ func TestCreateJobValidation(t *testing.T) {
 		if rr := post(body); rr.Code != http.StatusBadRequest {
 			t.Errorf("%s: expected 400, got %d: %s", name, rr.Code, rr.Body.String())
 		}
+	}
+}
+
+func TestRefreshTicketIssuesNewSnapshotTime(t *testing.T) {
+	tm := auth.NewTokenManager("test-secret-key-must-be-very-long-123456")
+	api := NewServerAPI(nil, nil, config.DefaultServerConfig(), tm, nil)
+	agentID := uuid.New()
+	original := auth.BackupTicketClaims{
+		JobID: uuid.New(), AgentID: agentID, TargetID: uuid.New(), Datastore: "backup",
+		BackupType: "ct", BackupID: "k8s-c1", BackupTime: 1_000_000,
+	}
+	ticket, err := tm.CreateBackupTicket(original, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	call := func(agent *auth.AgentClaims, ticket string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/agents/ticket/refresh", strings.NewReader("{}"))
+		if ticket != "" {
+			req.Header.Set(BackupTicketHeader, ticket)
+		}
+		if agent != nil {
+			req = req.WithContext(auth.WithAgent(req.Context(), agent))
+		}
+		rr := httptest.NewRecorder()
+		api.HandleRefreshTicket(rr, req)
+		return rr
+	}
+
+	rr := call(&auth.AgentClaims{AgentID: agentID}, ticket)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("refresh: expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var resp TicketRefreshResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.BackupTime <= original.BackupTime {
+		t.Fatalf("refreshed timestamp %d is not newer than %d", resp.BackupTime, original.BackupTime)
+	}
+	claims, err := tm.ValidateBackupTicket(resp.Ticket)
+	if err != nil {
+		t.Fatalf("refreshed ticket does not validate: %v", err)
+	}
+	if claims.BackupTime != resp.BackupTime || claims.BackupID != original.BackupID || claims.JobID != original.JobID ||
+		claims.AgentID != agentID || claims.TargetID != original.TargetID || claims.Datastore != original.Datastore || claims.BackupType != original.BackupType {
+		t.Fatalf("refreshed claims differ beyond the timestamp: %+v", claims)
+	}
+
+	if rr := call(&auth.AgentClaims{AgentID: uuid.New()}, ticket); rr.Code != http.StatusForbidden {
+		t.Errorf("another agent's ticket: expected 403, got %d", rr.Code)
+	}
+	if rr := call(&auth.AgentClaims{AgentID: agentID}, ""); rr.Code != http.StatusBadRequest {
+		t.Errorf("missing ticket: expected 400, got %d", rr.Code)
+	}
+	if rr := call(nil, ticket); rr.Code != http.StatusUnauthorized {
+		t.Errorf("no agent: expected 401, got %d", rr.Code)
+	}
+}
+
+func TestFreshBackupTimeNeverGoesBackwards(t *testing.T) {
+	future := time.Now().Add(time.Hour).Unix()
+	if got := freshBackupTime(future); got != future+1 {
+		t.Fatalf("expected %d, got %d", future+1, got)
+	}
+	past := time.Now().Add(-time.Hour).Unix()
+	if got := freshBackupTime(past); got <= past {
+		t.Fatalf("expected a current timestamp, got %d", got)
 	}
 }

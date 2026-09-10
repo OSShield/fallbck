@@ -33,4 +33,5 @@ go.work.sum
 dist/
 
 *.local.yaml
+*.local.md
 fallbck-k8s-agent*.tgz

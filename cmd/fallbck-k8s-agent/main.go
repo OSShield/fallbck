@@ -174,11 +174,12 @@ func runAgent(logging *runtime.Logging) {
 		acts.LogTail = logging.Tail
 		acts.ReportProgress = runtime.ProgressReporter(cfg, store)
 		acts.Credentials = runtime.PBSCredentialsFetcher(cfg, store)
-		acts.VolumeTicket = func(ctx context.Context, sessionTicket, volumeBackupID string) (string, error) {
+		acts.RefreshTicket = runtime.TicketRefresher(cfg, store)
+		acts.VolumeTicket = func(ctx context.Context, sessionTicket, volumeBackupID string) (string, int64, error) {
 			var resp api.VolumeTicketResponse
 			err := runtime.TicketPost(ctx, httpClient, cfg, store, "/api/v1/agents/volume-ticket", sessionTicket,
 				api.VolumeTicketRequest{VolumeBackupID: volumeBackupID}, &resp)
-			return resp.Ticket, err
+			return resp.Ticket, resp.BackupTime, err
 		}
 		acts.WorkerToken = func(ctx context.Context, sessionTicket string) (string, time.Time, error) {
 			var resp api.WorkerTokenResponse

@@ -2,6 +2,7 @@ package backup
 
 import (
 	"context"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"github.com/osshield/fallbck/pkg/proxy/pbstest"
 	"github.com/osshield/fallbck/pkg/temporal"
 	"github.com/osshield/gopbs"
+	"github.com/osshield/gopbs/archive"
 	"github.com/osshield/gopbs/pbs"
 )
 
@@ -259,5 +261,34 @@ func TestRunAppliesExcludePatterns(t *testing.T) {
 	}
 	if len(fake.Upgrades()) != 0 {
 		t.Error("session opened despite invalid pattern")
+	}
+}
+
+// TestWarningMessageWithoutError covers the archiver warnings that carry no error
+// (files changing while read): they used to panic the worker after a finished upload
+func TestWarningMessageWithoutError(t *testing.T) {
+	warnings := []archive.Warning{
+		{Kind: archive.WarnSizeChanged, Path: "/data/pg_wal/0001", Bound: 100, Actual: 90},
+		{Kind: archive.WarnTorn, Path: "/data/journal/WiredTigerLog.1", Bound: 100, Actual: 120},
+		{Kind: archive.WarnTorn, Path: "/data/gone", Err: errors.New("stat: no such file")},
+		{Kind: archive.WarnSkipped, Path: "/data/denied", Err: errors.New("permission denied")},
+		{Kind: archive.WarnSkipped, Path: "/data/odd"},
+		{Kind: archive.WarnBadPattern, Path: "/data/.pxarexclude", Err: errors.New("bad pattern")},
+		{Kind: archive.WarnBadPattern, Path: "/data/.pxarexclude"},
+	}
+	out := detailWarnings(warnings)
+	if len(out) != len(warnings) {
+		t.Fatalf("expected %d warnings, got %d", len(warnings), len(out))
+	}
+	for i, w := range out {
+		if w.Path != warnings[i].Path || w.Message == "" {
+			t.Errorf("warning %d: path=%q message=%q", i, w.Path, w.Message)
+		}
+	}
+	if !strings.Contains(out[0].Message, "100") || !strings.Contains(out[0].Message, "90") {
+		t.Errorf("size-changed message should carry both sizes: %q", out[0].Message)
+	}
+	if !strings.Contains(out[2].Message, "no such file") || !strings.Contains(out[3].Message, "permission denied") {
+		t.Errorf("errors should be included: %q / %q", out[2].Message, out[3].Message)
 	}
 }

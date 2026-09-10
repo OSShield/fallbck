@@ -70,3 +70,28 @@ func TestPBSDirectOptionsNamespaceRoundTrip(t *testing.T) {
 		t.Errorf("namespace lost in JSON round-trip: %q (json: %s)", out.Namespace, data)
 	}
 }
+
+// TestRunWorkerReportsPanics proves a crash inside the worker still produces a
+// termination message (and a non-zero exit) instead of an unexplained exit code 2
+func TestRunWorkerReportsPanics(t *testing.T) {
+	orig := runWorkerFn
+	runWorkerFn = func(context.Context) workerOutcome { panic("boom") }
+	t.Cleanup(func() { runWorkerFn = orig })
+	resultPath := filepath.Join(t.TempDir(), "termination-log")
+	t.Setenv(EnvWorkerResult, resultPath)
+
+	if err := RunWorker(context.Background()); err == nil {
+		t.Fatal("expected RunWorker to fail after a panic")
+	}
+	data, err := os.ReadFile(resultPath)
+	if err != nil {
+		t.Fatalf("termination message not written: %v", err)
+	}
+	var out workerOutcome
+	if err := json.Unmarshal(data, &out); err != nil {
+		t.Fatalf("termination message is not JSON: %v (%s)", err, data)
+	}
+	if out.Phase != "panic" || out.Error != "worker panic: boom" {
+		t.Fatalf("unexpected outcome: %+v", out)
+	}
+}

@@ -35,6 +35,9 @@ type DBAgentActivities struct {
 	Credentials func(ctx context.Context, ticket string) (*backup.DirectOptions, error)
 	// DBPassword fetches the server-stored database password for a run
 	DBPassword func(ctx context.Context, ticket string) (string, error)
+	// RefreshTicket re-issues the run's ticket with a fresh snapshot timestamp for
+	// retries; nil keeps the session's timestamp
+	RefreshTicket TicketRefreshFunc
 	// Config is the agent's db_backup configuration (defaults applied)
 	Config   dbbackup.Config
 	Hostname string
@@ -57,9 +60,11 @@ func (a *DBAgentActivities) ExecuteDatabaseBackup(ctx context.Context, session *
 	if session.JobType != db.JobTypeDatabase || session.DBConfig == nil {
 		return nil, sdktemporal.NewNonRetryableApplicationError("session is not a database backup", ErrTypeDBPrecheckFailed, nil)
 	}
+	session = sessionForAttempt(ctx, session, a.RefreshTicket)
 	spec := session.DBConfig
 	slog.Info("Agent activity started: ExecuteDatabaseBackup",
 		"activity_id", info.ActivityID,
+		"attempt", info.Attempt,
 		"job_id", session.JobID,
 		"engine", spec.Engine,
 		"host", spec.Host,
