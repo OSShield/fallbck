@@ -7,8 +7,6 @@ package runtime
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -91,7 +89,10 @@ func LoadConfig(a Agent, configPath string) (*config.AgentConfig, string, error)
 	if cfg.AgentID == "" && cfg.EnrollmentKey != "" {
 		slog.Info("Agent not enrolled yet, enrolling with server", "server", cfg.ServerURL, "data_dir", cfg.DataDir, "agent_type", a.Type)
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		_, err := enrollment.Enroll(ctx, enrollment.Options{ServerURL: cfg.ServerURL, Token: cfg.EnrollmentKey, DataDir: cfg.DataDir, AgentType: a.Type, Version: a.Version})
+		_, err := enrollment.Enroll(ctx, enrollment.Options{
+			ServerURL: cfg.ServerURL, Token: cfg.EnrollmentKey, DataDir: cfg.DataDir, AgentType: a.Type, Version: a.Version,
+			CACertPath: cfg.ServerCACertPath, InsecureSkipVerify: cfg.InsecureSkipVerify,
+		})
 		cancel()
 		if err != nil {
 			return nil, "", fmt.Errorf("agent self-enrollment failed: %w", err)
@@ -179,17 +180,9 @@ func ConnectionOptions(cfg *config.AgentConfig) (string, client.ConnectionOption
 		if port == "" {
 			port = "443"
 		}
-		tlsCfg := &tls.Config{ServerName: host, InsecureSkipVerify: cfg.InsecureSkipVerify} //nolint:gosec // operator-controlled
-		if cfg.ServerCACertPath != "" {
-			pem, err := os.ReadFile(cfg.ServerCACertPath)
-			if err != nil {
-				return "", opts, fmt.Errorf("failed to read server CA bundle: %w", err)
-			}
-			pool := x509.NewCertPool()
-			if !pool.AppendCertsFromPEM(pem) {
-				return "", opts, fmt.Errorf("server CA bundle %s contains no certificates", cfg.ServerCACertPath)
-			}
-			tlsCfg.RootCAs = pool
+		tlsCfg, err := cfg.ServerTLSConfig()
+		if err != nil {
+			return "", opts, err
 		}
 		opts.TLS = tlsCfg
 	case "http":
@@ -270,13 +263,19 @@ func Connect(cfg *config.AgentConfig, store *TokenStore, identity string) (*Conn
 	return &Conns{HostPort: hostPort, Temporal: temporalClient, Tunnel: tunnelConn}, nil
 }
 
-// ServerHTTPClient builds the HTTP client for the FallBCK server (trusting a private CA if configured)
+// ServerHTTPClient builds the HTTP client for the FallBCK server (trusting a private CA
+// and/or skipping verification if configured). A CA bundle that cannot be loaded is
+// logged and the system roots are used instead, so the failure shows up here rather
+// than as an opaque certificate error on the first request.
 func ServerHTTPClient(cfg *config.AgentConfig) *http.Client {
 	httpClient := &http.Client{Timeout: 15 * time.Second}
 	if strings.HasPrefix(strings.ToLower(cfg.ServerURL), "https://") {
-		if _, connOpts, err := ConnectionOptions(cfg); err == nil && connOpts.TLS != nil {
-			httpClient.Transport = &http.Transport{TLSClientConfig: connOpts.TLS}
+		tlsCfg, err := cfg.ServerTLSConfig()
+		if err != nil {
+			slog.Warn("Server TLS settings are unusable; falling back to the system trust store", "error", err)
+			return httpClient
 		}
+		httpClient.Transport = &http.Transport{TLSClientConfig: tlsCfg}
 	}
 	return httpClient
 }

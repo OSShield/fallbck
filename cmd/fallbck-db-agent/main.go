@@ -29,6 +29,8 @@ func main() {
 	enrollCmd := flag.NewFlagSet("enroll", flag.ExitOnError)
 	enrollServer := enrollCmd.String("server", "http://localhost:8080", "FallBCK server URL")
 	enrollToken := enrollCmd.String("token", "", "One-time enrollment token")
+	enrollCA := enrollCmd.String("ca-cert", "", "PEM bundle of a private CA to trust for the server URL")
+	enrollInsecure := enrollCmd.Bool("insecure-skip-verify", false, "Skip TLS certificate verification for the server URL (not recommended)")
 	enrollDir := enrollCmd.String("data-dir", "", "Agent data directory (default: $FALLBCK_AGENT_DATA_DIR, "+config.SystemDBAgentDataDir+" as root, else ~/.fallbck/db-agent)")
 
 	runCmd := flag.NewFlagSet("run", flag.ExitOnError)
@@ -55,7 +57,10 @@ func main() {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		cfg, err := enrollment.Enroll(ctx, enrollment.Options{ServerURL: *enrollServer, Token: *enrollToken, DataDir: *enrollDir, AgentType: agent.Type, Version: AgentVersion})
+		cfg, err := enrollment.Enroll(ctx, enrollment.Options{
+			ServerURL: *enrollServer, Token: *enrollToken, DataDir: *enrollDir, AgentType: agent.Type, Version: AgentVersion,
+			CACertPath: *enrollCA, InsecureSkipVerify: *enrollInsecure,
+		})
 		if err != nil {
 			slog.Error("Agent enrollment failed", "error", err)
 			os.Exit(1)

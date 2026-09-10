@@ -36,6 +36,12 @@ type Options struct {
 	Version string
 	// Hostname overrides the reported hostname (e.g. k8s-<cluster>); default os.Hostname()
 	Hostname string
+	// CACertPath is a PEM bundle of a private CA to trust for ServerURL; it is used for
+	// the enrollment request itself and persisted in agent.yaml
+	CACertPath string
+	// InsecureSkipVerify disables certificate verification for ServerURL (enrollment
+	// request and agent.yaml)
+	InsecureSkipVerify bool
 }
 
 // EnrollAgent enrolls a filesystem agent (see Enroll)
@@ -45,8 +51,9 @@ func EnrollAgent(ctx context.Context, serverURL, token, dataDir string) (*config
 
 // Enroll exchanges a one-time enrollment token for an agent identity and bearer token,
 // and writes agent.yaml (and an optional server CA bundle) into the data directory.
-// Operator settings already present in an existing agent.yaml (db_backup, TLS options)
-// are preserved.
+// The enrollment request honours o.CACertPath / o.InsecureSkipVerify, so a server with
+// a private or self-signed certificate can be enrolled with. Operator settings already
+// present in an existing agent.yaml (db_backup, TLS options) are preserved.
 func Enroll(ctx context.Context, o Options) (*config.AgentConfig, error) {
 	if o.AgentType == "" {
 		o.AgentType = config.AgentTypeFilesystem
@@ -86,7 +93,10 @@ func Enroll(ctx context.Context, o Options) (*config.AgentConfig, error) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 15 * time.Second}
+	client, err := httpClient(serverURL, o)
+	if err != nil {
+		return nil, err
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to server at %s: %w", serverURL, err)
@@ -129,7 +139,12 @@ func Enroll(ctx context.Context, o Options) (*config.AgentConfig, error) {
 		cfg.Namespace = "default"
 	}
 
-	if enrollResp.ServerCAPEM != "" {
+	// TLS trust for ServerURL: an operator-supplied CA wins (the certificate the agent
+	// sees may belong to a proxy in front of the server), then the CA the server
+	// advertises, then whatever an existing agent.yaml already had.
+	cfg.ServerCACertPath = o.CACertPath
+	cfg.InsecureSkipVerify = o.InsecureSkipVerify
+	if enrollResp.ServerCAPEM != "" && cfg.ServerCACertPath == "" {
 		caPath := filepath.Join(dataDir, "server-ca.crt")
 		if err := os.WriteFile(caPath, []byte(enrollResp.ServerCAPEM), 0o644); err != nil {
 			return nil, fmt.Errorf("failed to write server CA bundle: %w", err)
@@ -140,7 +155,7 @@ func Enroll(ctx context.Context, o Options) (*config.AgentConfig, error) {
 	configPath := filepath.Join(dataDir, ConfigFileName)
 	if existing, err := config.ReadAgentConfigFile(configPath); err == nil {
 		cfg.DBBackup = existing.DBBackup
-		cfg.InsecureSkipVerify = existing.InsecureSkipVerify
+		cfg.InsecureSkipVerify = cfg.InsecureSkipVerify || existing.InsecureSkipVerify
 		if cfg.ServerCACertPath == "" {
 			cfg.ServerCACertPath = existing.ServerCACertPath
 		}
@@ -150,4 +165,23 @@ func Enroll(ctx context.Context, o Options) (*config.AgentConfig, error) {
 		return nil, err
 	}
 	return cfg, nil
+}
+
+// httpClient builds the client for the enrollment request, applying the operator's
+// TLS trust settings when the server is reached over https
+func httpClient(serverURL string, o Options) (*http.Client, error) {
+	client := &http.Client{Timeout: 15 * time.Second}
+	if !strings.HasPrefix(strings.ToLower(serverURL), "https://") {
+		return client, nil
+	}
+	tlsCfg, err := (&config.AgentConfig{
+		ServerURL:          serverURL,
+		ServerCACertPath:   o.CACertPath,
+		InsecureSkipVerify: o.InsecureSkipVerify,
+	}).ServerTLSConfig()
+	if err != nil {
+		return nil, err
+	}
+	client.Transport = &http.Transport{TLSClientConfig: tlsCfg}
+	return client, nil
 }

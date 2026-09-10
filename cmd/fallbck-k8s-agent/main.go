@@ -118,6 +118,9 @@ func runAgent(logging *runtime.Logging) {
 			ServerURL: cfg.ServerURL, Token: cfg.EnrollmentKey,
 			DataDir: os.TempDir(), AgentType: config.AgentTypeKubernetes,
 			Version: AgentVersion, Hostname: "k8s-" + clusterName,
+			// server.caCert / server.insecureSkipVerify from the chart apply to the
+			// enrollment request too (the server may be self-signed)
+			CACertPath: cfg.ServerCACertPath, InsecureSkipVerify: cfg.InsecureSkipVerify,
 		})
 		cancel()
 		if err != nil {
@@ -130,7 +133,8 @@ func runAgent(logging *runtime.Logging) {
 		cfg.Namespace = enrolled.Namespace
 		cfg.AuthToken = enrolled.AuthToken
 		cfg.TokenExpiresAt = enrolled.TokenExpiresAt
-		if enrolled.ServerCACertPath != "" {
+		// Trust the CA the server advertised only when the chart did not mount one
+		if cfg.ServerCACertPath == "" && enrolled.ServerCACertPath != "" {
 			cfg.ServerCACertPath = enrolled.ServerCACertPath
 		}
 		ctx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
