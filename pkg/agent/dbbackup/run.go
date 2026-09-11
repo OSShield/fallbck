@@ -34,6 +34,11 @@ type RunOptions struct {
 	AgentVersion string
 	// PollInterval overrides the spool poll interval (tests)
 	PollInterval time.Duration
+	// State overrides where the job's chain state is read and written (default: JSON
+	// files under Config.StateDir)
+	State StateStore
+	// Generator names the agent in the manifest (default fallbck-db-agent)
+	Generator string
 }
 
 // Run executes one database backup run end to end
@@ -100,7 +105,11 @@ func Run(ctx context.Context, o RunOptions) (*temporal.BackupExecutionResult, er
 		}
 	}()
 
-	prev, err := loadState(cfg.StateDir, jobID)
+	state := o.State
+	if state == nil {
+		state = FileStateStore{Dir: cfg.StateDir}
+	}
+	prev, err := state.Load(ctx, jobID)
 	if err != nil {
 		slog.Warn("Ignoring unreadable job state", "error", err)
 		prev = nil
@@ -199,9 +208,13 @@ func Run(ctx context.Context, o RunOptions) (*temporal.BackupExecutionResult, er
 	if consistent.IsZero() {
 		consistent = started
 	}
+	generator := o.Generator
+	if generator == "" {
+		generator = "fallbck-db-agent"
+	}
 	manifest := &dbspec.Manifest{
 		SchemaVersion:  dbspec.ManifestSchemaVersion,
-		Generator:      dbspec.ManifestGenerator{Agent: "fallbck-db-agent", Version: o.AgentVersion, Hostname: o.Hostname},
+		Generator:      dbspec.ManifestGenerator{Agent: generator, Version: o.AgentVersion, Hostname: o.Hostname},
 		Job:            dbspec.ManifestJob{ID: jobID, Name: o.Session.JobName, RunID: o.Session.RunID, BackupRunID: runID},
 		Snapshot:       dbspec.ManifestSnapshot{Type: o.Session.BackupType, ID: o.Session.BackupID, Time: snapshotTime, Archive: dbspec.ArchiveName + ".pxar.didx"},
 		Engine:         spec.Engine,
@@ -245,7 +258,7 @@ func Run(ctx context.Context, o RunOptions) (*temporal.BackupExecutionResult, er
 		record = &dbspec.JobStateRecord{}
 	}
 	record.RunID, record.Snapshot, record.CompletedAt = runID, result.SnapshotID, time.Now().UTC()
-	if err := saveState(cfg.StateDir, jobID, &dbspec.JobState{JobID: jobID, Engine: spec.Engine, LastSuccess: record}); err != nil {
+	if err := state.Save(ctx, jobID, &dbspec.JobState{JobID: jobID, Engine: spec.Engine, LastSuccess: record}); err != nil {
 		slog.Warn("Job state could not be saved", "error", err)
 	}
 	failed = false

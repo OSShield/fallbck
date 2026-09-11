@@ -125,3 +125,57 @@ func TestManifestRoundTrip(t *testing.T) {
 		t.Errorf("round trip: %v %+v", err, back)
 	}
 }
+
+func TestKubernetesTarget(t *testing.T) {
+	s := &Spec{Engine: "postgres", User: "backup", Kubernetes: &K8sTarget{Namespace: " clusterdb ", Service: "postgresql", SecretName: "pg-creds"}}
+	if err := s.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if s.Kubernetes.PasswordKey != "password" {
+		t.Errorf("password_key default not applied: %q", s.Kubernetes.PasswordKey)
+	}
+	if s.EffectiveHost() != "postgresql.clusterdb.svc" || s.Host != "" {
+		t.Errorf("effective host %q host %q", s.EffectiveHost(), s.Host)
+	}
+	if id := DefaultBackupID(s); id != "db-postgres-clusterdb-postgresql" {
+		t.Errorf("backup id %q", id)
+	}
+	if !strings.Contains(s.Summary(), "clusterdb/postgresql") {
+		t.Errorf("summary %q", s.Summary())
+	}
+	creds, err := ResolveCredentials(s, "secret", nil)
+	if err != nil || creds.Host != "postgresql.clusterdb.svc" || creds.Port != 5432 {
+		t.Errorf("credentials %+v %v", creds, err)
+	}
+	c := s.Clone()
+	c.Kubernetes.Namespace = "other"
+	if s.Kubernetes.Namespace != "clusterdb" {
+		t.Error("Clone shares the kubernetes target")
+	}
+	if s.Redacted().Kubernetes == nil {
+		t.Error("Redacted dropped the kubernetes target")
+	}
+
+	explicit := &Spec{Engine: "mysql", Host: "db.example.com", Kubernetes: &K8sTarget{Namespace: "apps"}}
+	if err := explicit.Validate(); err != nil || explicit.EffectiveHost() != "db.example.com" || DefaultBackupID(explicit) != "db-mysql-apps-db.example.com" {
+		t.Errorf("explicit host: %v %q %q", err, explicit.EffectiveHost(), DefaultBackupID(explicit))
+	}
+
+	bad := []struct {
+		name string
+		spec *Spec
+	}{
+		{"no namespace", &Spec{Engine: "postgres", Kubernetes: &K8sTarget{Service: "pg"}}},
+		{"bad namespace", &Spec{Engine: "postgres", Kubernetes: &K8sTarget{Namespace: "Bad_NS", Service: "pg"}}},
+		{"no service or host", &Spec{Engine: "postgres", Kubernetes: &K8sTarget{Namespace: "ns"}}},
+		{"keys without secret", &Spec{Engine: "postgres", Kubernetes: &K8sTarget{Namespace: "ns", Service: "pg", PasswordKey: "pw"}}},
+		{"profile", &Spec{Engine: "postgres", Profile: "prod", Kubernetes: &K8sTarget{Namespace: "ns", Service: "pg"}}},
+		{"socket", &Spec{Engine: "postgres", Host: "/var/run/pg.sock", Kubernetes: &K8sTarget{Namespace: "ns"}}},
+		{"tls files", &Spec{Engine: "postgres", TLS: TLSSpec{CAFile: "/ca.pem"}, Kubernetes: &K8sTarget{Namespace: "ns", Service: "pg"}}},
+	}
+	for _, tc := range bad {
+		if err := tc.spec.Validate(); err == nil {
+			t.Errorf("%s: expected a validation error", tc.name)
+		}
+	}
+}

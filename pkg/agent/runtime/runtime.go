@@ -342,6 +342,19 @@ func PBSCredentialsFetcher(cfg *config.AgentConfig, store *TokenStore) func(ctx 
 	}
 }
 
+// DBPasswordFetcher retrieves the server-stored password of a database job
+// (GET /api/v1/agents/db-credentials with the run's ticket)
+func DBPasswordFetcher(cfg *config.AgentConfig, store *TokenStore) func(ctx context.Context, ticket string) (string, error) {
+	httpClient := ServerHTTPClient(cfg)
+	return func(ctx context.Context, ticket string) (string, error) {
+		var creds api.DBCredentials
+		if err := TicketGet(ctx, httpClient, cfg, store, "/api/v1/agents/db-credentials", ticket, &creds); err != nil {
+			return "", err
+		}
+		return creds.Password, nil
+	}
+}
+
 // TicketRefresher returns a function that re-issues a run's backup ticket with a fresh
 // snapshot timestamp (POST /api/v1/agents/ticket/refresh); retried backup activities
 // use it so PBS does not reject the retry as older than the previous attempt's snapshot.

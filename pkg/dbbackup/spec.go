@@ -120,11 +120,30 @@ type MongoOptions struct {
 	ExtraArgs              []string `json:"extra_args,omitempty"`
 }
 
+// K8sTarget places the database inside a Kubernetes cluster. Such a job is assigned to
+// a kubernetes agent, which dumps the database from a short-lived pod in Namespace that
+// runs the engine's own client image.
+type K8sTarget struct {
+	Namespace string `json:"namespace"`
+	// Service is the Service the dump pod connects to (<service>.<namespace>.svc);
+	// Spec.Host, when set, is used verbatim instead
+	Service string `json:"service,omitempty"`
+	// SecretName names a Secret in Namespace holding the credentials: PasswordKey
+	// (default "password") and optionally UserKey. A password stored on the job wins.
+	SecretName  string `json:"secret_name,omitempty"`
+	PasswordKey string `json:"password_key,omitempty"`
+	UserKey     string `json:"user_key,omitempty"`
+	// ToolsImage overrides the client-tools image of the dump pod (default: the agent's
+	// per-engine image template with the tag taken from the detected server version)
+	ToolsImage string `json:"tools_image,omitempty"`
+}
+
 // Spec is the database job configuration stored server-side (backup_jobs.db_config)
 // and handed to the agent (with the password redacted) for every run.
 type Spec struct {
 	Engine string `json:"engine"`
-	// Host is a hostname/IP, or a path (leading "/") for a local unix socket
+	// Host is a hostname/IP, or a path (leading "/") for a local unix socket; optional
+	// for kubernetes targets that name a Service
 	Host string `json:"host"`
 	Port int    `json:"port,omitempty"`
 	User string `json:"user,omitempty"`
@@ -146,6 +165,9 @@ type Spec struct {
 	Postgres *PostgresOptions `json:"postgres,omitempty"`
 	MySQL    *MySQLOptions    `json:"mysql,omitempty"`
 	MongoDB  *MongoOptions    `json:"mongodb,omitempty"`
+
+	// Kubernetes is set when the job runs on a kubernetes agent
+	Kubernetes *K8sTarget `json:"kubernetes,omitempty"`
 }
 
 // ErrInvalidSpec wraps every validation failure
@@ -163,6 +185,9 @@ var deniedExtraArgs = []string{
 
 var backupIDRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]*$`)
 
+// dnsLabelRe matches Kubernetes namespace and Service names
+var dnsLabelRe = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
+
 // Validate normalises the engine name, applies defaults where they are unambiguous and
 // rejects inconsistent settings. It is used by the server (job create/update) and by
 // the agent before a run.
@@ -176,7 +201,40 @@ func (s *Spec) Validate() error {
 	}
 	s.Engine = engine
 	s.Host = strings.TrimSpace(s.Host)
-	if s.Host == "" {
+	if k := s.Kubernetes; k != nil {
+		k.Namespace = strings.TrimSpace(k.Namespace)
+		k.Service = strings.TrimSpace(k.Service)
+		k.SecretName = strings.TrimSpace(k.SecretName)
+		k.ToolsImage = strings.TrimSpace(k.ToolsImage)
+		if !dnsLabelRe.MatchString(k.Namespace) {
+			return specErr("kubernetes.namespace %q is not a valid namespace name", k.Namespace)
+		}
+		if k.Service != "" && !dnsLabelRe.MatchString(k.Service) {
+			return specErr("kubernetes.service %q is not a valid Service name", k.Service)
+		}
+		if k.Service == "" && s.Host == "" {
+			return specErr("kubernetes.service or host is required")
+		}
+		if k.SecretName != "" {
+			if !dnsLabelRe.MatchString(strings.ReplaceAll(k.SecretName, ".", "-")) {
+				return specErr("kubernetes.secret_name %q is not a valid Secret name", k.SecretName)
+			}
+			if k.PasswordKey == "" {
+				k.PasswordKey = "password"
+			}
+		} else if k.PasswordKey != "" || k.UserKey != "" {
+			return specErr("kubernetes.password_key / user_key need kubernetes.secret_name")
+		}
+		if s.Profile != "" {
+			return specErr("credential profiles are not available for kubernetes targets (store the password on the job or in a Secret)")
+		}
+		if strings.HasPrefix(s.Host, "/") {
+			return specErr("kubernetes targets cannot use a unix socket")
+		}
+		if s.TLS.CAFile != "" || s.TLS.CertFile != "" || s.TLS.KeyFile != "" {
+			return specErr("tls certificate files are not available for kubernetes targets")
+		}
+	} else if s.Host == "" {
 		return specErr("host is required")
 	}
 	if s.Port < 0 || s.Port > 65535 {
@@ -336,6 +394,10 @@ func (s *Spec) Redacted() *Spec {
 		m := *s.MongoDB
 		c.MongoDB = &m
 	}
+	if s.Kubernetes != nil {
+		k := *s.Kubernetes
+		c.Kubernetes = &k
+	}
 	return &c
 }
 
@@ -354,7 +416,8 @@ func (s *Spec) Clone() *Spec {
 var backupIDClean = regexp.MustCompile(`[^a-z0-9._-]+`)
 
 // DefaultBackupID is the PBS backup group id for a database job: db-<engine>-<host>,
-// keeping database snapshots apart from the host's filesystem backups.
+// keeping database snapshots apart from the host's filesystem backups. Kubernetes
+// targets use db-<engine>-<namespace>-<service>.
 func DefaultBackupID(s *Spec) string {
 	if s == nil {
 		return ""
@@ -362,16 +425,35 @@ func DefaultBackupID(s *Spec) string {
 	if s.BackupID != "" {
 		return s.BackupID
 	}
+	clean := func(v string) string {
+		v = backupIDClean.ReplaceAllString(strings.ToLower(strings.TrimSpace(v)), "-")
+		return strings.Trim(v, ".-_")
+	}
+	if k := s.Kubernetes; k != nil {
+		name := k.Service
+		if name == "" {
+			name = s.Host
+		}
+		return fmt.Sprintf("db-%s-%s-%s", s.Engine, clean(k.Namespace), clean(name))
+	}
 	host := strings.ToLower(strings.TrimSpace(s.Host))
 	if strings.HasPrefix(host, "/") || host == "" {
 		host = "local"
 	}
-	host = backupIDClean.ReplaceAllString(host, "-")
-	host = strings.Trim(host, ".-_")
+	host = clean(host)
 	if host == "" {
 		host = "local"
 	}
 	return fmt.Sprintf("db-%s-%s", s.Engine, host)
+}
+
+// EffectiveHost is the address the dump connects to: Host, or for a kubernetes target
+// without an explicit host the Service's cluster DNS name
+func (s *Spec) EffectiveHost() string {
+	if s.Host == "" && s.Kubernetes != nil && s.Kubernetes.Service != "" {
+		return s.Kubernetes.Service + "." + s.Kubernetes.Namespace + ".svc"
+	}
+	return s.Host
 }
 
 // Summary is a short human-readable description (UI tables, logs)
@@ -379,9 +461,12 @@ func (s *Spec) Summary() string {
 	if s == nil {
 		return ""
 	}
-	target := s.Host
+	target := s.EffectiveHost()
+	if k := s.Kubernetes; k != nil && s.Host == "" {
+		target = k.Namespace + "/" + k.Service
+	}
 	if s.Port != 0 {
-		target = fmt.Sprintf("%s:%d", s.Host, s.Port)
+		target = fmt.Sprintf("%s:%d", target, s.Port)
 	}
 	if len(s.Databases) > 0 {
 		return fmt.Sprintf("%s @ %s (%s)", s.Engine, target, strings.Join(s.Databases, ", "))

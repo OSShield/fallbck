@@ -8,3 +8,6 @@ fallbck-k8s-agent is starting in namespace {{ .Release.Namespace }}.
   (type: kubernetes). Create jobs under the "Kubernetes" section.
 * Worker pods run in each backed-up PVC's namespace with short-lived credentials in
   their pod spec; they have no Kubernetes API access.
+* Database jobs (Backup Jobs page, type Database, agent "k8s-{{ .Values.clusterName }}")
+  dump from a pod in the database's namespace on the engine's own image
+  (worker.db.images); chain state lives in the Secret "{{ .Values.stateSecretName }}".

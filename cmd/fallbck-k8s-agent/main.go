@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -47,6 +48,13 @@ func main() {
 			slog.Error("Worker failed", "error", err)
 			os.Exit(1)
 		}
+	case "db-worker":
+		// Database worker mode: dump the session's database with the client tools of
+		// the pod's image and upload the spool
+		if err := k8sagent.RunDBWorker(context.Background()); err != nil {
+			slog.Error("Database worker failed", "error", err)
+			os.Exit(1)
+		}
 	case "version":
 		fmt.Printf("fallbck-k8s-agent v%s\n", AgentVersion)
 	default:
@@ -68,6 +76,10 @@ func runAgent(logging *runtime.Logging) {
 	identitySecret := os.Getenv("FALLBCK_IDENTITY_SECRET")
 	if identitySecret == "" {
 		identitySecret = "fallbck-k8s-agent-identity"
+	}
+	stateSecret := os.Getenv("FALLBCK_STATE_SECRET")
+	if stateSecret == "" {
+		stateSecret = "fallbck-k8s-agent-state"
 	}
 	workerImage := os.Getenv("FALLBCK_WORKER_IMAGE")
 	if workerImage == "" {
@@ -170,6 +182,17 @@ func runAgent(logging *runtime.Logging) {
 			acts.WorkerMaxProcs = n
 		}
 		acts.WorkerSecurityContextJSON = os.Getenv("FALLBCK_WORKER_SECURITY_CONTEXT")
+		// Database jobs: dump pods on upstream engine images
+		acts.DBPassword = runtime.DBPasswordFetcher(cfg, store)
+		acts.DBWorkerResourcesJSON = os.Getenv("FALLBCK_DB_WORKER_RESOURCES")
+		acts.DBWorkerSecurityContextJSON = os.Getenv("FALLBCK_DB_WORKER_SECURITY_CONTEXT")
+		acts.DBWorkerSpoolSize = os.Getenv("FALLBCK_DB_WORKER_SPOOL_SIZE")
+		acts.StateSecretName = stateSecret
+		if images := os.Getenv("FALLBCK_DB_WORKER_IMAGES"); images != "" {
+			if err := json.Unmarshal([]byte(images), &acts.DBWorkerImages); err != nil {
+				slog.Warn("FALLBCK_DB_WORKER_IMAGES is not a JSON object; using the default engine images", "error", err)
+			}
+		}
 		acts.SpoolDir = dataDir + "/spool"
 		acts.LogTail = logging.Tail
 		acts.ReportProgress = runtime.ProgressReporter(cfg, store)
@@ -220,5 +243,6 @@ Usage:
 Commands:
   run       Start the in-cluster backup agent (enrolls itself on first start)
   worker    Volume-upload worker mode (used by the pods the agent spawns)
+  db-worker Database dump worker mode (runs on the engine image in pods the agent spawns)
   version   Print version information`)
 }

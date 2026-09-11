@@ -374,9 +374,9 @@ func (u *UIHandler) HandleJobs(w http.ResponseWriter, r *http.Request) {
 		agents, _ = u.DB.ListAgents(ctx)
 		targets, _ = u.DB.ListTargets(ctx)
 	}
-	// Kubernetes jobs and agents live on their own page
+	// Kubernetes cluster jobs live on their own page; kubernetes agents stay listed here
+	// because database jobs may be assigned to them (dumped from a pod in the cluster)
 	jobs = filterJobs(jobs, func(j *db.BackupJob) bool { return !j.IsKubernetes() })
-	agents = filterAgents(agents, func(a *db.Agent) bool { return a.AgentType != db.AgentTypeKubernetes })
 
 	u.renderPage(w, r, "jobs.html", map[string]interface{}{
 		"Title":     "Backup Jobs",

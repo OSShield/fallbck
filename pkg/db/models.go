@@ -34,6 +34,18 @@ func NormalizeAgentType(t string) (string, bool) {
 	return t, false
 }
 
+// JobAllowedOnAgent reports whether an agent of agentType may run a job of jobType.
+// Job types normally match the agent type; the exception is database jobs on a
+// kubernetes agent, which dumps the database from a pod inside the cluster.
+func JobAllowedOnAgent(jobType, agentType string) bool {
+	jobType, _ = NormalizeAgentType(jobType)
+	agentType, _ = NormalizeAgentType(agentType)
+	if jobType == agentType {
+		return true
+	}
+	return jobType == JobTypeDatabase && agentType == AgentTypeKubernetes
+}
+
 // AgentStatus represents the lifecycle state of an agent
 type AgentStatus string
 

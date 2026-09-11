@@ -113,7 +113,7 @@ type Credentials struct {
 // consulted only when the job carries no password; it may also fill in user, host,
 // port and TLS settings the job left blank.
 func ResolveCredentials(spec *Spec, password string, profiles map[string]CredentialProfile) (Credentials, error) {
-	creds := Credentials{User: spec.User, Host: spec.Host, Port: spec.Port, TLS: spec.TLS, Source: "none"}
+	creds := Credentials{User: spec.User, Host: spec.EffectiveHost(), Port: spec.Port, TLS: spec.TLS, Source: "none"}
 	if password != "" {
 		creds.Password = password
 		creds.Source = "job"
