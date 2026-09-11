@@ -33,6 +33,8 @@ spec:
               value: {{ required "clusterName is required" .Values.clusterName | quote }}
             - name: FALLBCK_IDENTITY_SECRET
               value: {{ .Values.identitySecretName | quote }}
+            - name: FALLBCK_STATE_SECRET
+              value: {{ .Values.stateSecretName | quote }}
             - name: FALLBCK_WORKER_IMAGE
               value: {{ include "fallbck-k8s-agent.workerImage" . | quote }}
             - name: FALLBCK_WORKER_PULL_POLICY
@@ -44,6 +46,18 @@ spec:
             {{- if .Values.worker.securityContext }}
             - name: FALLBCK_WORKER_SECURITY_CONTEXT
               value: {{ .Values.worker.securityContext | toJson | quote }}
+            {{- end }}
+            {{- with .Values.worker.db }}
+            - name: FALLBCK_DB_WORKER_IMAGES
+              value: {{ .images | toJson | quote }}
+            - name: FALLBCK_DB_WORKER_RESOURCES
+              value: {{ .resources | toJson | quote }}
+            - name: FALLBCK_DB_WORKER_SPOOL_SIZE
+              value: {{ .spoolSizeLimit | quote }}
+            {{- if .securityContext }}
+            - name: FALLBCK_DB_WORKER_SECURITY_CONTEXT
+              value: {{ .securityContext | toJson | quote }}
+            {{- end }}
             {{- end }}
             - name: FALLBCK_AGENT_DATA_DIR
               value: /var/lib/fallbck/k8s-agent

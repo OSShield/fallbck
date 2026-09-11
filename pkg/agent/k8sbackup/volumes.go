@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	dbspec "github.com/osshield/fallbck/pkg/dbbackup"
 	spec "github.com/osshield/fallbck/pkg/k8sbackup"
 	"github.com/osshield/fallbck/pkg/temporal"
 	corev1 "k8s.io/api/core/v1"
@@ -63,6 +64,13 @@ type workerOutcome struct {
 	Result *temporal.BackupExecutionResult `json:"result,omitempty"`
 	Error  string                          `json:"error,omitempty"`
 	Phase  string                          `json:"phase,omitempty"`
+	// State is the database job's chain state after a successful dump (db-worker)
+	State *dbspec.JobState `json:"state,omitempty"`
+	// Precheck marks a configuration failure a retry cannot fix (db-worker)
+	Precheck bool `json:"precheck,omitempty"`
+	// DetailsInLog: the full outcome exceeded the termination-message cap and was
+	// written to the pod log instead (see outcomeLogMarker)
+	DetailsInLog bool `json:"details_in_log,omitempty"`
 }
 
 // baseName builds the deterministic per-volume object name: fb-<run8>-<crc32(ns/pvc)>
@@ -410,6 +418,14 @@ func parseOutcome(ctx context.Context, c *Clients, pod *corev1.Pod) (*workerOutc
 			out = workerOutcome{Error: strings.TrimSpace(msg)}
 		}
 	}
+	if out.DetailsInLog {
+		// The termination message was too large: the worker logged the full outcome
+		if full, ok := outcomeFromLog(ctx, c, pod.Namespace, pod.Name); ok {
+			out = *full
+		} else {
+			slog.Warn("Worker outcome exceeded the termination message and could not be read from the pod log; run details will be incomplete", "pod", pod.Namespace+"/"+pod.Name)
+		}
+	}
 	if pod.Status.Phase != corev1.PodFailed || out.Result != nil {
 		return &out, nil
 	}
@@ -473,6 +489,34 @@ func lastBytes(s string, n int) string {
 		cut = cut[i+1:]
 	}
 	return cut
+}
+
+// outcomeFromLog finds the full outcome JSON the worker wrote to its log (retrying
+// briefly for the kubelet's log-flush lag)
+func outcomeFromLog(ctx context.Context, c *Clients, ns, name string) (*workerOutcome, bool) {
+	for attempt := 0; attempt < 3; attempt++ {
+		limit := int64(16 << 20)
+		req := c.Core.CoreV1().Pods(ns).GetLogs(name, &corev1.PodLogOptions{LimitBytes: &limit})
+		if stream, err := req.Stream(ctx); err == nil {
+			data, _ := io.ReadAll(stream)
+			stream.Close()
+			for _, line := range strings.Split(string(data), "\n") {
+				if !strings.HasPrefix(line, outcomeLogMarker) {
+					continue
+				}
+				var out workerOutcome
+				if err := json.Unmarshal([]byte(strings.TrimPrefix(line, outcomeLogMarker)), &out); err == nil {
+					return &out, true
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return nil, false
+		case <-time.After(time.Second):
+		}
+	}
+	return nil, false
 }
 
 func podLogTail(ctx context.Context, c *Clients, ns, name string) string {

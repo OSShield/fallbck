@@ -13,7 +13,6 @@ import (
 	dbrun "github.com/osshield/fallbck/pkg/agent/dbbackup"
 	"github.com/osshield/fallbck/pkg/agent/enrollment"
 	"github.com/osshield/fallbck/pkg/agent/runtime"
-	"github.com/osshield/fallbck/pkg/api"
 	"github.com/osshield/fallbck/pkg/config"
 	"github.com/osshield/fallbck/pkg/temporal/activities"
 	"go.temporal.io/sdk/worker"
@@ -94,7 +93,7 @@ func main() {
 			acts.Tunnel = conns.Tunnel
 			acts.Credentials = runtime.PBSCredentialsFetcher(cfg, store)
 			acts.RefreshTicket = runtime.TicketRefresher(cfg, store)
-			acts.DBPassword = dbPasswordFetcher(cfg, store)
+			acts.DBPassword = runtime.DBPasswordFetcher(cfg, store)
 			acts.Config = dbCfg
 			acts.Hostname = cfg.Hostname
 			acts.Version = AgentVersion
@@ -133,17 +132,6 @@ func main() {
 }
 
 // dbPasswordFetcher retrieves the server-stored database password for a run
-func dbPasswordFetcher(cfg *config.AgentConfig, store *runtime.TokenStore) func(ctx context.Context, ticket string) (string, error) {
-	httpClient := runtime.ServerHTTPClient(cfg)
-	return func(ctx context.Context, ticket string) (string, error) {
-		var creds api.DBCredentials
-		if err := runtime.TicketGet(ctx, httpClient, cfg, store, "/api/v1/agents/db-credentials", ticket, &creds); err != nil {
-			return "", err
-		}
-		return creds.Password, nil
-	}
-}
-
 func printUsage() {
 	fmt.Println(`FallBCK Database Backup Agent
 

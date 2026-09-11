@@ -55,6 +55,16 @@ type K8sAgentActivities struct {
 	// RefreshTicket re-issues the session ticket with a fresh snapshot timestamp when
 	// the resources upload is retried; nil keeps the session's timestamp
 	RefreshTicket TicketRefreshFunc
+	// Database jobs assigned to this agent (dump pods): DBPassword fetches the job's
+	// server-stored password; the per-engine image templates, pod resources/security
+	// context and spool size come from the Helm chart; StateSecretName holds the
+	// per-job chain state in the agent namespace
+	DBPassword                  func(ctx context.Context, ticket string) (string, error)
+	DBWorkerImages              map[string]string
+	DBWorkerResourcesJSON       string
+	DBWorkerSecurityContextJSON string
+	DBWorkerSpoolSize           string
+	StateSecretName             string
 	// SpoolDir stages the resource dump (default <data dir>/spool)
 	SpoolDir string
 	// LogTail returns the agent's recent log output, attached to failures

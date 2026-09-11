@@ -90,7 +90,7 @@ func (s *ServerActivities) PrepareBackupSession(ctx context.Context, jobID uuid.
 	}
 	jobType, _ := db.NormalizeAgentType(job.JobType)
 	agentType, _ := db.NormalizeAgentType(agent.AgentType)
-	if jobType != agentType {
+	if !db.JobAllowedOnAgent(jobType, agentType) {
 		return nil, sdktemporal.NewNonRetryableApplicationError(
 			fmt.Sprintf("job type %q cannot run on agent %s of type %q", jobType, agent.Hostname, agentType), "job_agent_mismatch", nil)
 	}
@@ -164,6 +164,7 @@ func (s *ServerActivities) PrepareBackupSession(ctx context.Context, jobID uuid.
 		PxarFormat:         target.PxarFormat,
 		DirectPBS:          job.DirectPBS,
 		JobType:            jobType,
+		AgentType:          agentType,
 		JobName:            job.Name,
 		DBConfig:           sessionSpec,
 		DBPasswordOnServer: passwordOnServer,

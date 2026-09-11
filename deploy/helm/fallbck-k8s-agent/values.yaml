@@ -20,6 +20,9 @@ enrollment:
 # The agent stores its enrolled identity (agent id, task queue, bearer token) here.
 # It is agent-owned: helm upgrade/uninstall leaves it alone. Delete it to re-enroll.
 identitySecretName: fallbck-k8s-agent-identity
+# Database jobs keep their chain state (last binlog position / WAL LSN) per job here;
+# agent-owned like the identity Secret.
+stateSecretName: fallbck-k8s-agent-state
 
 image:
   repository: oci.fi/fallbck/k8s-agent
@@ -42,6 +45,27 @@ worker:
   # root with all capabilities dropped except DAC_READ_SEARCH, read-only rootfs —
   # needed to read arbitrarily-owned PVC files. Override for PSS-restricted namespaces.
   securityContext: {}
+
+  # Database jobs assigned to this agent run in a dump pod in the database's namespace:
+  # an init container copies the agent binary out of the agent image, the main
+  # container is the engine's own image (it carries pg_dump / mariadb-dump / mongodump),
+  # so the client tools always match the server. {major} is replaced with the server
+  # version the agent detects (MongoDB cannot be probed and uses "latest"); a job can
+  # pin an image with its "tools image" setting.
+  db:
+    images:
+      postgres: "postgres:{major}"
+      mysql: "mysql:{major}"
+      mariadb: "mariadb:{major}"
+      mongodb: "mongo:{major}"
+    # The dump is spooled in an emptyDir before upload; size it for the largest dump
+    spoolSizeLimit: 20Gi
+    resources:
+      requests: {cpu: 100m, memory: 256Mi}
+      limits: {memory: 2Gi}
+    # Container securityContext for dump pods. Default (set by the agent when empty):
+    # root, all capabilities dropped, read-only rootfs (spool and /tmp are emptyDirs).
+    securityContext: {}
 
 resources:
   requests: {cpu: 100m, memory: 256Mi}

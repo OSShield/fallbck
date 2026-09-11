@@ -38,7 +38,10 @@ type BackupSessionInfo struct {
 	DirectPBS bool `json:"direct_pbs"`
 	// JobType is filesystem or database; database jobs carry DBConfig (password
 	// redacted — the agent fetches it with its ticket when DBPasswordOnServer is set)
-	JobType            string         `json:"job_type,omitempty"`
+	JobType string `json:"job_type,omitempty"`
+	// AgentType is the type of the agent running the job (a database job may run on a
+	// kubernetes agent, which dumps from a pod); empty means the job's own type
+	AgentType          string         `json:"agent_type,omitempty"`
 	DBConfig           *dbbackup.Spec `json:"db_config,omitempty"`
 	DBPasswordOnServer bool           `json:"db_password_on_server,omitempty"`
 	// K8sConfig is the kubernetes job specification (job_type kubernetes)

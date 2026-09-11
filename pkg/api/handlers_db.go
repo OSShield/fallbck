@@ -33,6 +33,19 @@ func (s *ServerAPI) validateJob(ctx context.Context, job *db.BackupJob, existing
 		return err.Error(), err
 	}
 
+	// The agent type decides which shape a database job may take (a kubernetes agent
+	// needs the in-cluster target settings), so look it up before the per-type checks
+	agentType := jobType
+	var agent *db.Agent
+	if s.DB != nil {
+		a, err := s.DB.GetAgentByID(ctx, job.AgentID)
+		if err != nil {
+			return "Agent not found", err
+		}
+		agent = a
+		agentType, _ = db.NormalizeAgentType(agent.AgentType)
+	}
+
 	switch jobType {
 	case db.JobTypeKubernetes:
 		if len(job.BackupPaths) > 0 {
@@ -61,6 +74,12 @@ func (s *ServerAPI) validateJob(ctx context.Context, job *db.BackupJob, existing
 		}
 		job.DBConfig.ClearPassword = false
 		job.DBConfig.HasPassword = false
+		if agentType == db.AgentTypeKubernetes && job.DBConfig.Kubernetes == nil {
+			return "Database jobs on a kubernetes agent need the kubernetes target settings (namespace and service)", errors.New("missing kubernetes target")
+		}
+		if agentType != db.AgentTypeKubernetes && job.DBConfig.Kubernetes != nil {
+			return "Kubernetes target settings require a kubernetes agent", errors.New("kubernetes target on non-k8s agent")
+		}
 		if err := job.DBConfig.Validate(); err != nil {
 			return err.Error(), err
 		}
@@ -84,11 +103,7 @@ func (s *ServerAPI) validateJob(ctx context.Context, job *db.BackupJob, existing
 	if s.DB == nil {
 		return "", nil
 	}
-	agent, err := s.DB.GetAgentByID(ctx, job.AgentID)
-	if err != nil {
-		return "Agent not found", err
-	}
-	if agentType, _ := db.NormalizeAgentType(agent.AgentType); agentType != jobType {
+	if !db.JobAllowedOnAgent(jobType, agentType) {
 		return "Agent " + agent.Hostname + " is a " + agentType + " agent and cannot run " + jobType + " jobs", errors.New("agent type mismatch")
 	}
 	if _, err := s.DB.GetTargetByID(ctx, job.TargetID); err != nil {

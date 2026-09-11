@@ -22,6 +22,7 @@ func BackupJobWorkflow(ctx workflow.Context, jobID uuid.UUID) (*fbtemporal.Backu
 	var serverActs *activities.ServerActivities
 	var agentActs *activities.AgentActivities
 	var dbAgentActs *activities.DBAgentActivities
+	var k8sActs *activities.K8sAgentActivities
 
 	// 1. Prepare Backup Session on Server
 	serverActivityOpts := workflow.ActivityOptions{
@@ -73,7 +74,12 @@ func BackupJobWorkflow(ctx workflow.Context, jobID uuid.UUID) (*fbtemporal.Backu
 		outcome := runKubernetesBackup(ctx, &session)
 		execResult, execErr, k8sGroups = outcome.result, outcome.err, outcome.activeGroups
 	case db.JobTypeDatabase:
-		execErr = workflow.ExecuteActivity(agentCtx, dbAgentActs.ExecuteDatabaseBackup, &session).Get(agentCtx, &execResult)
+		if session.AgentType == db.AgentTypeKubernetes {
+			// A kubernetes agent dumps the database from a pod inside the cluster
+			execErr = workflow.ExecuteActivity(agentCtx, k8sActs.ExecuteKubernetesDatabaseBackup, &session).Get(agentCtx, &execResult)
+		} else {
+			execErr = workflow.ExecuteActivity(agentCtx, dbAgentActs.ExecuteDatabaseBackup, &session).Get(agentCtx, &execResult)
+		}
 	default:
 		execErr = workflow.ExecuteActivity(agentCtx, agentActs.ExecuteFilesystemBackup, &session).Get(agentCtx, &execResult)
 	}

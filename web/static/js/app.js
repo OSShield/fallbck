@@ -254,12 +254,35 @@ function setJobType(type) {
   let keep = false;
   for (const opt of sel.options) {
     if (!opt.value) continue;
-    const match = (opt.dataset.agentType || 'filesystem') === type;
+    const agentType = opt.dataset.agentType || 'filesystem';
+    // Database jobs may also run on a kubernetes agent (dumped from a pod in the cluster)
+    const match = agentType === type || (type === 'database' && agentType === 'kubernetes');
     opt.hidden = !match; opt.disabled = !match;
     if (match && opt.selected) keep = true;
   }
   if (!keep) sel.value = '';
   setDBEngine(form.elements['db_engine'].value);
+  updateDBTarget();
+}
+
+// A database job on a kubernetes agent needs the in-cluster target settings; the
+// agent-side credential profile and TLS files do not apply there
+function selectedAgentIsK8s() {
+  const sel = jobForm().elements['agent_id'];
+  const opt = sel.options[sel.selectedIndex];
+  return !!(opt && opt.value && opt.dataset.agentType === 'kubernetes');
+}
+
+function updateDBTarget() {
+  const form = jobForm();
+  const k8s = selectedAgentIsK8s() && form.elements['job_type'].value === 'database';
+  const block = document.getElementById('db-k8s-fields');
+  block.hidden = !k8s;
+  block.querySelectorAll('input').forEach(c => { c.disabled = !k8s; });
+  form.elements['db_k8s_namespace'].required = k8s;
+  form.elements['db_profile'].disabled = k8s;
+  form.elements['db_tls_ca_file'].disabled = k8s;
+  document.getElementById('db-host-label').innerText = k8s ? 'Host (optional when a Service is given)' : 'Host (or unix socket path)';
 }
 
 function setDBEngine(engine) {
@@ -323,9 +346,17 @@ async function editJob(jobId) {
       form.elements['mongo_auth_source'].value = mo.auth_source || '';
       form.elements['mongo_replica_set'].value = mo.replica_set || '';
       form.elements['mongo_oplog'].checked = mo.oplog !== false;
+      const k8s = dc.kubernetes || {};
+      form.elements['db_k8s_namespace'].value = k8s.namespace || '';
+      form.elements['db_k8s_service'].value = k8s.service || '';
+      form.elements['db_k8s_secret'].value = k8s.secret_name || '';
+      form.elements['db_k8s_password_key'].value = k8s.password_key || '';
+      form.elements['db_k8s_user_key'].value = k8s.user_key || '';
+      form.elements['db_k8s_tools_image'].value = k8s.tools_image || '';
     }
     setJobType(jobType);
     form.elements['agent_id'].value = job.agent_id || '';
+    updateDBTarget();
     form.elements['schedule_cron'].value = job.schedule_cron || '';
     form.elements['direct_pbs'].checked = !!job.direct_pbs;
     form.elements['enabled'].checked = !!job.enabled;
@@ -390,6 +421,18 @@ async function submitJobForm(e) {
     };
     if (formData.get('db_password')) dc.password = formData.get('db_password');
     if (formData.get('db_clear_password') === 'on') dc.clear_password = true;
+    if (selectedAgentIsK8s()) {
+      dc.profile = '';
+      dc.tls.ca_file = '';
+      dc.kubernetes = {
+        namespace: (formData.get('db_k8s_namespace') || '').trim(),
+        service: (formData.get('db_k8s_service') || '').trim(),
+        secret_name: (formData.get('db_k8s_secret') || '').trim(),
+        password_key: (formData.get('db_k8s_password_key') || '').trim(),
+        user_key: (formData.get('db_k8s_user_key') || '').trim(),
+        tools_image: (formData.get('db_k8s_tools_image') || '').trim()
+      };
+    }
     if (engine === 'postgres') {
       dc.postgres = { mode: formData.get('pg_mode'), format: formData.get('pg_format'), role_passwords: formData.get('pg_role_passwords'), globals: formData.get('pg_globals') === 'on' };
     } else if (engine === 'mysql') {
