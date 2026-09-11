@@ -1,11 +1,13 @@
 package workflows
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/osshield/fallbck/pkg/k8sbackup"
+	"github.com/osshield/fallbck/pkg/rundetail"
 	fbtemporal "github.com/osshield/fallbck/pkg/temporal"
 	"github.com/osshield/fallbck/pkg/temporal/activities"
 	sdktemporal "go.temporal.io/sdk/temporal"
@@ -97,6 +99,9 @@ func runKubernetesBackup(ctx workflow.Context, session *fbtemporal.BackupSession
 						Namespace: vol.Namespace, PVCName: vol.PVCName, GroupID: vol.GroupID,
 						Mode: vol.Mode, Status: "failed", Error: err.Error(),
 					}
+					if sdktemporal.IsCanceledError(err) {
+						res.Status, res.Error = "cancelled", "cancelled by operator"
+					}
 				}
 				results[i] = res
 			})
@@ -129,10 +134,22 @@ func runKubernetesBackup(ctx workflow.Context, session *fbtemporal.BackupSession
 		out.result.DedupRatio = float64(out.result.BytesScanned) / float64(out.result.BytesUploaded)
 	}
 
+	// The manifest (with every volume outcome) is produced by the resources step; when
+	// that step did not finish, keep the outcomes anyway so the run page still shows
+	// which volumes made it to PBS and which did not
+	if len(out.result.Details) == 0 && len(results) > 0 {
+		out.result.Details = partialKubernetesDetails(session, results)
+	}
+
 	switch {
 	case resErr != nil:
-		out.err = resErr
-		out.result.ErrorMessage = "resource backup failed: " + resErr.Error()
+		// Wrapped, not replaced: the workflow reads the phase and log tail off the
+		// activity error, and the run's error text is taken from err
+		out.err = fmt.Errorf("resource backup failed: %w", resErr)
+		if len(results) > 0 {
+			out.err = fmt.Errorf("resource backup failed after %d of %d volumes completed (%d failed): %w", completed, len(results), len(failed), resErr)
+		}
+		out.result.ErrorMessage = out.err.Error()
 	case len(failed) > 0 && (!spec.Volumes.EffContinueOnError() || completed == 0 && len(failed) == len(results)):
 		out.err = fmt.Errorf("%d of %d volumes failed: %s", len(failed), len(results), joinFailures(failed))
 		out.result.ErrorMessage = out.err.Error()
@@ -141,4 +158,20 @@ func runKubernetesBackup(ctx workflow.Context, session *fbtemporal.BackupSession
 		logger.Warn("Kubernetes backup completed with volume failures", "failed", len(failed))
 	}
 	return out
+}
+
+// partialKubernetesDetails is the run detail blob for a kubernetes run that ended
+// before the agent wrote the manifest: the volume outcomes, tagged partial
+func partialKubernetesDetails(session *fbtemporal.BackupSessionInfo, results []k8sbackup.VolumeResult) json.RawMessage {
+	m := &k8sbackup.Manifest{
+		SchemaVersion: k8sbackup.ManifestSchemaVersion,
+		Job:           k8sbackup.ManifestJob{ID: session.JobID.String(), Name: session.JobName, RunID: session.RunID, BackupRunID: session.BackupRunID.String()},
+		Volumes:       results,
+		Partial:       true,
+	}
+	data, err := m.Marshal()
+	if err != nil {
+		return nil
+	}
+	return rundetail.WrapManifest(rundetail.TypeKubernetes, data)
 }

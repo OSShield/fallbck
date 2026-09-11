@@ -2,6 +2,7 @@ package workflows
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -298,5 +299,70 @@ func TestBackupJobWorkflowKubernetesAllVolumesFail(t *testing.T) {
 	}
 	if finalized == nil || finalized.Status != db.RunStatusFailed {
 		t.Errorf("finalized: %+v", finalized)
+	}
+}
+
+// A failed resources step must not lose the volume outcomes: the run page shows
+// which PVCs made it to PBS from a server-assembled partial manifest
+func TestBackupJobWorkflowKubernetesResourcesFailKeepsVolumes(t *testing.T) {
+	testSuite := &testsuite.WorkflowTestSuite{}
+	env := testSuite.NewTestWorkflowEnvironment()
+	jobID := uuid.New()
+	k8sSpec := &k8sbackup.Spec{}
+	_ = k8sSpec.Validate()
+	session := &temporal.BackupSessionInfo{JobID: jobID, JobName: "cluster", AgentTaskQueue: "q", BackupRunID: uuid.New(), JobType: db.JobTypeKubernetes, K8sConfig: k8sSpec}
+	plan := &k8sbackup.Plan{Volumes: []k8sbackup.VolumePlan{
+		{Namespace: "a", PVCName: "good", GroupID: "g-pvc-a-good", Mode: k8sbackup.ModeLive},
+		{Namespace: "a", PVCName: "bad", GroupID: "g-pvc-a-bad", Mode: k8sbackup.ModeLive},
+	}}
+
+	var serverActs *activities.ServerActivities
+	var k8sActs *activities.K8sAgentActivities
+	env.OnActivity(serverActs.PrepareBackupSession, mock.Anything, jobID).Return(session, nil)
+	env.OnActivity(k8sActs.DiscoverKubernetesBackup, mock.Anything, session).Return(plan, nil)
+	env.OnActivity(k8sActs.BackupKubernetesVolume, mock.Anything, mock.Anything, mock.Anything).Return(
+		func(_ context.Context, _ *temporal.BackupSessionInfo, vol k8sbackup.VolumePlan) (*k8sbackup.VolumeResult, error) {
+			if vol.PVCName == "bad" {
+				return nil, errors.New("PodSecurity baseline: DAC_READ_SEARCH")
+			}
+			return &k8sbackup.VolumeResult{Namespace: vol.Namespace, PVCName: vol.PVCName, GroupID: vol.GroupID, Mode: vol.Mode,
+				Status: "completed", SnapshotID: "host/" + vol.GroupID + "/2026-09-25T02:00:00Z", BytesScanned: 100, BytesUploaded: 10, ChunkCount: 4}, nil
+		})
+	env.OnActivity(k8sActs.BackupKubernetesResources, mock.Anything, session, mock.Anything, mock.Anything).
+		Return(nil, errors.New("upload tunnel closed"))
+	var finalized *temporal.BackupExecutionResult
+	env.OnActivity(serverActs.FinalizeBackupRun, mock.Anything, session, mock.Anything).
+		Run(func(args mock.Arguments) { finalized = args.Get(2).(*temporal.BackupExecutionResult) }).Return(nil)
+
+	env.ExecuteWorkflow(BackupJobWorkflow, jobID)
+	if err := env.GetWorkflowError(); err == nil {
+		t.Fatal("a failed resources step must fail the run")
+	}
+	if finalized == nil || finalized.Status != db.RunStatusFailed {
+		t.Fatalf("finalized: %+v", finalized)
+	}
+	if !strings.Contains(finalized.ErrorMessage, "after 1 of 2 volumes completed (1 failed)") || !strings.Contains(finalized.ErrorMessage, "upload tunnel closed") {
+		t.Errorf("error message: %q", finalized.ErrorMessage)
+	}
+	if finalized.BytesUploaded != 10 || finalized.ChunkCount != 4 {
+		t.Errorf("completed volume not aggregated: %+v", finalized)
+	}
+	var wrapper struct {
+		Type     string             `json:"type"`
+		Manifest k8sbackup.Manifest `json:"manifest"`
+	}
+	if err := json.Unmarshal(finalized.Details, &wrapper); err != nil {
+		t.Fatalf("details %s: %v", finalized.Details, err)
+	}
+	m := wrapper.Manifest
+	if wrapper.Type != "kubernetes" || !m.Partial || m.Job.Name != "cluster" || len(m.Volumes) != 2 {
+		t.Fatalf("partial manifest: type=%s %+v", wrapper.Type, m)
+	}
+	byName := map[string]k8sbackup.VolumeResult{}
+	for _, v := range m.Volumes {
+		byName[v.PVCName] = v
+	}
+	if byName["good"].Status != "completed" || byName["good"].SnapshotID == "" || byName["bad"].Status != "failed" || !strings.Contains(byName["bad"].Error, "DAC_READ_SEARCH") {
+		t.Errorf("volumes: %+v", byName)
 	}
 }

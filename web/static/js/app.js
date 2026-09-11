@@ -603,7 +603,7 @@ async function submitJobForm(e) {
   }
 }
 
-// triggerJob starts a run and returns {run_id, ...} as the API reports it
+// triggerJob starts a run and returns the run record ({id, status, ...}) as the API reports it
 async function triggerJob(jobId) {
   const resp = await apiFetch(`/api/v1/jobs/${jobId}/run`, { method: 'POST' });
   if (!resp.ok) {
@@ -616,9 +616,10 @@ async function triggerJob(jobId) {
 async function triggerJobRun(jobId) {
   if (!confirm('Start an immediate backup execution for this job?')) return;
   try {
-    await triggerJob(jobId);
+    const run = await triggerJob(jobId);
     showToast('Backup run initiated!', 'success');
-    setTimeout(() => window.location.href = '/runs', 1000);
+    // Straight to the run's own page (live phase); the list is the fallback
+    setTimeout(() => window.location.href = run.id ? `/runs/${run.id}` : '/runs', 600);
   } catch (err) {
     showToast(err.message, 'error');
   }
@@ -992,7 +993,13 @@ function renderRun(run) {
     html += rdCard('Error', rdPre(run.error_message));
   }
 
+  // Live progress while running; after a failed or cancelled run, the last reported
+  // per-item statuses are what remains when the agent never produced a detail blob
+  const m = d.manifest || {};
+  const hasItemDetail = (m.volumes && m.volumes.length) || (m.databases && m.databases.length) || d.archives;
+  const items = run.progress && run.progress.items ? Object.keys(run.progress.items).length : 0;
   if (active && run.progress) html += renderProgress(run.progress);
+  else if (!active && items && !hasItemDetail) html += renderProgress(run.progress, true);
 
   if (type === 'database') html += renderDBDetail(d.manifest || {});
   else if (type === 'kubernetes') html += renderK8sDetail(d.manifest || {});
@@ -1177,7 +1184,9 @@ function renderDockerDetail(m) {
 function renderK8sDetail(m) {
   const k = m.kubernetes || {};
   const res = m.resources || {};
-  let html = rdCard('Cluster', rdKV([
+  let html = '';
+  if (m.partial) html += rdCard('Incomplete run', `<p style="font-size:13px;margin:0;">The run ended before the API resources and the manifest were uploaded, so there is no resources snapshot for it. The volumes below finished (or failed) on their own before that; each completed one is a normal PBS snapshot in its own group and can be restored.</p>`);
+  else html += rdCard('Cluster', rdKV([
     ['Cluster', rdEsc((m.generator || {}).cluster || '')], ['Server version', rdEsc(k.server_version || '')],
     ['CSI snapshots', k.snapshot_crd ? 'available' : 'not available'],
     ['Secrets included', res.secrets_included ? 'yes' : 'no'],
@@ -1186,13 +1195,15 @@ function renderK8sDetail(m) {
   const vols = m.volumes || [];
   const vrows = vols.map(v => [
     rdEsc(v.namespace + '/' + v.pvc), rdEsc(v.mode || ''), rdEsc(v.consistency || ''),
-    rdStatus(v.status === 'completed' ? 'completed' : v.status === 'skipped' ? 'cancelled' : 'failed'),
+    rdStatus(v.status === 'completed' ? 'completed' : v.status === 'skipped' || v.status === 'cancelled' ? 'cancelled' : 'failed'),
     rdBytes(v.bytes_uploaded), v.snapshot_id ? rdMono(rdShort(v.snapshot_id.split('/').pop())) : '-',
     v.error ? `<span style="color:var(--danger-text);">${rdEsc(v.error.split('\n')[0].slice(0, 160))}</span>` : '',
   ]);
   const okCount = vols.filter(v => v.status === 'completed').length;
-  html += rdCard(`Persistent volumes (${okCount}/${vols.length} ok)`,
+  const failCount = vols.filter(v => v.status === 'failed').length;
+  html += rdCard(`Persistent volumes (${okCount}/${vols.length} ok${failCount ? `, ${failCount} failed` : ''})`,
     rdTable(['PVC', 'Mode', 'Consistency', 'Status', 'Uploaded', 'Snapshot', 'Error'], vrows));
+  if (m.partial) return html;
 
   const counts = res.counts || {};
   const crows = Object.keys(counts).sort().map(k => [rdMono(k), String(counts[k])]);
@@ -1209,9 +1220,13 @@ function renderK8sDetail(m) {
   return html;
 }
 
-function renderProgress(p) {
+// renderProgress shows the live per-item table; final=true renders the same data
+// for a finished run as its last reported state (items still "running" or "pending"
+// when the run ended never completed)
+function renderProgress(p, final = false) {
   let body = '';
-  if (p.phase) body += `<div style="margin-bottom:12px;"><span style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">Current step</span><div style="font-size:14px;margin-top:2px;">${rdEsc(p.phase)}</div></div>`;
+  if (final) body += `<p style="font-size:13px;margin:0 0 12px;color:var(--text-muted);">Last state the agent reported before the run ended. Items marked completed were uploaded to PBS and can be restored; running or pending items did not finish.</p>`;
+  else if (p.phase) body += `<div style="margin-bottom:12px;"><span style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">Current step</span><div style="font-size:14px;margin-top:2px;">${rdEsc(p.phase)}</div></div>`;
   const items = p.items || {};
   const keys = Object.keys(items).sort((a, b) => (items[a].name || a).localeCompare(items[b].name || b));
   if (keys.length) {
@@ -1229,7 +1244,7 @@ function renderProgress(p) {
       rdTable(['Item', 'Status', 'Mode', 'Uploaded', 'Detail'], rows);
   }
   if (!body) body = '<p style="color:var(--text-muted);font-size:13px;">Starting…</p>';
-  return rdCard('Live progress', body);
+  return rdCard(final ? 'Per-item outcome' : 'Live progress', body);
 }
 
 function downloadRunDetails() {
