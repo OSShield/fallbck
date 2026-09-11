@@ -80,6 +80,9 @@ type ResourceOptions struct {
 type VolumeOptions struct {
 	Mode          string `json:"mode,omitempty"` // all | labeled | none
 	LabelSelector string `json:"label_selector,omitempty"`
+	// SkipLabelSelector excludes PVCs whose labels match it (e.g. fallbck.io/skip-backup=true),
+	// on top of the built-in fallbck.io/skip annotation; applied after LabelSelector
+	SkipLabelSelector string `json:"skip_label_selector,omitempty"`
 	// Namespaces overrides the top-level namespace filter for volumes (nil = inherit)
 	Namespaces            *NamespaceFilter `json:"namespaces,omitempty"`
 	StorageClasses        []string         `json:"storage_classes,omitempty"`
@@ -166,6 +169,16 @@ func (s *Spec) Validate() error {
 	if v.LabelSelector != "" {
 		if _, err := labels.Parse(v.LabelSelector); err != nil {
 			return specErr("volumes.label_selector: %v", err)
+		}
+	}
+	v.SkipLabelSelector = strings.TrimSpace(v.SkipLabelSelector)
+	if v.SkipLabelSelector != "" {
+		sel, err := labels.Parse(v.SkipLabelSelector)
+		if err != nil {
+			return specErr("volumes.skip_label_selector: %v", err)
+		}
+		if sel.Empty() {
+			return specErr("volumes.skip_label_selector matches every PVC")
 		}
 	}
 	if v.Namespaces != nil {

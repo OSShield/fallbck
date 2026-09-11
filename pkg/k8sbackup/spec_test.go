@@ -26,6 +26,7 @@ func TestSpecValidateRejects(t *testing.T) {
 		"bad mode":           {Volumes: VolumeOptions{Mode: "some"}},
 		"labeled needs sel":  {Volumes: VolumeOptions{Mode: VolumesLabeled}},
 		"bad vol selector":   {Volumes: VolumeOptions{LabelSelector: "!!"}},
+		"bad skip selector":  {Volumes: VolumeOptions{SkipLabelSelector: "a=b,("}},
 		"parallelism high":   {Volumes: VolumeOptions{Parallelism: 20}},
 		"snapshot too long":  {Volumes: VolumeOptions{SnapshotTimeout: "2h"}},
 		"volume bad":         {Volumes: VolumeOptions{VolumeTimeout: "soon"}},

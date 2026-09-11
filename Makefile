@@ -28,7 +28,8 @@ docker:
 binary:
 	@echo "Building binary for version $(BVERSION)"
 	git tag -a "v$(BVERSION)" -m "Release v$(BVERSION)" && \
-	goreleaser release --clean
+	goreleaser release --clean && \
+	git push github main v$(BVERSION)
 
 helm:
 	@echo "Building helm chart for version $(BVERSION)"
