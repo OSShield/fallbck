@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/osshield/fallbck/pkg/auth"
 	"github.com/osshield/fallbck/pkg/db"
+	"github.com/osshield/fallbck/pkg/pvebackup"
 )
 
 // DBCredentials hands an agent the server-stored database password for a run
@@ -24,7 +25,7 @@ func (s *ServerAPI) validateJob(ctx context.Context, job *db.BackupJob, existing
 	if job.Name == "" || job.AgentID == uuid.Nil || job.TargetID == uuid.Nil {
 		return "Name, AgentID, and TargetID are required", errors.New("missing fields")
 	}
-	jobType, ok := db.NormalizeAgentType(job.JobType)
+	jobType, ok := db.NormalizeJobType(job.JobType)
 	if !ok {
 		return "Unknown job type " + job.JobType, errors.New("bad job type")
 	}
@@ -47,6 +48,22 @@ func (s *ServerAPI) validateJob(ctx context.Context, job *db.BackupJob, existing
 	}
 
 	switch jobType {
+	case db.JobTypePVE:
+		if len(job.BackupPaths) > 0 {
+			return "Proxmox VE jobs do not take backup paths (add data paths in the PVE settings)", errors.New("paths on pve job")
+		}
+		if job.DBConfig != nil || job.K8sConfig != nil {
+			return "Proxmox VE jobs do not take db_config or k8s_config", errors.New("foreign config on pve job")
+		}
+		if job.PVEConfig == nil {
+			job.PVEConfig = &pvebackup.Spec{}
+		}
+		if err := job.PVEConfig.Validate(); err != nil {
+			return err.Error(), err
+		}
+		if agent != nil && !agent.PVEHost {
+			return "Agent " + agent.Hostname + " has not reported itself as a Proxmox VE host (install the agent on the PVE node and wait for its next heartbeat)", errors.New("agent not a pve host")
+		}
 	case db.JobTypeKubernetes:
 		if len(job.BackupPaths) > 0 {
 			return "Kubernetes jobs do not take backup paths", errors.New("paths on k8s job")
@@ -89,6 +106,9 @@ func (s *ServerAPI) validateJob(ctx context.Context, job *db.BackupJob, existing
 		}
 		if job.K8sConfig != nil {
 			return "Filesystem jobs do not take k8s_config", errors.New("k8s_config on filesystem job")
+		}
+		if job.PVEConfig != nil {
+			return "Filesystem jobs do not take pve_config", errors.New("pve_config on filesystem job")
 		}
 		paths, err := db.ValidateBackupPaths(job.BackupPaths)
 		if err != nil {

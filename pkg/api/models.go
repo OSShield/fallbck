@@ -16,6 +16,8 @@ type EnrollRequest struct {
 	IPAddress string `json:"ip_address,omitempty"`
 	// AgentType is "filesystem" (default) or "database"
 	AgentType string `json:"agent_type,omitempty"`
+	// PVEHost is set by a filesystem agent running on a Proxmox VE node
+	PVEHost bool `json:"pve_host,omitempty"`
 }
 
 // EnrollResponse contains the credentials and configuration needed for the agent to start.
@@ -59,6 +61,8 @@ type HeartbeatRequest struct {
 	AgentID uuid.UUID `json:"agent_id"`
 	Status  string    `json:"status"`
 	Version string    `json:"version"`
+	// PVEHost reports whether the agent runs on a Proxmox VE node
+	PVEHost bool `json:"pve_host,omitempty"`
 }
 
 // HeartbeatResponse acknowledges a heartbeat and carries server-side agent settings

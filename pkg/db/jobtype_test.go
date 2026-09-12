@@ -22,3 +22,18 @@ func TestJobAllowedOnAgent(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizeJobTypeAndPVEPairing(t *testing.T) {
+	if jt, ok := NormalizeJobType("pve"); !ok || jt != JobTypePVE {
+		t.Errorf("pve job type: %q %v", jt, ok)
+	}
+	if jt, ok := NormalizeJobType(""); !ok || jt != JobTypeFilesystem {
+		t.Errorf("empty job type: %q %v", jt, ok)
+	}
+	if _, ok := NormalizeAgentType("pve"); ok {
+		t.Error("pve must not be an agent type")
+	}
+	if !JobAllowedOnAgent("pve", "filesystem") || JobAllowedOnAgent("pve", "database") || JobAllowedOnAgent("pve", "kubernetes") {
+		t.Error("pve jobs run on filesystem agents only")
+	}
+}

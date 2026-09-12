@@ -28,6 +28,7 @@ import (
 	"github.com/osshield/fallbck/pkg/agent/enrollment"
 	"github.com/osshield/fallbck/pkg/api"
 	"github.com/osshield/fallbck/pkg/config"
+	"github.com/osshield/fallbck/pkg/pvebackup"
 	"github.com/osshield/fallbck/pkg/rundetail"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
@@ -414,7 +415,7 @@ func StartHeartbeat(ctx context.Context, cfg *config.AgentConfig, store *TokenSt
 	}
 
 	sendHeartbeat := func() {
-		resp, err := do("/api/v1/agents/heartbeat", api.HeartbeatRequest{AgentID: agentUUID, Status: "online", Version: version})
+		resp, err := do("/api/v1/agents/heartbeat", api.HeartbeatRequest{AgentID: agentUUID, Status: "online", Version: version, PVEHost: pvebackup.IsPVEHost()})
 		if err != nil {
 			slog.Warn("Heartbeat failed", "error", err)
 			return

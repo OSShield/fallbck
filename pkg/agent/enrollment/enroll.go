@@ -16,6 +16,7 @@ import (
 
 	"github.com/osshield/fallbck/pkg/api"
 	"github.com/osshield/fallbck/pkg/config"
+	"github.com/osshield/fallbck/pkg/pvebackup"
 )
 
 // AgentVersion is reported to the server at enrollment; set by the agent binary
@@ -79,6 +80,7 @@ func Enroll(ctx context.Context, o Options) (*config.AgentConfig, error) {
 		Arch:      runtime.GOARCH,
 		Version:   o.Version,
 		AgentType: o.AgentType,
+		PVEHost:   pvebackup.IsPVEHost(),
 	}
 
 	jsonBytes, err := json.Marshal(reqBody)

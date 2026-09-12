@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/osshield/fallbck/pkg/dbbackup"
 	"github.com/osshield/fallbck/pkg/k8sbackup"
+	"github.com/osshield/fallbck/pkg/pvebackup"
 	"time"
 
 	"github.com/google/uuid"
@@ -33,8 +34,8 @@ func (d *DB) CreateAgent(ctx context.Context, agent *Agent) error {
 	agent.UpdatedAt = now
 
 	query := `
-		INSERT INTO agents (id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		INSERT INTO agents (id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, pve_host)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		RETURNING id, created_at, updated_at
 	`
 	if agent.AgentType == "" {
@@ -43,7 +44,7 @@ func (d *DB) CreateAgent(ctx context.Context, agent *Agent) error {
 	return d.Pool.QueryRow(ctx, query,
 		agent.ID, agent.Hostname, agent.IPAddress, agent.OS, agent.Arch,
 		agent.Version, agent.TaskQueue, agent.Status, agent.LastSeenAt,
-		agent.CreatedAt, agent.UpdatedAt, agent.AgentType,
+		agent.CreatedAt, agent.UpdatedAt, agent.AgentType, agent.PVEHost,
 	).Scan(&agent.ID, &agent.CreatedAt, &agent.UpdatedAt)
 }
 
@@ -52,10 +53,11 @@ func (d *DB) UpsertAgent(ctx context.Context, agent *Agent) error {
 	agent.UpdatedAt = now
 
 	query := `
-		INSERT INTO agents (id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		INSERT INTO agents (id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, pve_host)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		ON CONFLICT (id) DO UPDATE SET
 			agent_type = EXCLUDED.agent_type,
+			pve_host = EXCLUDED.pve_host,
 			hostname = EXCLUDED.hostname,
 			ip_address = EXCLUDED.ip_address,
 			os = EXCLUDED.os,
@@ -70,18 +72,18 @@ func (d *DB) UpsertAgent(ctx context.Context, agent *Agent) error {
 	return d.Pool.QueryRow(ctx, query,
 		agent.ID, agent.Hostname, agent.IPAddress, agent.OS, agent.Arch,
 		agent.Version, agent.TaskQueue, agent.Status, agent.LastSeenAt,
-		now, now, agent.AgentType,
+		now, now, agent.AgentType, agent.PVEHost,
 	).Scan(&agent.CreatedAt, &agent.UpdatedAt)
 }
 
 func (d *DB) GetAgentByID(ctx context.Context, id uuid.UUID) (*Agent, error) {
 	query := `
-		SELECT id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, debug_logging
+		SELECT id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, debug_logging, pve_host
 		FROM agents WHERE id = $1
 	`
 	row := d.Pool.QueryRow(ctx, query, id)
 	var a Agent
-	err := row.Scan(&a.ID, &a.Hostname, &a.IPAddress, &a.OS, &a.Arch, &a.Version, &a.TaskQueue, &a.Status, &a.LastSeenAt, &a.CreatedAt, &a.UpdatedAt, &a.AgentType, &a.DebugLogging)
+	err := row.Scan(&a.ID, &a.Hostname, &a.IPAddress, &a.OS, &a.Arch, &a.Version, &a.TaskQueue, &a.Status, &a.LastSeenAt, &a.CreatedAt, &a.UpdatedAt, &a.AgentType, &a.DebugLogging, &a.PVEHost)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -93,7 +95,7 @@ func (d *DB) GetAgentByID(ctx context.Context, id uuid.UUID) (*Agent, error) {
 
 func (d *DB) ListAgents(ctx context.Context) ([]*Agent, error) {
 	query := `
-		SELECT id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, debug_logging
+		SELECT id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, debug_logging, pve_host
 		FROM agents ORDER BY hostname ASC
 	`
 	rows, err := d.Pool.Query(ctx, query)
@@ -105,7 +107,7 @@ func (d *DB) ListAgents(ctx context.Context) ([]*Agent, error) {
 	var agents []*Agent
 	for rows.Next() {
 		var a Agent
-		if err := rows.Scan(&a.ID, &a.Hostname, &a.IPAddress, &a.OS, &a.Arch, &a.Version, &a.TaskQueue, &a.Status, &a.LastSeenAt, &a.CreatedAt, &a.UpdatedAt, &a.AgentType, &a.DebugLogging); err != nil {
+		if err := rows.Scan(&a.ID, &a.Hostname, &a.IPAddress, &a.OS, &a.Arch, &a.Version, &a.TaskQueue, &a.Status, &a.LastSeenAt, &a.CreatedAt, &a.UpdatedAt, &a.AgentType, &a.DebugLogging, &a.PVEHost); err != nil {
 			return nil, err
 		}
 		agents = append(agents, &a)
@@ -115,11 +117,11 @@ func (d *DB) ListAgents(ctx context.Context) ([]*Agent, error) {
 
 // UpdateAgentHeartbeat records the heartbeat and returns the agent's remote
 // debug-logging setting for the response.
-func (d *DB) UpdateAgentHeartbeat(ctx context.Context, id uuid.UUID, status AgentStatus) (bool, error) {
+func (d *DB) UpdateAgentHeartbeat(ctx context.Context, id uuid.UUID, status AgentStatus, pveHost bool) (bool, error) {
 	now := time.Now().UTC()
-	query := `UPDATE agents SET last_seen_at = $1, status = $2, updated_at = $1 WHERE id = $3 RETURNING debug_logging`
+	query := `UPDATE agents SET last_seen_at = $1, status = $2, updated_at = $1, pve_host = $4 WHERE id = $3 RETURNING debug_logging`
 	var debug bool
-	if err := d.Pool.QueryRow(ctx, query, now, status, id).Scan(&debug); err != nil {
+	if err := d.Pool.QueryRow(ctx, query, now, status, id, pveHost).Scan(&debug); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return false, ErrNotFound
 		}
@@ -338,20 +340,20 @@ func (d *DB) CreateJob(ctx context.Context, job *BackupJob) error {
 	if err != nil {
 		return fmt.Errorf("failed to serialize retention policy: %w", err)
 	}
-	jobType, dbConfigJSON, k8sConfigJSON, err := jobTypeColumns(job)
+	jobType, dbConfigJSON, k8sConfigJSON, pveConfigJSON, err := jobTypeColumns(job)
 	if err != nil {
 		return err
 	}
 
 	query := `
-		INSERT INTO backup_jobs (id, name, agent_id, target_id, schedule_cron, backup_paths, exclude_paths, retention_policy, enabled, direct_pbs, created_at, updated_at, job_type, db_config, k8s_config)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+		INSERT INTO backup_jobs (id, name, agent_id, target_id, schedule_cron, backup_paths, exclude_paths, retention_policy, enabled, direct_pbs, created_at, updated_at, job_type, db_config, k8s_config, pve_config)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 		RETURNING id
 	`
 	return d.Pool.QueryRow(ctx, query,
 		job.ID, job.Name, job.AgentID, job.TargetID, job.ScheduleCron,
 		backupPathsJSON, excludePathsJSON, retentionJSON, job.Enabled, job.DirectPBS,
-		job.CreatedAt, job.UpdatedAt, jobType, dbConfigJSON, k8sConfigJSON,
+		job.CreatedAt, job.UpdatedAt, jobType, dbConfigJSON, k8sConfigJSON, pveConfigJSON,
 	).Scan(&job.ID)
 }
 
@@ -359,7 +361,7 @@ func (d *DB) GetJobByID(ctx context.Context, id uuid.UUID) (*BackupJob, error) {
 	query := `
 		SELECT j.id, j.name, j.agent_id, j.target_id, j.schedule_cron, j.backup_paths, j.exclude_paths,
 		       j.retention_policy, j.enabled, j.direct_pbs, j.created_at, j.updated_at,
-		       j.job_type, j.db_config, j.k8s_config,
+		       j.job_type, j.db_config, j.k8s_config, j.pve_config,
 		       a.hostname as agent_name, t.name as target_name
 		FROM backup_jobs j
 		JOIN agents a ON j.agent_id = a.id
@@ -368,12 +370,12 @@ func (d *DB) GetJobByID(ctx context.Context, id uuid.UUID) (*BackupJob, error) {
 	`
 	row := d.Pool.QueryRow(ctx, query, id)
 	var j BackupJob
-	var backupPathsRaw, excludePathsRaw, retentionRaw, dbConfigRaw, k8sConfigRaw []byte
+	var backupPathsRaw, excludePathsRaw, retentionRaw, dbConfigRaw, k8sConfigRaw, pveConfigRaw []byte
 	err := row.Scan(
 		&j.ID, &j.Name, &j.AgentID, &j.TargetID, &j.ScheduleCron,
 		&backupPathsRaw, &excludePathsRaw, &retentionRaw,
 		&j.Enabled, &j.DirectPBS, &j.CreatedAt, &j.UpdatedAt,
-		&j.JobType, &dbConfigRaw, &k8sConfigRaw,
+		&j.JobType, &dbConfigRaw, &k8sConfigRaw, &pveConfigRaw,
 		&j.AgentName, &j.TargetName,
 	)
 	if err != nil {
@@ -388,6 +390,7 @@ func (d *DB) GetJobByID(ctx context.Context, id uuid.UUID) (*BackupJob, error) {
 	_ = json.Unmarshal(retentionRaw, &j.RetentionPolicy)
 	j.DBConfig = parseDBConfig(dbConfigRaw)
 	j.K8sConfig = parseK8sConfig(j.JobType, k8sConfigRaw)
+	j.PVEConfig = parsePVEConfig(j.JobType, pveConfigRaw)
 
 	return &j, nil
 }
@@ -396,7 +399,7 @@ func (d *DB) ListJobs(ctx context.Context) ([]*BackupJob, error) {
 	query := `
 		SELECT j.id, j.name, j.agent_id, j.target_id, j.schedule_cron, j.backup_paths, j.exclude_paths,
 		       j.retention_policy, j.enabled, j.direct_pbs, j.created_at, j.updated_at,
-		       j.job_type, j.db_config, j.k8s_config,
+		       j.job_type, j.db_config, j.k8s_config, j.pve_config,
 		       a.hostname as agent_name, t.name as target_name
 		FROM backup_jobs j
 		JOIN agents a ON j.agent_id = a.id
@@ -412,12 +415,12 @@ func (d *DB) ListJobs(ctx context.Context) ([]*BackupJob, error) {
 	var jobs []*BackupJob
 	for rows.Next() {
 		var j BackupJob
-		var backupPathsRaw, excludePathsRaw, retentionRaw, dbConfigRaw, k8sConfigRaw []byte
+		var backupPathsRaw, excludePathsRaw, retentionRaw, dbConfigRaw, k8sConfigRaw, pveConfigRaw []byte
 		if err := rows.Scan(
 			&j.ID, &j.Name, &j.AgentID, &j.TargetID, &j.ScheduleCron,
 			&backupPathsRaw, &excludePathsRaw, &retentionRaw,
 			&j.Enabled, &j.DirectPBS, &j.CreatedAt, &j.UpdatedAt,
-			&j.JobType, &dbConfigRaw, &k8sConfigRaw,
+			&j.JobType, &dbConfigRaw, &k8sConfigRaw, &pveConfigRaw,
 			&j.AgentName, &j.TargetName,
 		); err != nil {
 			return nil, err
@@ -427,34 +430,54 @@ func (d *DB) ListJobs(ctx context.Context) ([]*BackupJob, error) {
 		_ = json.Unmarshal(retentionRaw, &j.RetentionPolicy)
 		j.DBConfig = parseDBConfig(dbConfigRaw)
 		j.K8sConfig = parseK8sConfig(j.JobType, k8sConfigRaw)
+		j.PVEConfig = parsePVEConfig(j.JobType, pveConfigRaw)
 		jobs = append(jobs, &j)
 	}
 	return jobs, rows.Err()
 }
 
-// jobTypeColumns returns the job_type, db_config and k8s_config column values
-func jobTypeColumns(job *BackupJob) (string, []byte, []byte, error) {
-	jobType, ok := NormalizeAgentType(job.JobType)
+// jobTypeColumns returns the job_type, db_config, k8s_config and pve_config column values
+func jobTypeColumns(job *BackupJob) (string, []byte, []byte, []byte, error) {
+	jobType, ok := NormalizeJobType(job.JobType)
 	if !ok {
-		return "", nil, nil, fmt.Errorf("unknown job type %q", job.JobType)
+		return "", nil, nil, nil, fmt.Errorf("unknown job type %q", job.JobType)
 	}
 	job.JobType = jobType
-	dbJSON, k8sJSON := []byte("{}"), []byte("{}")
+	dbJSON, k8sJSON, pveJSON := []byte("{}"), []byte("{}"), []byte("{}")
 	if jobType == JobTypeDatabase && job.DBConfig != nil {
 		raw, err := json.Marshal(job.DBConfig)
 		if err != nil {
-			return "", nil, nil, fmt.Errorf("failed to serialize database configuration: %w", err)
+			return "", nil, nil, nil, fmt.Errorf("failed to serialize database configuration: %w", err)
 		}
 		dbJSON = raw
 	}
 	if jobType == JobTypeKubernetes && job.K8sConfig != nil {
 		raw, err := json.Marshal(job.K8sConfig)
 		if err != nil {
-			return "", nil, nil, fmt.Errorf("failed to serialize kubernetes configuration: %w", err)
+			return "", nil, nil, nil, fmt.Errorf("failed to serialize kubernetes configuration: %w", err)
 		}
 		k8sJSON = raw
 	}
-	return jobType, dbJSON, k8sJSON, nil
+	if jobType == JobTypePVE && job.PVEConfig != nil {
+		raw, err := json.Marshal(job.PVEConfig)
+		if err != nil {
+			return "", nil, nil, nil, fmt.Errorf("failed to serialize Proxmox VE configuration: %w", err)
+		}
+		pveJSON = raw
+	}
+	return jobType, dbJSON, k8sJSON, pveJSON, nil
+}
+
+// parsePVEConfig decodes the pve_config column for Proxmox VE jobs
+func parsePVEConfig(jobType string, raw []byte) *pvebackup.Spec {
+	if jobType != JobTypePVE {
+		return nil
+	}
+	spec := &pvebackup.Spec{}
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, spec)
+	}
+	return spec
 }
 
 // parseK8sConfig decodes the k8s_config column for kubernetes jobs

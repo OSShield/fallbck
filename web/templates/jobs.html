@@ -34,7 +34,11 @@
             <td><span class="badge badge-neutral">{{.AgentName}}</span></td>
             <td>{{.TargetName}}{{if .DirectPBS}} <span class="badge badge-warning" title="Agent connects to PBS directly">direct</span>{{end}}</td>
             <td>
-              {{if .IsDatabase}}
+              {{if .IsPVE}}
+                <span class="badge badge-info">Proxmox VE</span>
+                <code style="display: inline-block; margin-right: 4px; font-size: 12px;">/etc</code>
+                {{with .PVEConfig}}{{range .DataPaths}}<code style="display: inline-block; margin-right: 4px; font-size: 12px;">{{.}}</code>{{end}}{{end}}
+              {{else if .IsDatabase}}
                 {{with .DBConfig}}
                   <span class="badge badge-info">{{.Engine}}</span>
                   <code style="display: inline-block; margin-right: 4px; font-size: 12px;">{{.Host}}{{if .Port}}:{{.Port}}{{end}}</code>
@@ -103,6 +107,7 @@
           <select name="job_type" class="form-control" onchange="setJobType(this.value)">
             <option value="filesystem">Filesystem (directories, fallbck-agent)</option>
             <option value="database">Database (PostgreSQL / MySQL / MongoDB, fallbck-db-agent or a Kubernetes agent)</option>
+            <option value="pve">Proxmox VE host (configuration, package list, optional data paths; fallbck-agent on the node)</option>
           </select>
         </div>
 
@@ -112,7 +117,7 @@
             <select name="agent_id" class="form-control" required onchange="updateDBTarget()">
               <option value="">-- Choose Agent --</option>
               {{range .Agents}}
-                <option value="{{.ID}}" data-agent-type="{{.AgentType}}">{{.Hostname}} ({{.OS}}, {{.AgentType}})</option>
+                <option value="{{.ID}}" data-agent-type="{{.AgentType}}" data-pve="{{if .PVEHost}}true{{else}}false{{end}}">{{.Hostname}} ({{.OS}}, {{.AgentType}}{{if .PVEHost}}, Proxmox VE{{end}})</option>
               {{end}}
             </select>
           </div>
@@ -136,6 +141,30 @@
           <div class="form-group">
             <label>Exclude Patterns (optional, one per line, proxmox-backup-client syntax)</label>
             <textarea name="exclude_paths" class="form-control" rows="2" placeholder="*.tmp&#10;/var/cache&#10;node_modules"></textarea>
+          </div>
+        </fieldset>
+
+        <fieldset id="job-pve-fields" style="border: 0; padding: 0; margin: 0;" hidden disabled>
+          <div style="background-color: var(--bg-subtle); padding: 14px; border-radius: var(--radius-sm); margin-bottom: 16px; font-size: 13px;">
+            Always included: <code>/etc</code> (with a consistent copy of <code>/etc/pve</code> and the cluster database), the installed and manually selected package lists, storage, network and disk definitions (partition tables), guest configurations, and a generated restore script for a fresh Proxmox VE install. Guest disks are not part of this backup; use vzdump to PBS for those.
+          </div>
+          <div class="form-group">
+            <label>Data paths (optional, one per line; mounted data storages, archived file by file)</label>
+            <textarea name="pve_data_paths" class="form-control" rows="2" placeholder="/var/lib/vz&#10;/mnt/pve/nfs-data"></textarea>
+          </div>
+          <div class="form-group">
+            <label>Exclude patterns (optional, one per line, proxmox-backup-client syntax, matched against archive paths)</label>
+            <textarea name="pve_exclude_paths" class="form-control" rows="2" placeholder="/vz/template/cache"></textarea>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <input type="checkbox" id="pve_include_root_home" name="pve_include_root_home" checked>
+              <label for="pve_include_root_home" style="font-size: 13px;">Include /root (dotfiles, scripts, SSH keys of the root account)</label>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <input type="checkbox" id="pve_include_guest_images" name="pve_include_guest_images">
+              <label for="pve_include_guest_images" style="font-size: 13px;">Keep guest disk images found under the data paths (images/, private/, subvol-*); off by default because vzdump covers them</label>
+            </div>
           </div>
         </fieldset>
 

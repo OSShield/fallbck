@@ -9,11 +9,16 @@ import (
 	"time"
 
 	"github.com/osshield/fallbck/pkg/agent/backup"
+	dbrun "github.com/osshield/fallbck/pkg/agent/dbbackup"
+	pverun "github.com/osshield/fallbck/pkg/agent/pvebackup"
 	"github.com/osshield/fallbck/pkg/db"
 	"github.com/osshield/fallbck/pkg/proxy"
+	pvespec "github.com/osshield/fallbck/pkg/pvebackup"
 	"github.com/osshield/fallbck/pkg/temporal"
+	"github.com/osshield/gopbs"
 	"github.com/osshield/gopbs/pbs"
 	"go.temporal.io/sdk/activity"
+	sdktemporal "go.temporal.io/sdk/temporal"
 	"google.golang.org/grpc"
 )
 
@@ -34,6 +39,10 @@ type AgentActivities struct {
 	LogTail func() string
 	// ReportProgress posts live phase updates to the server (best-effort)
 	ReportProgress ProgressFunc
+	// SpoolDir stages collected data for Proxmox VE host backups (<data dir>/spool)
+	SpoolDir string
+	Hostname string
+	Version  string
 }
 
 // NewAgentActivities creates a new AgentActivities instance
@@ -94,6 +103,86 @@ func (a *AgentActivities) ExecuteFilesystemBackup(ctx context.Context, session *
 				ErrorMessage: fmt.Sprintf("Backup execution failed: %v", err),
 			},
 			backupFailure(ctx, err, pt, a.LogTail)
+	}
+	return result, nil
+}
+
+// ExecutePVEBackup backs up the Proxmox VE host this agent runs on: the collected
+// inventory (/etc/pve copy, package lists, storage/network/disk definitions, restore
+// runbook), /etc, /root and the job's data paths go into one pve.pxar archive.
+func (a *AgentActivities) ExecutePVEBackup(ctx context.Context, session *temporal.BackupSessionInfo) (*temporal.BackupExecutionResult, error) {
+	info := activity.GetInfo(ctx)
+	if session.JobType != db.JobTypePVE {
+		return nil, sdktemporal.NewNonRetryableApplicationError("session is not a Proxmox VE backup", ErrTypeDBPrecheckFailed, nil)
+	}
+	session = sessionForAttempt(ctx, session, a.RefreshTicket)
+	slog.Info("Agent activity started: ExecutePVEBackup", "activity_id", info.ActivityID, "attempt", info.Attempt,
+		"job_id", session.JobID, "datastore", session.Datastore, "direct_pbs", session.DirectPBS)
+
+	pt := newPhaseTracker()
+	stopHeartbeats := startHeartbeats(ctx, pt)
+	defer stopHeartbeats()
+	reportPh := func() { reportPhase(a.ReportProgress, ctx, session.Ticket, session.BackupRunID, pt.Current()) }
+	stopProgress := startProgress(ctx, pt, 5*time.Second, func(string) { reportPh() })
+	defer stopProgress()
+
+	failed := func(err error) (*temporal.BackupExecutionResult, error) {
+		slog.Error("Proxmox VE backup failed", "error", err, "phase", pt.Current())
+		return &temporal.BackupExecutionResult{Status: db.RunStatusFailed, ErrorMessage: err.Error()},
+			backupFailure(ctx, err, pt, a.LogTail)
+	}
+
+	var dial func(ctx context.Context, ref pbs.SnapshotRef) (net.Conn, error)
+	var direct *backup.DirectOptions
+	if session.DirectPBS {
+		if a.Credentials == nil {
+			return failed(errors.New("job requires direct PBS access but the agent has no credentials fetcher"))
+		}
+		pt.Set("fetching PBS credentials")
+		d, err := a.Credentials(ctx, session.Ticket)
+		if err != nil {
+			return failed(err)
+		}
+		direct = d
+	} else {
+		if a.Tunnel == nil {
+			return failed(errors.New("agent tunnel connection is not configured"))
+		}
+		dial = func(ctx context.Context, _ pbs.SnapshotRef) (net.Conn, error) {
+			return proxy.Dial(ctx, a.Tunnel, session.Ticket)
+		}
+	}
+
+	upload := func(ctx context.Context, paths, excludes []string, blobs []gopbs.Blob) (*temporal.BackupExecutionResult, error) {
+		s := *session
+		s.BackupPaths = paths
+		s.ExcludePaths = excludes
+		return backup.Run(ctx, backup.Options{
+			Session: &s, Workers: a.Workers, Dial: dial, Direct: direct,
+			ArchiveName: pvespec.ArchiveName, Blobs: blobs,
+			OnPhase: func(p string) { pt.Set(p); reportPh() },
+		})
+	}
+	result, err := pverun.Run(ctx, pverun.RunOptions{
+		Session: session, Spec: session.PVEConfig, SpoolDir: a.SpoolDir, Upload: upload,
+		Hostname: a.Hostname, AgentVersion: a.Version,
+		Progress: func(p string) { pt.Set(p); reportPh() },
+	})
+	if err != nil {
+		if dbrun.IsPrecheck(err) {
+			slog.Error("Proxmox VE backup precheck failed", "error", err)
+			tail := ""
+			if a.LogTail != nil {
+				tail = a.LogTail()
+			}
+			return &temporal.BackupExecutionResult{Status: db.RunStatusFailed, ErrorMessage: err.Error()},
+				sdktemporal.NewNonRetryableApplicationError(err.Error(), ErrTypeDBPrecheckFailed, err,
+					temporal.BackupFailureDetails{Phase: pt.Current(), LogTail: tail})
+		}
+		if ctx.Err() != nil {
+			return nil, err
+		}
+		return failed(err)
 	}
 	return result, nil
 }

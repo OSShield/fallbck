@@ -246,17 +246,23 @@ function jobForm() { return document.getElementById('job-form'); }
 function setJobType(type) {
   const form = jobForm();
   const isDB = type === 'database';
+  const isPVE = type === 'pve';
   const fs = document.getElementById('job-fs-fields');
   const dbf = document.getElementById('job-db-fields');
-  fs.hidden = isDB; fs.disabled = isDB;
+  const pve = document.getElementById('job-pve-fields');
+  fs.hidden = isDB || isPVE; fs.disabled = isDB || isPVE;
   dbf.hidden = !isDB; dbf.disabled = !isDB;
+  pve.hidden = !isPVE; pve.disabled = !isPVE;
   const sel = form.elements['agent_id'];
   let keep = false;
   for (const opt of sel.options) {
     if (!opt.value) continue;
     const agentType = opt.dataset.agentType || 'filesystem';
-    // Database jobs may also run on a kubernetes agent (dumped from a pod in the cluster)
-    const match = agentType === type || (type === 'database' && agentType === 'kubernetes');
+    // Database jobs may also run on a kubernetes agent (dumped from a pod in the
+    // cluster); Proxmox VE jobs need the filesystem agent installed on a PVE node
+    let match = agentType === type;
+    if (type === 'database') match = match || agentType === 'kubernetes';
+    if (type === 'pve') match = agentType === 'filesystem' && opt.dataset.pve === 'true';
     opt.hidden = !match; opt.disabled = !match;
     if (match && opt.selected) keep = true;
   }
@@ -322,6 +328,13 @@ async function editJob(jobId) {
     form.elements['backup_paths'].value = (job.backup_paths || []).join('\n');
     form.elements['exclude_paths'].value = (job.exclude_paths || []).join('\n');
     document.getElementById('db-password-hint').hidden = true;
+    if (jobType === 'pve') {
+      const pc = job.pve_config || {};
+      form.elements['pve_data_paths'].value = (pc.data_paths || []).join('\n');
+      form.elements['pve_exclude_paths'].value = (pc.exclude_paths || []).join('\n');
+      form.elements['pve_include_root_home'].checked = pc.include_root_home !== false;
+      form.elements['pve_include_guest_images'].checked = !!pc.include_guest_images;
+    }
     if (jobType === 'database' && job.db_config) {
       const dc = job.db_config;
       form.elements['db_engine'].value = dc.engine || 'postgres';
@@ -402,6 +415,18 @@ async function submitJobForm(e) {
     direct_pbs: formData.get('direct_pbs') === 'on',
     job_type: formData.get('job_type') || 'filesystem'
   };
+
+  if (payload.job_type === 'pve') {
+    payload.backup_paths = [];
+    payload.exclude_paths = [];
+    const lines = v => (formData.get(v) || '').split('\n').map(p => p.trim()).filter(p => p.length > 0);
+    payload.pve_config = {
+      data_paths: lines('pve_data_paths'),
+      exclude_paths: lines('pve_exclude_paths'),
+      include_root_home: formData.get('pve_include_root_home') === 'on',
+      include_guest_images: formData.get('pve_include_guest_images') === 'on'
+    };
+  }
 
   if (payload.job_type === 'database') {
     payload.backup_paths = [];
@@ -755,7 +780,7 @@ function renderRun(run) {
   }
   const d = run.details || {};
   const type = d.type || 'filesystem';
-  const typeLabel = { filesystem: 'Filesystem', database: 'Database', kubernetes: 'Kubernetes' }[type] || type;
+  const typeLabel = { filesystem: 'Filesystem', database: 'Database', kubernetes: 'Kubernetes', pve: 'Proxmox VE host' }[type] || type;
 
   const active = RUN_ACTIVE.includes(run.status);
   let html = '';
@@ -784,6 +809,7 @@ function renderRun(run) {
 
   if (type === 'database') html += renderDBDetail(d.manifest || {});
   else if (type === 'kubernetes') html += renderK8sDetail(d.manifest || {});
+  else if (type === 'pve') html += renderPVEDetail(d.manifest || {});
   else if (d.archives || d.paths) html += renderFsDetail(d);
 
   if (run.log_tail) html += rdCard('Agent log (captured at the run)', rdPre(run.log_tail));
@@ -857,6 +883,39 @@ function renderDBDetail(m) {
   }
   if (m.restore && m.restore.commands && m.restore.commands.length)
     html += rdCard('Restore', (m.restore.summary ? `<p style="font-size:13px;margin-bottom:8px;">${rdEsc(m.restore.summary)}</p>` : '') + rdPre(m.restore.commands.join('\n')));
+  return html;
+}
+
+function renderPVEDetail(m) {
+  const h = m.host || {};
+  const p = m.packages || {};
+  let html = rdCard('Proxmox VE host', rdKV([
+    ['Host', rdEsc(h.hostname || '')], ['Node', rdEsc(h.node || '')],
+    ['pve-manager', rdEsc(h.pve_version || '-')], ['Kernel', rdEsc(h.kernel || '-')], ['OS', rdEsc(h.os || '-')],
+    ['Packages', `${p.installed || 0} installed, ${p.manual || 0} manual`],
+  ]));
+  const guests = (m.guests || []).map(g => [String(g.vmid), rdEsc(g.type), rdEsc(g.name || ''), rdMono(g.config_file)]);
+  html += rdCard('Guests (configuration only)', rdTable(['VMID', 'Type', 'Name', 'Config'], guests));
+  const storages = (m.storages || []).map(s => [rdEsc(s.id), rdEsc(s.type), rdEsc(s.path || s.pool || s.export || ''), rdEsc((s.content || []).join(', ')), s.shared ? 'yes' : '', s.disabled ? 'yes' : '']);
+  html += rdCard('Storages', rdTable(['ID', 'Type', 'Path / pool', 'Content', 'Shared', 'Disabled'], storages));
+  const disks = (m.disks || []).map(d => [rdMono(d.path), rdEsc(d.model || ''), rdEsc(d.serial || ''), rdBytes(d.size_bytes), d.partition_table ? 'saved' : '-']);
+  html += rdCard('Disks', rdTable(['Device', 'Model', 'Serial', 'Size', 'Partition table'], disks));
+  const entries = (m.entries || []).map(e => [rdMono(e.name), rdMono(e.source), rdEsc(e.kind)]);
+  let layout = rdTable(['Archive entry', 'Source', 'Kind'], entries);
+  if (m.excludes && m.excludes.length) layout += `<div style="margin-top:12px;font-size:11px;color:var(--text-muted);text-transform:uppercase;">Excludes</div>${rdChips(m.excludes)}`;
+  html += rdCard('Archive layout (' + rdEsc((m.snapshot || {}).archive || 'pve.pxar') + ')', layout);
+  const failed = (m.collected || []).filter(c => c.error);
+  if (failed.length || (m.warnings && m.warnings.length)) {
+    let b = '';
+    if (failed.length) b += '<div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">Collectors that failed (best effort)</div>' +
+      rdTable(['Collector', 'Command', 'Error'], failed.map(c => [rdEsc(c.name), rdMono(c.command || ''), rdEsc(c.error)]));
+    if (m.warnings && m.warnings.length) b += '<div style="margin-top:12px;font-size:11px;color:var(--text-muted);text-transform:uppercase;">Warnings</div><ul style="margin:4px 0 0 18px;font-size:13px;">' + m.warnings.map(n => `<li>${rdEsc(n)}</li>`).join('') + '</ul>';
+    html += rdCard('Warnings', b);
+  }
+  if (m.restore && m.restore.commands && m.restore.commands.length)
+    html += rdCard('Restore', (m.restore.summary ? `<p style="font-size:13px;margin-bottom:8px;">${rdEsc(m.restore.summary)}</p>` : '') +
+      (m.restore.script ? `<p style="font-size:13px;margin-bottom:8px;">The full runbook is stored in the archive as <code>${rdEsc(m.restore.script)}</code>.</p>` : '') +
+      rdPre(m.restore.commands.join('\n')));
   return html;
 }
 
