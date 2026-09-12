@@ -82,7 +82,7 @@ func (d *DB) UpdateJob(ctx context.Context, job *BackupJob) error {
 	if err != nil {
 		return fmt.Errorf("failed to serialize retention policy: %w", err)
 	}
-	jobType, dbConfigJSON, k8sConfigJSON, err := jobTypeColumns(job)
+	jobType, dbConfigJSON, k8sConfigJSON, pveConfigJSON, err := jobTypeColumns(job)
 	if err != nil {
 		return err
 	}
@@ -91,10 +91,10 @@ func (d *DB) UpdateJob(ctx context.Context, job *BackupJob) error {
 		UPDATE backup_jobs
 		SET name = $2, agent_id = $3, target_id = $4, schedule_cron = $5, backup_paths = $6,
 		    exclude_paths = $7, retention_policy = $8, enabled = $9, direct_pbs = $10, updated_at = $11,
-		    job_type = $12, db_config = $13, k8s_config = $14
+		    job_type = $12, db_config = $13, k8s_config = $14, pve_config = $15
 		WHERE id = $1`,
 		job.ID, job.Name, job.AgentID, job.TargetID, job.ScheduleCron, backupPathsJSON,
-		excludePathsJSON, retentionJSON, job.Enabled, job.DirectPBS, job.UpdatedAt, jobType, dbConfigJSON, k8sConfigJSON)
+		excludePathsJSON, retentionJSON, job.Enabled, job.DirectPBS, job.UpdatedAt, jobType, dbConfigJSON, k8sConfigJSON, pveConfigJSON)
 	if err != nil {
 		return err
 	}

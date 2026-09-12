@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/osshield/fallbck/pkg/agent/enrollment"
@@ -75,6 +76,9 @@ func main() {
 			acts.RefreshTicket = runtime.TicketRefresher(cfg, store)
 			acts.LogTail = logging.Tail
 			acts.ReportProgress = runtime.ProgressReporter(cfg, store)
+			acts.SpoolDir = filepath.Join(cfg.DataDir, "spool")
+			acts.Hostname = cfg.Hostname
+			acts.Version = AgentVersion
 			w.RegisterActivity(acts)
 			return nil
 		})

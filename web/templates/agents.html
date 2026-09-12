@@ -41,7 +41,7 @@
               {{end}}
             </td>
             <td><strong>{{.Hostname}}</strong></td>
-            <td>{{if eq .AgentType "database"}}<span class="badge badge-info">database</span>{{else}}<span class="badge badge-neutral">filesystem</span>{{end}}</td>
+            <td>{{if eq .AgentType "database"}}<span class="badge badge-info">database</span>{{else if eq .AgentType "kubernetes"}}<span class="badge badge-info">kubernetes</span>{{else}}<span class="badge badge-neutral">filesystem</span>{{end}}{{if .PVEHost}} <span class="badge badge-warning" title="Runs on a Proxmox VE node">PVE</span>{{end}}</td>
             <td style="font-family: var(--font-mono); font-size: 13px;">{{if .IPAddress}}{{.IPAddress}}{{else}}-{{end}}</td>
             <td>
               <span class="badge badge-neutral">{{.OS}}/{{.Arch}}</span>

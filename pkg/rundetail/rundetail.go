@@ -10,6 +10,7 @@ const (
 	TypeFilesystem = "filesystem"
 	TypeDatabase   = "database"
 	TypeKubernetes = "kubernetes"
+	TypePVE        = "pve"
 )
 
 // ArchiveStat is one pxar/catalog/payload archive uploaded in a snapshot

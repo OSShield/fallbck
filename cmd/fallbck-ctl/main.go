@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -91,7 +92,7 @@ Usage:
 Resources:
   token     create, list enrollment tokens
   agents    list, get, delete agents
-  targets   create, list, delete PBS backup targets
+  targets   list PBS backup targets; credentials <target> prints proxmox-backup-client exports
   jobs      create, list, get, run backup jobs
   runs      list backup executions
 
@@ -220,7 +221,78 @@ func handleTargetCommands(serverURL string, args []string) {
 			)
 		}
 		w.Flush()
+	case "credentials":
+		// Prints the PBS connection details of a target as proxmox-backup-client
+		// environment exports, for restores done with PBS's own tools (e.g. the
+		// Proxmox VE host restore runbook)
+		if len(args) < 2 {
+			fmt.Println("usage: fallbck-ctl targets credentials <target id, id prefix or name>")
+			os.Exit(2)
+		}
+		target, err := resolveTarget(serverURL, args[1])
+		if err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
+		resp, err := apiGet(fmt.Sprintf("%s/api/v1/targets/%s/credentials", serverURL, target.ID))
+		if err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			fmt.Printf("Error: %s: %s\n", resp.Status, body)
+			os.Exit(1)
+		}
+		var creds api.TargetCredentials
+		if err := json.NewDecoder(resp.Body).Decode(&creds); err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("# PBS target %q (%s); paste into the shell running proxmox-backup-client\n", target.Name, creds.Endpoint)
+		fmt.Printf("export PBS_REPOSITORY=%s\n", shellQuote(creds.Repository))
+		fmt.Printf("export PBS_PASSWORD=%s\n", shellQuote(creds.Secret))
+		if creds.Fingerprint != "" {
+			fmt.Printf("export PBS_FINGERPRINT=%s\n", shellQuote(creds.Fingerprint))
+		}
+		if creds.Namespace != "" {
+			fmt.Printf("# namespace: add --ns %s to proxmox-backup-client commands\n", creds.Namespace)
+		}
+	default:
+		fmt.Println("usage: fallbck-ctl targets [list|credentials <target>]")
+		os.Exit(2)
 	}
+}
+
+// resolveTarget finds a target by full id, id prefix or exact name
+func resolveTarget(serverURL, ref string) (*db.BackupTarget, error) {
+	resp, err := apiGet(fmt.Sprintf("%s/api/v1/targets", serverURL))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var targets []*db.BackupTarget
+	if err := json.NewDecoder(resp.Body).Decode(&targets); err != nil {
+		return nil, err
+	}
+	var matches []*db.BackupTarget
+	for _, t := range targets {
+		if t.ID.String() == ref || t.Name == ref || strings.HasPrefix(t.ID.String(), ref) {
+			matches = append(matches, t)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return nil, fmt.Errorf("no target matches %q", ref)
+	case 1:
+		return matches[0], nil
+	}
+	return nil, fmt.Errorf("%q matches %d targets; use the full id", ref, len(matches))
+}
+
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
 func handleJobCommands(serverURL string, args []string) {

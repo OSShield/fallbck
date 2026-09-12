@@ -9,6 +9,7 @@ import (
 	"github.com/osshield/fallbck/pkg/config"
 	"github.com/osshield/fallbck/pkg/dbbackup"
 	"github.com/osshield/fallbck/pkg/k8sbackup"
+	"github.com/osshield/fallbck/pkg/pvebackup"
 )
 
 // Agent / job types: each agent binary handles one kind of job
@@ -19,6 +20,9 @@ const (
 	JobTypeFilesystem   = config.AgentTypeFilesystem
 	JobTypeDatabase     = config.AgentTypeDatabase
 	JobTypeKubernetes   = config.AgentTypeKubernetes
+	// JobTypePVE backs up a Proxmox VE host's configuration; it runs on the
+	// filesystem agent installed on the node
+	JobTypePVE = "pve"
 )
 
 // NormalizeAgentType maps "" to filesystem and reports unknown values
@@ -34,16 +38,31 @@ func NormalizeAgentType(t string) (string, bool) {
 	return t, false
 }
 
+// NormalizeJobType maps "" to filesystem and accepts the job-only type pve
+func NormalizeJobType(t string) (string, bool) {
+	if t == JobTypePVE {
+		return JobTypePVE, true
+	}
+	return NormalizeAgentType(t)
+}
+
 // JobAllowedOnAgent reports whether an agent of agentType may run a job of jobType.
-// Job types normally match the agent type; the exception is database jobs on a
-// kubernetes agent, which dumps the database from a pod inside the cluster.
+// Job types normally match the agent type; the exceptions are database jobs on a
+// kubernetes agent (dumped from a pod inside the cluster) and Proxmox VE host jobs,
+// which run on the filesystem agent installed on the node.
 func JobAllowedOnAgent(jobType, agentType string) bool {
-	jobType, _ = NormalizeAgentType(jobType)
+	jobType, _ = NormalizeJobType(jobType)
 	agentType, _ = NormalizeAgentType(agentType)
 	if jobType == agentType {
 		return true
 	}
-	return jobType == JobTypeDatabase && agentType == AgentTypeKubernetes
+	switch jobType {
+	case JobTypeDatabase:
+		return agentType == AgentTypeKubernetes
+	case JobTypePVE:
+		return agentType == AgentTypeFilesystem
+	}
+	return false
 }
 
 // AgentStatus represents the lifecycle state of an agent
@@ -67,11 +86,13 @@ type Agent struct {
 	AgentType string    `json:"agent_type" db:"agent_type"`
 	TaskQueue string    `json:"task_queue" db:"task_queue"`
 	// DebugLogging raises the agent's log level to debug (applied via heartbeats)
-	DebugLogging bool        `json:"debug_logging" db:"debug_logging"`
-	Status       AgentStatus `json:"status" db:"status"`
-	LastSeenAt   *time.Time  `json:"last_seen_at" db:"last_seen_at"`
-	CreatedAt    time.Time   `json:"created_at" db:"created_at"`
-	UpdatedAt    time.Time   `json:"updated_at" db:"updated_at"`
+	DebugLogging bool `json:"debug_logging" db:"debug_logging"`
+	// PVEHost is reported by the agent when it runs on a Proxmox VE node
+	PVEHost    bool        `json:"pve_host" db:"pve_host"`
+	Status     AgentStatus `json:"status" db:"status"`
+	LastSeenAt *time.Time  `json:"last_seen_at" db:"last_seen_at"`
+	CreatedAt  time.Time   `json:"created_at" db:"created_at"`
+	UpdatedAt  time.Time   `json:"updated_at" db:"updated_at"`
 }
 
 // EnrollmentToken represents a one-time or multi-use token for agent onboarding
@@ -157,6 +178,8 @@ type BackupJob struct {
 	DBConfig *dbbackup.Spec `json:"db_config,omitempty" db:"db_config"`
 	// K8sConfig is the kubernetes job specification
 	K8sConfig *k8sbackup.Spec `json:"k8s_config,omitempty" db:"k8s_config"`
+	// PVEConfig is the Proxmox VE host job specification
+	PVEConfig *pvebackup.Spec `json:"pve_config,omitempty" db:"pve_config"`
 	CreatedAt time.Time       `json:"created_at" db:"created_at"`
 	UpdatedAt time.Time       `json:"updated_at" db:"updated_at"`
 
@@ -246,6 +269,9 @@ func (j *BackupJob) IsDatabase() bool { return j.JobType == JobTypeDatabase }
 // IsKubernetes reports whether the job is a kubernetes backup
 func (j *BackupJob) IsKubernetes() bool { return j.JobType == JobTypeKubernetes }
 
+// IsPVE reports whether the job is a Proxmox VE host backup
+func (j *BackupJob) IsPVE() bool { return j.JobType == JobTypePVE }
+
 // Sanitize redacts the stored database password (HasPassword tells whether one exists)
 func (j *BackupJob) Sanitize() *BackupJob {
 	if j.JobType == "" {
@@ -264,6 +290,9 @@ func (j *BackupJob) Summary() string {
 	}
 	if j.IsKubernetes() {
 		return j.K8sConfig.Summary()
+	}
+	if j.IsPVE() {
+		return j.PVEConfig.Summary()
 	}
 	return strings.Join(j.BackupPaths, ", ")
 }

@@ -66,6 +66,8 @@ Database jobs (`job_type: database`, `db_config`) follow the same path with `fal
 | `pkg/agent/dbbackup` | database engines (PostgreSQL, MySQL/MariaDB, MongoDB): tool detection, prechecks, dumps, spool, state |
 | `cmd/fallbck-k8s-agent` | in-cluster Kubernetes agent (Helm-installed; `worker` mode uploads one volume, `db-worker` mode dumps one database on the engine image) |
 | `pkg/k8sbackup` | kubernetes job spec, discovery plan, run manifest (shared) |
+| `pkg/pvebackup` | Proxmox VE host job spec and run manifest (shared) |
+| `pkg/agent/pvebackup` | PVE host collectors (/etc/pve copy, packages, storage/network/disks), restore runbook, run flow |
 | `pkg/agent/k8sbackup` | resource dump, PVC snapshot/clone, worker pods, Secret identity, orphan sweep |
 | `pkg/rundetail` | type-specific per-run detail blob (archives / databases / PVCs) stored on the run and rendered by the /runs/<id> page |
 | `pkg/db` | pgx pool, versioned migrations, repositories |

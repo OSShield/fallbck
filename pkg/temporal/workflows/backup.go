@@ -73,6 +73,8 @@ func BackupJobWorkflow(ctx workflow.Context, jobID uuid.UUID) (*fbtemporal.Backu
 	case db.JobTypeKubernetes:
 		outcome := runKubernetesBackup(ctx, &session)
 		execResult, execErr, k8sGroups = outcome.result, outcome.err, outcome.activeGroups
+	case db.JobTypePVE:
+		execErr = workflow.ExecuteActivity(agentCtx, agentActs.ExecutePVEBackup, &session).Get(agentCtx, &execResult)
 	case db.JobTypeDatabase:
 		if session.AgentType == db.AgentTypeKubernetes {
 			// A kubernetes agent dumps the database from a pod inside the cluster

@@ -75,6 +75,21 @@ The agent enrolls as `k8s-<clusterName>` and keeps its identity in a Secret (del
 
 Notes: the ClusterRole reads all resources (Secrets included — that is what a DR backup is) and may create pods/PVCs/VolumeSnapshots cluster-wide, because workers must run in each volume's namespace; worker pods carry short-lived credentials (2h ticket, 6h token) in their pod spec and have no Kubernetes API access; annotate a PVC `fallbck.io/skip: "true"` to exclude it. Restore is manual: `proxmox-backup-client restore host/k8s-<cluster>/<time> resources.pxar ./out`, `kubectl apply` in the order described by the manifest, and per volume restore `pvc.pxar` from its group into a pod mounting the recreated PVC.
 
+### Proxmox VE host backup
+
+Install `fallbck-agent` on a Proxmox VE node (it reports itself as a PVE host with its next heartbeat) and create a job of type **Proxmox VE host** on the Backup Jobs page. Every run archives the node's configuration into one `pve.pxar` snapshot in the group `host/<hostname>-pve`: `/etc` (with `/etc/pve` copied out of the cluster filesystem and a consistent copy of `config.db`), `/root`, the installed and manually selected package lists, `pvesh` dumps of storage, network and node status, `pvesm status`, LVM/ZFS/blkid/lsblk inventories and the partition table of every disk (`sgdisk --backup`), plus the guest configurations parsed for the run detail page. Optional **data paths** (mounted data storages such as `/var/lib/vz`) are archived file by file; guest disk images under them (`images/`, `private/`, `subvol-*`) are excluded unless the job says otherwise, since vzdump to PBS already covers guests. Guest disks are never part of this backup.
+
+Restore onto a **fresh install of the same PVE major**: fetch the archive with PBS's own client and run the generated runbook stored in the archive (`collect/fallbck-pve-restore.sh`, also summarised on the run detail page). `fallbck-ctl targets credentials <target>` prints the `PBS_REPOSITORY` / `PBS_PASSWORD` / `PBS_FINGERPRINT` exports the client needs (the call is logged on the server).
+
+```bash
+eval "$(fallbck-ctl targets credentials pbs-main)"
+proxmox-backup-client restore host/pve01-pve/2026-09-11T02:00:00Z pve.pxar /var/tmp/fallbck-pve-restore
+bash /var/tmp/fallbck-pve-restore/collect/fallbck-pve-restore.sh --dry-run
+bash /var/tmp/fallbck-pve-restore/collect/fallbck-pve-restore.sh --yes            # --data also restores the data paths
+```
+
+The script reinstalls the manually selected packages (never downgrading), stops the PVE services, restores the cluster configuration from `config.db` (or file by file through `pmxcfs -l`), restores identity/network/apt/SSH host keys/cron/PVE settings from the archived `/etc`, restarts the services and verifies with `pvesh get /version`. Single nodes only; clusters are not supported.
+
 ## Scheduling
 
 A job with a cron expression gets a **Temporal Schedule** (managed by the server, visible under `/temporal/` → Schedules): standard 5-field cron plus `@daily` / `@every 6h`, evaluated in the **server's timezone** (`timezone:` in `server.yaml` or `FALLBCK_TIMEZONE`; auto-detected from `TZ`/the host zone, UTC when undetectable — set `TZ` on the Docker container). DST is handled by Temporal: `0 2 * * *` stays 02:00 local year round. A firing starts the same workflow as "Run Now"; a firing that lands while the previous run of the job is still going is **skipped**, and after server downtime one missed firing within the last hour is caught up. Disabling a job pauses its schedule; clearing the cron or deleting the job removes it. The server reconciles schedules with the jobs table at every start. The jobs page shows the next fire time.

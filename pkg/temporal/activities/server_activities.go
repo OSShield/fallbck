@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/osshield/fallbck/pkg/dbbackup"
 	"github.com/osshield/fallbck/pkg/k8sbackup"
+	"github.com/osshield/fallbck/pkg/pvebackup"
 	sdktemporal "go.temporal.io/sdk/temporal"
 	"log/slog"
 	"strings"
@@ -88,7 +89,7 @@ func (s *ServerActivities) PrepareBackupSession(ctx context.Context, jobID uuid.
 		BackupID:   agent.Hostname,
 		BackupTime: now.Unix(),
 	}
-	jobType, _ := db.NormalizeAgentType(job.JobType)
+	jobType, _ := db.NormalizeJobType(job.JobType)
 	agentType, _ := db.NormalizeAgentType(agent.AgentType)
 	if !db.JobAllowedOnAgent(jobType, agentType) {
 		return nil, sdktemporal.NewNonRetryableApplicationError(
@@ -96,7 +97,17 @@ func (s *ServerActivities) PrepareBackupSession(ctx context.Context, jobID uuid.
 	}
 	var sessionSpec *dbbackup.Spec
 	var k8sSpec *k8sbackup.Spec
+	var pveSpec *pvebackup.Spec
 	passwordOnServer := false
+	if jobType == db.JobTypePVE {
+		pveSpec = job.PVEConfig
+		if pveSpec == nil {
+			pveSpec = &pvebackup.Spec{}
+		}
+		// The host configuration lives in its own group next to the host's filesystem
+		// backups
+		claims.BackupID = agent.Hostname + "-pve"
+	}
 	if jobType == db.JobTypeKubernetes {
 		if job.K8sConfig == nil {
 			return nil, sdktemporal.NewNonRetryableApplicationError("kubernetes job has no configuration", "job_invalid", nil)
@@ -169,6 +180,7 @@ func (s *ServerActivities) PrepareBackupSession(ctx context.Context, jobID uuid.
 		DBConfig:           sessionSpec,
 		DBPasswordOnServer: passwordOnServer,
 		K8sConfig:          k8sSpec,
+		PVEConfig:          pveSpec,
 		BackupPaths:        job.BackupPaths,
 		ExcludePaths:       job.ExcludePaths,
 		RetentionPolicy:    job.RetentionPolicy,

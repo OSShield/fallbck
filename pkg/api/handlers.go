@@ -98,6 +98,7 @@ func (s *ServerAPI) RegisterRoutes(r chi.Router, admin, agent Middleware) {
 			r.Post("/targets", s.HandleCreateTarget)
 			r.Get("/targets", s.HandleListTargets)
 			r.Get("/targets/{id}", s.HandleGetTarget)
+			r.Get("/targets/{id}/credentials", s.HandleTargetCredentials)
 			r.Put("/targets/{id}", s.HandleUpdateTarget)
 			r.Delete("/targets/{id}", s.HandleDeleteTarget)
 
@@ -178,6 +179,7 @@ func (s *ServerAPI) HandleAgentEnroll(w http.ResponseWriter, r *http.Request) {
 		AgentType: agentType,
 		TaskQueue: taskQueue,
 		Status:    db.AgentStatusOnline,
+		PVEHost:   req.PVEHost,
 	}
 
 	now := time.Now().UTC()
@@ -245,7 +247,7 @@ func (s *ServerAPI) HandleAgentHeartbeat(w http.ResponseWriter, r *http.Request)
 		status = db.AgentStatus(req.Status)
 	}
 
-	debug, err := s.DB.UpdateAgentHeartbeat(r.Context(), claims.AgentID, status)
+	debug, err := s.DB.UpdateAgentHeartbeat(r.Context(), claims.AgentID, status, req.PVEHost)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			s.writeError(w, http.StatusUnauthorized, "agent no longer exists")

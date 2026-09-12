@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"github.com/osshield/fallbck/pkg/dbbackup"
 	"github.com/osshield/fallbck/pkg/k8sbackup"
+	"github.com/osshield/fallbck/pkg/pvebackup"
 	"time"
 
 	"github.com/google/uuid"
@@ -46,6 +47,8 @@ type BackupSessionInfo struct {
 	DBPasswordOnServer bool           `json:"db_password_on_server,omitempty"`
 	// K8sConfig is the kubernetes job specification (job_type kubernetes)
 	K8sConfig *k8sbackup.Spec `json:"k8s_config,omitempty"`
+	// PVEConfig is the Proxmox VE host job specification (job_type pve)
+	PVEConfig *pvebackup.Spec `json:"pve_config,omitempty"`
 	// JobName is informational (manifest)
 	JobName         string             `json:"job_name,omitempty"`
 	BackupPaths     []string           `json:"backup_paths"`
