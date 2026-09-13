@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	goruntime "runtime"
 	"strings"
 	"time"
 
@@ -55,6 +56,14 @@ type Options struct {
 	// OnPhase is told what the engine is doing (opening the session, uploading an
 	// archive, finalizing); used for activity heartbeats and failure reporting
 	OnPhase func(phase string)
+	// CacheDir enables metadata change detection for v2 archives: the metadata
+	// stream of every upload is kept here and, when it matches the server's previous
+	// snapshot, files with unchanged metadata are not read again. Empty disables.
+	CacheDir string
+	// ReadPaths, when set, are read instead of Session.BackupPaths (same order): a
+	// Windows job reads its paths through VSS shadow copies while the archive keeps
+	// the names of the configured paths
+	ReadPaths []string
 }
 
 // Run executes the backup and maps the outcome to a BackupExecutionResult
@@ -77,7 +86,14 @@ func Run(ctx context.Context, opts Options) (*temporal.BackupExecutionResult, er
 		return nil, err
 	}
 	s.BackupPaths = paths
-	for _, p := range s.BackupPaths {
+	readPaths := paths
+	if len(opts.ReadPaths) > 0 {
+		if len(opts.ReadPaths) != len(paths) {
+			return nil, fmt.Errorf("read paths (%d) do not match the backup paths (%d)", len(opts.ReadPaths), len(paths))
+		}
+		readPaths = opts.ReadPaths
+	}
+	for _, p := range readPaths {
 		if _, err := os.Lstat(p); err != nil {
 			return nil, fmt.Errorf("backup path %s: %w", p, err)
 		}
@@ -93,6 +109,32 @@ func Run(ctx context.Context, opts Options) (*temporal.BackupExecutionResult, er
 	archiveName := opts.ArchiveName
 	if archiveName == "" && len(s.BackupPaths) > 1 {
 		archiveName = DefaultArchiveName
+	}
+	// Entry names come from the configured paths; a remapped read path (VSS link)
+	// must not leak into the archive. gopbs names a single root after its directory,
+	// so name it explicitly whenever the read path differs.
+	names := map[string]string{}
+	if len(paths) > 1 {
+		byPath, err := ArchiveEntryNames(paths)
+		if err != nil {
+			return nil, err
+		}
+		for i, p := range paths {
+			names[readPaths[i]] = byPath[p]
+		}
+	} else if readPaths[0] != paths[0] {
+		if archiveName == "" {
+			archiveName = entryBase(paths[0])
+		}
+		names[readPaths[0]] = entryBase(paths[0])
+	}
+	excludes := s.ExcludePaths
+	if goruntime.GOOS == "windows" {
+		// Patterns match archive paths, which always use forward slashes
+		excludes = make([]string, len(s.ExcludePaths))
+		for i, e := range s.ExcludePaths {
+			excludes[i] = strings.ReplaceAll(e, `\`, "/")
+		}
 	}
 	ref := pbs.SnapshotRef{Type: s.BackupType, ID: s.BackupID}
 	if s.BackupTime > 0 {
@@ -138,13 +180,13 @@ func Run(ctx context.Context, opts Options) (*temporal.BackupExecutionResult, er
 		Client: clientCfg,
 		Archive: archive.Options{
 			Name: archiveName,
-			Scan: scan.Options{Exclude: s.ExcludePaths, PxarExcludeFiles: true},
+			Scan: scan.Options{Exclude: excludes, PxarExcludeFiles: true},
 		},
 		Blobs:  opts.Blobs,
 		Ref:    ref,
 		Format: format,
-		Paths:  s.BackupPaths,
-	}, opts.OnPhase)
+		Paths:  readPaths,
+	}, names, opts.CacheDir, opts.OnPhase)
 	if err != nil {
 		return nil, err
 	}
@@ -175,11 +217,18 @@ func Run(ctx context.Context, opts Options) (*temporal.BackupExecutionResult, er
 	snapshot := fmt.Sprintf("%s/%s/%s", result.Ref.Type, result.Ref.ID, result.Ref.Time.UTC().Format("2006-01-02T15:04:05Z"))
 	duration := time.Since(start)
 	slog.Info("PBS backup completed", "snapshot", snapshot, "archive", result.ArchiveName, "size", size, "chunks", chunks, "new_chunks", newChunks, "duration", duration)
+	if r := result.Reuse; r.Files > 0 && opts.CacheDir != "" {
+		slog.Info("Change detection", "files", r.Files, "unchanged", r.ReusedFiles, "reused_bytes", r.ReusedBytes, "injected_bytes", r.InjectedBytes, "rejected_runs", r.RejectedRuns)
+	}
 
 	detail := rundetail.Filesystem{
 		Type: rundetail.TypeFilesystem, Format: s.PxarFormat, SnapshotID: snapshot,
 		Paths: s.BackupPaths, ExcludePaths: s.ExcludePaths,
 		Archives: archiveStats(result),
+	}
+	if opts.CacheDir != "" && format == gopbs.FormatV2 {
+		r := result.Reuse
+		detail.Reuse = &rundetail.ReuseStats{Files: r.Files, ReusedFiles: r.ReusedFiles, ReusedBytes: r.ReusedBytes, InjectedBytes: r.InjectedBytes, RejectedRuns: r.RejectedRuns}
 	}
 	detail.Warnings = detailWarnings(result.Warnings)
 

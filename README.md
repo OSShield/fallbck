@@ -41,7 +41,20 @@ A job with several paths produces one `root.pxar` archive with each path at the 
 
 If the server (or the reverse proxy in front of it) uses a private or self-signed certificate, pass `--ca-cert <pem bundle>` (or, for testing only, `--insecure-skip-verify`) to `enroll`; the setting is used for the enrollment request itself and persisted in `agent.yaml` (`server_ca_cert_path` / `insecure_skip_verify`). The Kubernetes agent takes the same settings from the Helm values `server.caCert` / `server.insecureSkipVerify`.
 
+With a **pxar v2** target the filesystem agent uses **metadata change detection** like `proxmox-backup-client --change-detection-mode metadata`: it keeps a copy of each upload's metadata stream under `<data_dir>/pxar-cache/`, validates it against the previous snapshot's index on PBS at the next run, and then skips reading files whose size and metadata (mode, owner, mtime, xattrs, ACLs) are unchanged, referencing the previous snapshot's chunks instead. Runs of unchanged files are re-read only when the boundary chunks would carry more than 10 % of unrelated bytes. The run detail page shows how many files were reused. A missing or stale cache (first run, pruned snapshot, different agent) simply means a full read.
+
 The agent needs exactly one endpoint: the server's public URL. It receives a bearer token at enrollment, polls its own Temporal task queue through the server's gateway, and streams backups into PBS through a session the server opens on its behalf (the agent never holds PBS credentials). A job can instead be set to **direct PBS access** (server-side job option `direct_pbs`): the agent then fetches the target's connection details and API token for that run and talks to PBS itself — useful when the agent has a better path to PBS than the server does.
+
+### Windows agent
+
+`fallbck-agent` also runs on **Windows** (x64 and arm64) as a Windows service. Install with the MSI from the release page, passing the enrollment token so the installer enrolls the agent and starts the service (the Agents page's *Windows* wizard tab prints this):
+
+```powershell
+& ([scriptblock]::Create((iwr -useb https://backup.example.com/install-agent.ps1).Content)) -Token <enrollment token>
+# or by hand: msiexec /i fallbck-agent_Windows_x86_64.msi /qn SERVER_URL=https://backup.example.com TOKEN=<token>
+```
+
+The service runs as LocalSystem, keeps its state (`agent.yaml`, caches, logs) in `%%ProgramData%%\fallbck\agent`, and can also be managed with `fallbck-agent.exe service install|uninstall|start|stop|status` after a manual `enroll`. Backup paths are Windows paths (`C:\Users`, `D:\data`, or a whole volume `C:\`); the archive names them `C`, `D-data`, … Every run first takes a **Volume Shadow Copy** of each volume involved (set `vss: false` in `agent.yaml` or `FALLBCK_AGENT_VSS=false` to read the live filesystem instead), so open and locked files are read consistently; leftover shadow copies are removed at the next agent start. The archive records file types, sizes, modification times, hardlinks and symlinks/junctions with synthesised POSIX modes (read-only files become 0444); NTFS ACLs and alternate data streams are not included yet. Metadata change detection works on Windows as on Linux.
 
 ### Database agent
 

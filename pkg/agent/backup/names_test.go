@@ -21,3 +21,25 @@ func TestArchiveEntryNames(t *testing.T) {
 		t.Error("expected an error when the prefixed name collides with another root")
 	}
 }
+
+func TestEntryNamesWindows(t *testing.T) {
+	names, err := ArchiveEntryNames([]string{`C:\`, `D:\data`, `E:\data`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if names[`C:\`] != "C" || names[`D:\data`] != "D-data" || names[`E:\data`] != "E-data" {
+		t.Errorf("windows entry names %v", names)
+	}
+	single, err := ArchiveEntryNames([]string{`C:\Users`})
+	if err != nil || single[`C:\Users`] != "Users" {
+		t.Errorf("single windows path %v %v", single, err)
+	}
+	for in, want := range map[string]string{`C:\`: "C", "c:": "C", `D:/`: "D", "/": "root", "/etc": "etc", `C:\Users`: "Users"} {
+		if got := entryBase(in); got != want {
+			t.Errorf("entryBase(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if pathEntryName(`D:\data\x`) != "D-data-x" {
+		t.Errorf("pathEntryName windows: %q", pathEntryName(`D:\data\x`))
+	}
+}

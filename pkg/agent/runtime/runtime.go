@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -486,6 +487,20 @@ func StartHeartbeat(ctx context.Context, cfg *config.AgentConfig, store *TokenSt
 // queue with the activities registered by register, and the heartbeat loop; it blocks
 // until SIGINT/SIGTERM.
 func Run(a Agent, cfg *config.AgentConfig, configPath string, register func(w worker.Worker, conns *Conns, store *TokenStore) error) error {
+	stopChan := make(chan os.Signal, 1)
+	signal.Notify(stopChan, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(stopChan)
+	stop := make(chan struct{})
+	go func() {
+		<-stopChan
+		close(stop)
+	}()
+	return RunUntil(a, cfg, configPath, register, stop)
+}
+
+// RunUntil is Run with an explicit stop signal (the Windows service control manager
+// closes stop on a stop request)
+func RunUntil(a Agent, cfg *config.AgentConfig, configPath string, register func(w worker.Worker, conns *Conns, store *TokenStore) error, stop <-chan struct{}) error {
 	slog.Info("Starting "+a.Name+" daemon", "agent_id", cfg.AgentID, "task_queue", cfg.TaskQueue, "server", cfg.ServerURL, "version", a.Version)
 
 	if cfg.AgentID == "" || cfg.TaskQueue == "" || cfg.AuthToken == "" {
@@ -525,9 +540,7 @@ func Run(a Agent, cfg *config.AgentConfig, configPath string, register func(w wo
 
 	go StartHeartbeat(ctx, cfg, store, a.Version, a.Logging)
 
-	stopChan := make(chan os.Signal, 1)
-	signal.Notify(stopChan, os.Interrupt, syscall.SIGTERM)
-	<-stopChan
+	<-stop
 	slog.Info("Shutting down " + a.Name + "...")
 	return nil
 }
@@ -541,7 +554,9 @@ func PrintEnrolled(a Agent, cfg *config.AgentConfig) {
 	fmt.Printf("  Task Queue: %s\n", cfg.TaskQueue)
 	fmt.Printf("  Server:     %s\n", cfg.ServerURL)
 	fmt.Printf("  Config:     %s\n", configPath)
-	if cfg.DataDir == config.SystemAgentDataDirFor(a.Type) {
+	if goruntime.GOOS == "windows" {
+		fmt.Printf("\nInstall and start the service (administrator):  %s.exe service install --config %s && %s.exe service start\n", a.Name, configPath, a.Name)
+	} else if cfg.DataDir == config.SystemAgentDataDirFor(a.Type) {
 		fmt.Printf("\nStart the service:  systemctl enable --now %s   (OpenRC: rc-update add %s default && rc-service %s start)\n", a.Name, a.Name, a.Name)
 	} else {
 		fmt.Printf("\nRun the agent:      %s run --config %s\n", a.Name, configPath)

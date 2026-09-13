@@ -75,6 +75,7 @@ func (u *UIHandler) RegisterRoutes(r chi.Router) {
 	fileServer := http.FileServer(StaticFS())
 	r.Handle("/static/*", http.StripPrefix("/static/", fileServer))
 	r.Get("/install-agent.sh", u.HandleInstallScript)
+	r.Get("/install-agent.ps1", u.HandleInstallScriptPS)
 	r.Get("/login", u.HandleLoginPage)
 	r.Get("/auth/login", u.HandleAuthLogin)
 	r.Get("/auth/callback", u.HandleAuthCallback)
@@ -541,6 +542,52 @@ fi
 `, serverURL)
 
 	w.Header().Set("Content-Type", "text/x-shellscript")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(script))
+}
+
+// HandleInstallScriptPS serves the Windows installer: downloads the agent MSI from
+// the GitHub release and installs it with the enrollment parameters, which makes the
+// MSI enroll the agent and start the service.
+func (u *UIHandler) HandleInstallScriptPS(w http.ResponseWriter, r *http.Request) {
+	serverURL := u.Config.PublicURL
+	if serverURL == "" {
+		serverURL = "http://" + r.Host
+	}
+	// No backticks in the script: they would end this raw string literal
+	script := fmt.Sprintf(`<#
+.SYNOPSIS
+  Installs the FallBCK backup agent on Windows and enrolls it with %[1]s.
+.EXAMPLE
+  & ([scriptblock]::Create((iwr -useb %[1]s/install-agent.ps1).Content)) -Token <enrollment token>
+#>
+param(
+  [string]$Server = "%[1]s",
+  [Parameter(Mandatory = $true)][string]$Token,
+  [string]$MsiUrl = "https://github.com/osshield/fallbck/releases/latest/download/fallbck-agent_Windows_x86_64.msi",
+  [string]$MsiPath = "",
+  [string]$CaCert = ""
+)
+$ErrorActionPreference = "Stop"
+$principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+  throw "Run this script from an elevated (administrator) PowerShell"
+}
+if ($MsiPath -eq "") {
+  $MsiPath = Join-Path $env:TEMP "fallbck-agent.msi"
+  Write-Host "==> Downloading $MsiUrl"
+  Invoke-WebRequest -UseBasicParsing -Uri $MsiUrl -OutFile $MsiPath
+}
+$log = Join-Path $env:TEMP "fallbck-agent-install.log"
+$msiArgs = @("/i", ('"' + $MsiPath + '"'), "/qn", "/norestart", "/l*v", ('"' + $log + '"'), "SERVER_URL=$Server", "TOKEN=$Token")
+if ($CaCert -ne "") { $msiArgs += "CA_CERT=$CaCert" }
+Write-Host "==> Installing and enrolling the FallBCK agent (log: $log)"
+$p = Start-Process msiexec.exe -ArgumentList $msiArgs -Wait -PassThru
+if ($p.ExitCode -ne 0) { throw ("msiexec failed with exit code " + $p.ExitCode + "; see " + $log) }
+Write-Host "==> Done. Service status:"
+& (Join-Path $env:ProgramFiles "FallBCK\fallbck-agent.exe") service status
+`, serverURL)
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(script))
 }

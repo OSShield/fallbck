@@ -39,6 +39,17 @@ type Filesystem struct {
 	ExcludePaths []string      `json:"exclude_paths,omitempty"`
 	Archives     []ArchiveStat `json:"archives,omitempty"`
 	Warnings     []Warning     `json:"warnings,omitempty"`
+	// Reuse reports metadata change detection (v2 archives with a metadata cache)
+	Reuse *ReuseStats `json:"reuse,omitempty"`
+}
+
+// ReuseStats is what metadata change detection achieved in one run
+type ReuseStats struct {
+	Files         int    `json:"files"`
+	ReusedFiles   int    `json:"reused_files"`
+	ReusedBytes   uint64 `json:"reused_bytes"`
+	InjectedBytes uint64 `json:"injected_bytes"`
+	RejectedRuns  int    `json:"rejected_runs,omitempty"`
 }
 
 // Marshal renders a detail value as compact JSON (json.RawMessage for the run)

@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  FallBCK backup agent for Windows (WiX Toolset v3). Built by the release workflow:
+    candle -dVersion=1.2.3 -dSource=dist\fallbck-agent.exe fallbck-agent.wxs
+    light -ext WixUtilExtension fallbck-agent.wixobj -o fallbck-agent_Windows_x86_64.msi
+
+  Installs the agent to Program Files, registers it as the Windows service
+  "fallbck-agent" (LocalSystem, automatic start, restart on failure) and, when the
+  SERVER_URL and TOKEN properties are given, enrolls with the FallBCK server before
+  the service starts:
+    msiexec /i fallbck-agent_Windows_x86_64.msi /qn SERVER_URL=https://backup.example.com TOKEN=<enrollment token>
+  Data (agent.yaml, caches, logs) lives in %ProgramData%\fallbck\agent and survives
+  uninstall.
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi" xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
+  <Product Id="*" Name="FallBCK Backup Agent" Language="1033" Version="$(var.Version)"
+           Manufacturer="OSShield" UpgradeCode="7C2E1B6A-4F53-4E1F-9E1B-5B0C3D2F8A11">
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine"
+             Description="FallBCK backup agent" Platform="x64" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of the FallBCK agent is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Property Id="SERVER_URL" Secure="yes" />
+    <Property Id="TOKEN" Secure="yes" />
+    <Property Id="CA_CERT" Secure="yes" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/osshield/fallbck" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLDIR" Name="FallBCK" />
+      </Directory>
+      <Directory Id="CommonAppDataFolder">
+        <Directory Id="FallbckDataRoot" Name="fallbck">
+          <Directory Id="AGENTDATADIR" Name="agent" />
+        </Directory>
+      </Directory>
+    </Directory>
+
+    <DirectoryRef Id="INSTALLDIR">
+      <Component Id="AgentExe" Guid="3B9F0E6D-7C4A-4D1E-8F2A-1C9D5E7B6A22" Win64="yes">
+        <File Id="AgentExeFile" Source="$(var.Source)" Name="fallbck-agent.exe" KeyPath="yes" />
+        <ServiceInstall Id="AgentService" Name="fallbck-agent" DisplayName="FallBCK Backup Agent"
+                        Description="Backs up this host to Proxmox Backup Server through the FallBCK server"
+                        Type="ownProcess" Start="auto" ErrorControl="normal" Account="LocalSystem"
+                        Arguments="run --config &quot;[AGENTDATADIR]agent.yaml&quot;" Vital="yes">
+          <util:ServiceConfig FirstFailureActionType="restart" SecondFailureActionType="restart"
+                              ThirdFailureActionType="restart" RestartServiceDelayInSeconds="30" ResetPeriodInDays="1" />
+        </ServiceInstall>
+        <ServiceControl Id="AgentServiceControl" Name="fallbck-agent" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
+        <Environment Id="AgentPath" Name="PATH" Value="[INSTALLDIR]" Permanent="no" Part="last" Action="set" System="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="AGENTDATADIR">
+      <Component Id="AgentDataDir" Guid="9D1C4F2B-6E7A-4B3C-A5D8-2F1E0C9B7A33" Win64="yes">
+        <CreateFolder>
+          <!-- Administrators and SYSTEM only: the directory holds the agent token -->
+          <util:PermissionEx User="Administrators" GenericAll="yes" />
+          <util:PermissionEx User="SYSTEM" GenericAll="yes" />
+        </CreateFolder>
+        <RemoveFolder Id="RemoveAgentDataDir" On="never" />
+        <RegistryValue Root="HKLM" Key="Software\FallBCK\Agent" Name="DataDir" Type="string" Value="[AGENTDATADIR]" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <!-- Enrollment (deferred, as SYSTEM) runs after the files are in place and before the service starts -->
+    <SetProperty Id="EnrollAgent" Before="EnrollAgent" Sequence="execute"
+                 Value="&quot;[INSTALLDIR]fallbck-agent.exe&quot; enroll --server &quot;[SERVER_URL]&quot; --token &quot;[TOKEN]&quot; --data-dir &quot;[AGENTDATADIR]&quot;" />
+    <CustomAction Id="EnrollAgent" BinaryKey="WixCA" DllEntry="WixQuietExec64" Execute="deferred" Impersonate="no" Return="check" />
+    <SetProperty Id="EnrollAgentCA" Before="EnrollAgentCA" Sequence="execute"
+                 Value="&quot;[INSTALLDIR]fallbck-agent.exe&quot; enroll --server &quot;[SERVER_URL]&quot; --token &quot;[TOKEN]&quot; --data-dir &quot;[AGENTDATADIR]&quot; --ca-cert &quot;[CA_CERT]&quot;" />
+    <CustomAction Id="EnrollAgentCA" BinaryKey="WixCA" DllEntry="WixQuietExec64" Execute="deferred" Impersonate="no" Return="check" />
+    <InstallExecuteSequence>
+      <Custom Action="EnrollAgent" After="InstallFiles">NOT Installed AND SERVER_URL AND TOKEN AND NOT CA_CERT</Custom>
+      <Custom Action="EnrollAgentCA" After="InstallFiles">NOT Installed AND SERVER_URL AND TOKEN AND CA_CERT</Custom>
+    </InstallExecuteSequence>
+
+    <Feature Id="Agent" Title="FallBCK Backup Agent" Level="1">
+      <ComponentRef Id="AgentExe" />
+      <ComponentRef Id="AgentDataDir" />
+    </Feature>
+  </Product>
+</Wix>

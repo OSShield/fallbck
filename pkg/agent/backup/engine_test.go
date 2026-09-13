@@ -2,6 +2,7 @@ package backup
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"github.com/osshield/fallbck/pkg/db"
 	"github.com/osshield/fallbck/pkg/proxy"
 	"github.com/osshield/fallbck/pkg/proxy/pbstest"
+	"github.com/osshield/fallbck/pkg/rundetail"
 	"github.com/osshield/fallbck/pkg/temporal"
 	"github.com/osshield/gopbs"
 	"github.com/osshield/gopbs/archive"
@@ -290,5 +292,112 @@ func TestWarningMessageWithoutError(t *testing.T) {
 	}
 	if !strings.Contains(out[2].Message, "no such file") || !strings.Contains(out[3].Message, "permission denied") {
 		t.Errorf("errors should be included: %q / %q", out[2].Message, out[3].Message)
+	}
+}
+
+// TestRunReusesUnchangedFiles: with a cache directory and a v2 target the second run
+// skips the unchanged 5 MiB blob and references the previous snapshot's chunks
+func TestRunReusesUnchangedFiles(t *testing.T) {
+	fake := pbstest.New(t)
+	dir := makeTree(t)
+	cacheRoot := t.TempDir()
+	run := func(backupTime int64) *temporal.BackupExecutionResult {
+		t.Helper()
+		session := &temporal.BackupSessionInfo{
+			Datastore: "store1", BackupType: "host", BackupID: "node7", BackupTime: backupTime,
+			PxarFormat: db.PxarFormatV2, BackupPaths: []string{dir},
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		res, err := Run(ctx, Options{
+			Session: session, Dial: directDial(fake, session), ArchiveName: "root",
+			CacheDir: CacheGroupDir(cacheRoot, "host", "node7"),
+		})
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		return res
+	}
+	now := time.Now().Unix()
+	res1 := run(now)
+	chunksAfterFirst := fake.ChunkCount()
+	var d1 rundetail.Filesystem
+	if err := json.Unmarshal(res1.Details, &d1); err != nil {
+		t.Fatal(err)
+	}
+	if d1.Reuse == nil || d1.Reuse.ReusedFiles != 0 || d1.Reuse.Files != 2 {
+		t.Fatalf("first run reuse stats %+v", d1.Reuse)
+	}
+	cacheDir := CacheGroupDir(cacheRoot, "host", "node7")
+	for _, f := range []string{"root.mpxar", "root.mpxar.json"} {
+		if _, err := os.Stat(filepath.Join(cacheDir, f)); err != nil {
+			t.Fatalf("cache file %s missing: %v", f, err)
+		}
+	}
+
+	// Change the small config file; the blob stays untouched
+	if err := os.WriteFile(filepath.Join(dir, "app.conf"), []byte("[app]\nkey=value\nchanged=1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res2 := run(now + 60)
+	var d2 rundetail.Filesystem
+	if err := json.Unmarshal(res2.Details, &d2); err != nil {
+		t.Fatal(err)
+	}
+	if d2.Reuse == nil || d2.Reuse.ReusedFiles != 1 || d2.Reuse.ReusedBytes != 5*1024*1024 {
+		t.Fatalf("second run reuse stats %+v", d2.Reuse)
+	}
+	// Only the changed file's chunk, the tail marker cut after the injected run, and
+	// the new metadata stream were uploaded; the 5 MiB blob was referenced
+	if added := fake.ChunkCount() - chunksAfterFirst; added > 3 {
+		t.Errorf("second run uploaded %d new chunks; the unchanged blob should have been referenced", added)
+	}
+	if res2.BytesScanned < 5*1024*1024 || res2.ChunkCount == 0 {
+		t.Errorf("second run result %+v", res2)
+	}
+
+	// A cache that does not match the server's previous snapshot is ignored safely
+	if err := os.WriteFile(filepath.Join(cacheDir, "root.mpxar.json"), []byte(`{"archive":"root.mpxar.didx","meta_digests":["00"]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res3 := run(now + 120)
+	var d3 rundetail.Filesystem
+	_ = json.Unmarshal(res3.Details, &d3)
+	if d3.Reuse == nil || d3.Reuse.ReusedFiles != 0 {
+		t.Fatalf("stale cache must not be reused: %+v", d3.Reuse)
+	}
+	if fake.Finished() != 3 {
+		t.Errorf("finished sessions = %d", fake.Finished())
+	}
+}
+
+// TestRunReadPathsKeepArchiveNames: reading through a remapped path (what VSS does on
+// Windows) must not change the archive's entry names or root naming
+func TestRunReadPathsKeepArchiveNames(t *testing.T) {
+	fake := pbstest.New(t)
+	dir := makeTree(t)
+	link := filepath.Join(t.TempDir(), "shadow-of-"+filepath.Base(dir))
+	if err := os.Symlink(dir, link); err != nil {
+		t.Fatal(err)
+	}
+	session := &temporal.BackupSessionInfo{
+		Datastore: "store1", BackupType: "host", BackupID: "node8", BackupTime: time.Now().Unix(),
+		PxarFormat: db.PxarFormatV1, BackupPaths: []string{dir},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	res, err := Run(ctx, Options{Session: session, Dial: directDial(fake, session), ReadPaths: []string{link}})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	want := filepath.Base(dir) + ".pxar.didx"
+	if _, ok := fake.Indexes()[want]; !ok {
+		t.Errorf("archive named after the configured path (%s) missing; indexes: %v", want, fake.Indexes())
+	}
+	if res.BytesScanned < 5*1024*1024 {
+		t.Errorf("content not read through the link: %+v", res)
+	}
+	if _, err := Run(ctx, Options{Session: session, Dial: directDial(fake, session), ReadPaths: []string{link, link}}); err == nil {
+		t.Error("mismatched read paths must be rejected")
 	}
 }

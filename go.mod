@@ -12,7 +12,8 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.10.0
-	github.com/osshield/gopbs v0.3.0-rc.0
+	github.com/mxk/go-vss v1.2.1
+	github.com/osshield/gopbs v0.3.0-rc.2
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/stretchr/testify v1.12.1
 	github.com/temporalio/ui-server/v2 v2.50.1
@@ -95,6 +96,7 @@ require (
 	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
+	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/go-openapi/jsonpointer v1.0.0 // indirect
 	github.com/go-openapi/jsonreference v1.0.0 // indirect
 	github.com/go-openapi/swag v0.27.1 // indirect
@@ -224,3 +226,7 @@ require (
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.4.2 // indirect
 )
+
+// Local gopbs checkout with metadata change detection (item 3 of the roadmap); drop
+// once the change is released and the require line bumped
+// replace github.com/osshield/gopbs => ./.local/gopbs

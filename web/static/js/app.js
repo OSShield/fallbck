@@ -148,7 +148,7 @@ async function prepareAgentWizard(os = 'linux') {
     } else if (os === 'db') {
       codeEl.innerText = `fallbck-db-agent enroll \\\n  --server ${serverUrl} \\\n  --token ${data.raw_token}\n\n# then check the database client tools and start the service:\nfallbck-db-agent tools\nsystemctl enable --now fallbck-db-agent`;
     } else if (os === 'windows') {
-      codeEl.innerText = `iwr -useb ${serverUrl}/install-agent.ps1 | iex;\nfallbck-agent.exe enroll --server ${serverUrl} --token ${data.raw_token}`;
+      codeEl.innerText = `# elevated PowerShell: downloads the MSI, installs the service and enrolls\n& ([scriptblock]::Create((iwr -useb ${serverUrl}/install-agent.ps1).Content)) -Token ${data.raw_token}`;
     }
   } catch (err) {
     codeEl.innerText = `Error: ${err.message}`;
@@ -832,6 +832,14 @@ function renderFsDetail(d) {
   ]);
   body += `<div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;margin-bottom:4px;">Archives</div>` +
     rdTable(['Archive', 'Kind', 'Size', 'Chunks', 'New', 'Reused', 'Dedup'], rows);
+  if (d.reuse) {
+    const r = d.reuse;
+    body += `<div style="margin-top:12px;font-size:11px;color:var(--text-muted);text-transform:uppercase;">Change detection</div>` + rdKV([
+      ['Files', String(r.files)], ['Unchanged (not re-read)', String(r.reused_files)],
+      ['Reused content', rdBytes(r.reused_bytes)], ['Referenced previous chunks', rdBytes(r.injected_bytes)],
+      ['Runs re-read (padding)', r.rejected_runs ? String(r.rejected_runs) : '0'],
+    ]);
+  }
   if (d.warnings && d.warnings.length)
     body += `<div style="margin-top:12px;font-size:11px;color:var(--text-muted);text-transform:uppercase;">Warnings</div>` +
       rdTable(['Path', 'Message'], d.warnings.map(w => [rdMono(w.path || ''), rdEsc(w.message)]));

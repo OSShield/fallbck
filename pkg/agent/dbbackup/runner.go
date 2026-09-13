@@ -11,7 +11,6 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -171,11 +170,7 @@ func (r *execRunner) Run(ctx context.Context, c Command) (Result, error) {
 	cmd.Stdout = c.Stdout
 	stderr := newRingWriter(64*1024, func(line string) { slog.Debug("tool output", "tool", c.Name, "stderr", line) })
 	cmd.Stderr = stderr
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error {
-		// Terminate the whole process group; WaitDelay escalates to SIGKILL
-		return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
-	}
+	configureKill(cmd)
 	cmd.WaitDelay = r.KillGrace
 	slog.Debug("Running tool", "tool", c.Name, "path", c.Path, "args", c.Args)
 

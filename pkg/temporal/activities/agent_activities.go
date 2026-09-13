@@ -11,6 +11,7 @@ import (
 	"github.com/osshield/fallbck/pkg/agent/backup"
 	dbrun "github.com/osshield/fallbck/pkg/agent/dbbackup"
 	pverun "github.com/osshield/fallbck/pkg/agent/pvebackup"
+	"github.com/osshield/fallbck/pkg/agent/vss"
 	"github.com/osshield/fallbck/pkg/db"
 	"github.com/osshield/fallbck/pkg/proxy"
 	pvespec "github.com/osshield/fallbck/pkg/pvebackup"
@@ -41,8 +42,22 @@ type AgentActivities struct {
 	ReportProgress ProgressFunc
 	// SpoolDir stages collected data for Proxmox VE host backups (<data dir>/spool)
 	SpoolDir string
+	// CacheDir holds the per-group metadata caches for change detection
+	// (<data dir>/pxar-cache); empty disables change detection
+	CacheDir string
+	// VSSDir enables Volume Shadow Copies on Windows: paths are read through
+	// shadow copies linked under this directory; empty reads the live filesystem
+	VSSDir   string
 	Hostname string
 	Version  string
+}
+
+// groupCacheDir returns the change-detection cache directory of a session's group
+func (a *AgentActivities) groupCacheDir(session *temporal.BackupSessionInfo) string {
+	if a.CacheDir == "" {
+		return ""
+	}
+	return backup.CacheGroupDir(a.CacheDir, session.BackupType, session.BackupID)
 }
 
 // NewAgentActivities creates a new AgentActivities instance
@@ -73,7 +88,27 @@ func (a *AgentActivities) ExecuteFilesystemBackup(ctx context.Context, session *
 	stopProgress := startProgress(ctx, pt, 5*time.Second, func(string) { reportPh() })
 	defer stopProgress()
 
-	opts := backup.Options{Session: session, Workers: a.Workers, OnPhase: func(p string) { pt.Set(p); reportPh() }}
+	opts := backup.Options{Session: session, Workers: a.Workers, CacheDir: a.groupCacheDir(session), OnPhase: func(p string) { pt.Set(p); reportPh() }}
+	if a.VSSDir != "" && vss.Supported() {
+		paths, err := db.ValidateBackupPaths(session.BackupPaths)
+		if err != nil {
+			return &temporal.BackupExecutionResult{Status: db.RunStatusFailed, ErrorMessage: err.Error()},
+				sdktemporal.NewNonRetryableApplicationError(err.Error(), ErrTypeDBPrecheckFailed, err)
+		}
+		pt.Set("creating volume shadow copies")
+		reportPh()
+		mapped, snaps, err := vss.Take(ctx, a.VSSDir, paths)
+		if err != nil {
+			slog.Error("Volume shadow copy failed", "error", err)
+			return &temporal.BackupExecutionResult{Status: db.RunStatusFailed, ErrorMessage: err.Error()},
+				backupFailure(ctx, fmt.Errorf("volume shadow copy: %w", err), pt, a.LogTail)
+		}
+		defer snaps.Release()
+		s := *session
+		s.BackupPaths = paths
+		opts.Session = &s
+		opts.ReadPaths = mapped
+	}
 	if session.DirectPBS {
 		if a.Credentials == nil {
 			return nil, errors.New("job requires direct PBS access but the agent has no credentials fetcher")
@@ -159,7 +194,7 @@ func (a *AgentActivities) ExecutePVEBackup(ctx context.Context, session *tempora
 		s.ExcludePaths = excludes
 		return backup.Run(ctx, backup.Options{
 			Session: &s, Workers: a.Workers, Dial: dial, Direct: direct,
-			ArchiveName: pvespec.ArchiveName, Blobs: blobs,
+			ArchiveName: pvespec.ArchiveName, Blobs: blobs, CacheDir: a.groupCacheDir(session),
 			OnPhase: func(p string) { pt.Set(p); reportPh() },
 		})
 	}
