@@ -12,6 +12,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -289,7 +290,38 @@ func (s *Server) handleH2(w http.ResponseWriter, r *http.Request) {
 		s.mu.Unlock()
 
 	case "GET /previous":
-		httpError(w, 404, "no previous backup")
+		// The latest closed index of that name (an earlier session) is the previous
+		// snapshot's; like PBS, handing it out registers its chunks as known
+		name := q.Get("archive-name")
+		s.mu.Lock()
+		var found *Index
+		var foundWID uint64
+		for wid, idx := range s.indexes {
+			if idx.Name == name && idx.Closed && (found == nil || wid > foundWID) {
+				found, foundWID = idx, wid
+			}
+		}
+		var didx []byte
+		if found != nil {
+			didx = make([]byte, 4096, 4096+40*len(found.Digests))
+			copy(didx, []byte{28, 145, 78, 165, 25, 186, 179, 205})
+			for i, d := range found.Digests {
+				end := found.Size
+				if i+1 < len(found.Offsets) {
+					end = found.Offsets[i+1]
+				}
+				raw, _ := hex.DecodeString(d)
+				didx = binary.LittleEndian.AppendUint64(didx, end)
+				didx = append(didx, raw...)
+				s.known[d] = true
+			}
+		}
+		s.mu.Unlock()
+		if found == nil {
+			httpError(w, 404, "no previous backup")
+			return
+		}
+		w.Write(didx)
 
 	case "GET /previous_backup_time":
 		fmt.Fprint(w, `{"data":null}`)

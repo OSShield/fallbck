@@ -110,7 +110,11 @@ func (s *ServerAPI) validateJob(ctx context.Context, job *db.BackupJob, existing
 		if job.PVEConfig != nil {
 			return "Filesystem jobs do not take pve_config", errors.New("pve_config on filesystem job")
 		}
-		paths, err := db.ValidateBackupPaths(job.BackupPaths)
+		agentOS := ""
+		if agent != nil {
+			agentOS = agent.OS
+		}
+		paths, err := db.ValidateBackupPathsFor(agentOS, job.BackupPaths)
 		if err != nil {
 			return err.Error(), err
 		}

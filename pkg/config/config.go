@@ -159,6 +159,9 @@ type AgentConfig struct {
 	// ServerCACertPath optionally trusts a private CA for ServerURL
 	ServerCACertPath   string `yaml:"server_ca_cert_path" json:"server_ca_cert_path"`
 	InsecureSkipVerify bool   `yaml:"insecure_skip_verify" json:"insecure_skip_verify"`
+	// VSS (Windows only) backs up from a Volume Shadow Copy of each volume so open
+	// and locked files are read consistently; default true
+	VSS *bool `yaml:"vss,omitempty" json:"vss,omitempty"`
 	// EnrollmentKey triggers self-enrollment on first start
 	EnrollmentKey string `yaml:"enrollment_key" json:"-"`
 	// LogLevel sets the agent's base log level (debug, info, warn, error); the DEBUG /
@@ -240,9 +243,10 @@ const SystemAgentDataDir = "/var/lib/fallbck/agent"
 // SystemDBAgentDataDir is the packaged fallbck-db-agent state directory
 const SystemDBAgentDataDir = "/var/lib/fallbck/db-agent"
 
-// SystemAgentDataDirFor returns the packaged data directory for an agent type
+// SystemAgentDataDirFor returns the packaged data directory for an agent type:
+// /var/lib/fallbck/<dir> on Unix, %ProgramData%\fallbck\<dir> on Windows
 func SystemAgentDataDirFor(agentType string) string {
-	return "/var/lib/fallbck/" + AgentDirName(agentType)
+	return filepath.Join(systemDataRoot(), AgentDirName(agentType))
 }
 
 // DefaultAgentDataDirFor is DefaultAgentDataDir for a given agent type
@@ -250,7 +254,7 @@ func DefaultAgentDataDirFor(agentType string) string {
 	if dir := os.Getenv("FALLBCK_AGENT_DATA_DIR"); dir != "" {
 		return dir
 	}
-	if os.Geteuid() == 0 {
+	if isPrivileged() {
 		return SystemAgentDataDirFor(agentType)
 	}
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
@@ -409,6 +413,10 @@ func LoadAgentConfig(filePath string) (*AgentConfig, error) {
 	envBool("FALLBCK_AGENT_INSECURE_SKIP_VERIFY", &cfg.InsecureSkipVerify)
 	envString("FALLBCK_AGENT_ENROLLMENT_KEY", &cfg.EnrollmentKey)
 	envString("FALLBCK_AGENT_LOG_LEVEL", &cfg.LogLevel)
+	if v := os.Getenv("FALLBCK_AGENT_VSS"); v != "" {
+		b := v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes")
+		cfg.VSS = &b
+	}
 
 	envString("FALLBCK_AGENT_DB_SPOOL_DIR", &cfg.DBBackup.SpoolDir)
 	envString("FALLBCK_AGENT_DB_STATE_DIR", &cfg.DBBackup.StateDir)
@@ -503,6 +511,9 @@ func applyProfileEnv(c *dbbackup.Config, environ []string) {
 		c.Profiles[name] = p
 	}
 }
+
+// UseVSS reports whether Windows backups read from a Volume Shadow Copy (default true)
+func (c *AgentConfig) UseVSS() bool { return c.VSS == nil || *c.VSS }
 
 // ServerTLSConfig builds the client TLS configuration for ServerURL: the operator's
 // private CA (ServerCACertPath) and/or InsecureSkipVerify. Used by every connection
