@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/osshield/gopbs/scan"
-	"path/filepath"
+	"path"
 	"sort"
 	"strings"
 )
@@ -97,6 +97,8 @@ func isDriveLetter(c byte) bool { return (c >= 'A' && c <= 'Z') || (c >= 'a' && 
 // cannot form one archive: every path must be absolute, exact duplicates are dropped and
 // no path may lie inside another (its data would be archived twice). Paths sharing a
 // basename are fine; the agent names them after their full path in the archive.
+// The rules are those of a Unix agent regardless of the host the server runs on, so
+// the slash-only path package is used rather than path/filepath.
 func ValidateBackupPaths(paths []string) ([]string, error) {
 	seen := map[string]bool{}
 	var cleaned []string
@@ -105,10 +107,10 @@ func ValidateBackupPaths(paths []string) ([]string, error) {
 		if p == "" {
 			continue
 		}
-		if !filepath.IsAbs(p) {
+		if !path.IsAbs(p) {
 			return nil, fmt.Errorf("backup path %q must be absolute", raw)
 		}
-		p = filepath.Clean(p)
+		p = path.Clean(p)
 		if seen[p] {
 			continue
 		}
@@ -126,7 +128,7 @@ func ValidateBackupPaths(paths []string) ([]string, error) {
 	sort.Strings(sorted)
 	for i := 1; i < len(sorted); i++ {
 		parent := sorted[i-1]
-		if parent == "/" || strings.HasPrefix(sorted[i], parent+string(filepath.Separator)) {
+		if parent == "/" || strings.HasPrefix(sorted[i], parent+"/") {
 			return nil, fmt.Errorf("backup path %s is inside %s; a parent path already includes it", sorted[i], parent)
 		}
 	}
