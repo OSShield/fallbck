@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -123,8 +124,8 @@ func TestAgentConfigSaveLoad(t *testing.T) {
 	if err := cfg.Save(path); err != nil {
 		t.Fatal(err)
 	}
-	info, _ := os.Stat(path)
-	if info.Mode().Perm() != 0o600 {
+	// Windows has no POSIX permission bits; os.WriteFile's mode only toggles read-only there
+	if info, _ := os.Stat(path); runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Errorf("agent.yaml should be 0600, got %v", info.Mode().Perm())
 	}
 	loaded, err := LoadAgentConfig(path)

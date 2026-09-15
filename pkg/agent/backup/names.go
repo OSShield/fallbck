@@ -2,7 +2,7 @@ package backup
 
 import (
 	"fmt"
-	"path/filepath"
+	"path"
 	"strings"
 )
 
@@ -42,9 +42,10 @@ func ArchiveEntryNames(paths []string) (map[string]string, error) {
 }
 
 // pathEntryName flattens an absolute path into a single archive entry name
-// (`/var/lib/mydir` → `var-lib-mydir`, `D:\data\x` → `D-data-x`)
+// (`/var/lib/mydir` → `var-lib-mydir`, `D:\data\x` → `D-data-x`). Both path
+// styles are handled on every platform, so the slash-only path package is used.
 func pathEntryName(p string) string {
-	trimmed := strings.Trim(strings.ReplaceAll(filepath.ToSlash(filepath.Clean(p)), `\`, "/"), "/")
+	trimmed := strings.Trim(path.Clean(strings.ReplaceAll(p, `\`, "/")), "/")
 	trimmed = strings.ReplaceAll(trimmed, ":", "")
 	if trimmed == "" {
 		return "root"
@@ -58,7 +59,7 @@ func entryBase(p string) string {
 	if drive, ok := driveRoot(p); ok {
 		return drive
 	}
-	base := filepath.Base(strings.ReplaceAll(p, `\`, "/"))
+	base := path.Base(strings.ReplaceAll(p, `\`, "/"))
 	if base == "/" || base == "." || base == "" {
 		return "root"
 	}

@@ -14,9 +14,10 @@ func TestDefaultAgentDataDir(t *testing.T) {
 
 	t.Setenv("FALLBCK_AGENT_DATA_DIR", "")
 	got := DefaultAgentDataDir()
-	if os.Geteuid() == 0 {
-		if got != SystemAgentDataDir {
-			t.Errorf("as root: got %q, want %q", got, SystemAgentDataDir)
+	// Root on Unix, an elevated token on Windows (GitHub's Windows runners are elevated)
+	if isPrivileged() {
+		if want := SystemAgentDataDirFor(AgentTypeFilesystem); got != want {
+			t.Errorf("privileged: got %q, want %q", got, want)
 		}
 		return
 	}
