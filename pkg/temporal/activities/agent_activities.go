@@ -90,7 +90,7 @@ func (a *AgentActivities) ExecuteFilesystemBackup(ctx context.Context, session *
 
 	opts := backup.Options{Session: session, Workers: a.Workers, CacheDir: a.groupCacheDir(session), OnPhase: func(p string) { pt.Set(p); reportPh() }}
 	if a.VSSDir != "" && vss.Supported() {
-		paths, err := db.ValidateBackupPaths(session.BackupPaths)
+		paths, err := db.ValidateLocalBackupPaths(session.BackupPaths)
 		if err != nil {
 			return &temporal.BackupExecutionResult{Status: db.RunStatusFailed, ErrorMessage: err.Error()},
 				sdktemporal.NewNonRetryableApplicationError(err.Error(), ErrTypeDBPrecheckFailed, err)
