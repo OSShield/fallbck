@@ -118,41 +118,325 @@ function copyToClipboard(elementIdOrText) {
   });
 }
 
-// 5. Agent Guided Installation Wizard
-async function prepareAgentWizard(os = 'linux') {
-  const codeEl = document.getElementById('agent-install-cmd');
-  const tokenDisplay = document.getElementById('agent-token-val');
-  if (!codeEl) return;
+// 5. Agent guided installation wizard (Agents page)
+// Step 1 picks the agent type, step 2 the platform it runs on, step 3 shows the
+// package repository, install and enrollment instructions for that combination.
+// One single-use enrollment token is minted per wizard session, the first time
+// step 3 is shown, and reused while the administrator moves back and forth.
+const agentWizard = { step: 1, type: '', target: '', token: '' };
 
-  codeEl.innerText = 'Generating single-use enrollment token...';
+const AGENT_WIZARD_TYPES = {
+  files:      { label: 'filesystem agent', pkg: 'fallbck-agent',    service: 'fallbck-agent' },
+  proxmox:    { label: 'filesystem agent', pkg: 'fallbck-agent',    service: 'fallbck-agent' },
+  database:   { label: 'database agent',   pkg: 'fallbck-db-agent', service: 'fallbck-db-agent' },
+  kubernetes: { label: 'Kubernetes agent' }
+};
 
-  try {
-    const resp = await apiFetch('/api/v1/tokens', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: `Wizard-${os}-${new Date().toISOString().slice(0, 19)}`, max_uses: 1, expires_at: new Date(Date.now() + 24 * 3600 * 1000) })
-    });
-    
-    if (!resp.ok) throw new Error('Token generation failed');
-    const data = await resp.json();
-    const serverUrl = window.location.origin;
+function openAddAgentModal() {
+  agentWizard.step = 1;
+  agentWizard.type = '';
+  agentWizard.target = '';
+  agentWizard.token = ''; // a token minted for an earlier session may already be used up
+  document.querySelectorAll('#modal-add-agent .wizard-option').forEach(o => o.classList.remove('selected'));
+  openModal('modal-add-agent');
+  agentWizardRender();
+}
 
-    if (tokenDisplay) tokenDisplay.innerText = data.raw_token;
+function agentWizardSelect(el) {
+  const kind = el.dataset.kind; // 'type' or 'target'
+  if (kind === 'type' && agentWizard.type !== el.dataset.value) agentWizard.target = '';
+  agentWizard[kind] = el.dataset.value;
+  el.parentElement.querySelectorAll('.wizard-option').forEach(o => o.classList.toggle('selected', o === el));
+  agentWizardRender();
+}
 
-    if (os === 'linux') {
-      codeEl.innerText = `curl -sSL ${serverUrl}/install-agent.sh | sudo bash -s -- \\\n  --server ${serverUrl} \\\n  --token ${data.raw_token}`;
-    } else if (os === 'cli') {
-      codeEl.innerText = `fallbck-agent enroll \\\n  --server ${serverUrl} \\\n  --token ${data.raw_token}`;
-    } else if (os === 'k8s') {
-      codeEl.innerText = `helm install fallbck-k8s-agent ./deploy/helm/fallbck-k8s-agent \\\n  --namespace fallbck --create-namespace \\\n  --set server.url=${serverUrl} \\\n  --set clusterName=<cluster name> \\\n  --set enrollment.key=${data.raw_token}`;
-    } else if (os === 'db') {
-      codeEl.innerText = `fallbck-db-agent enroll \\\n  --server ${serverUrl} \\\n  --token ${data.raw_token}\n\n# then check the database client tools and start the service:\nfallbck-db-agent tools\nsystemctl enable --now fallbck-db-agent`;
-    } else if (os === 'windows') {
-      codeEl.innerText = `# elevated PowerShell: downloads the MSI, installs the service and enrolls\n& ([scriptblock]::Create((iwr -useb ${serverUrl}/install-agent.ps1).Content)) -Token ${data.raw_token}`;
-    }
-  } catch (err) {
-    codeEl.innerText = `Error: ${err.message}`;
+function agentWizardKey(event, el) {
+  if (event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault();
+    agentWizardSelect(el);
   }
+}
+
+function agentWizardNext() {
+  if (agentWizard.step === 1 && !agentWizard.type) return;
+  if (agentWizard.step === 2 && !agentWizard.target) return;
+  if (agentWizard.step < 3) agentWizard.step++;
+  agentWizardRender();
+}
+
+function agentWizardBack() {
+  if (agentWizard.step > 1) agentWizard.step--;
+  agentWizardRender();
+}
+
+function agentWizardRender() {
+  const modal = document.getElementById('modal-add-agent');
+  if (!modal) return;
+  const step = agentWizard.step;
+  modal.querySelectorAll('.wizard-page').forEach(p => p.classList.toggle('active', p.dataset.step === String(step)));
+  modal.querySelectorAll('.wizard-progress-step').forEach(p => {
+    const n = Number(p.dataset.step);
+    p.classList.toggle('active', n === step);
+    p.classList.toggle('done', n < step);
+  });
+
+  // Step 2 only offers the platforms the chosen agent type runs on; a type with a
+  // single platform (Kubernetes, Proxmox VE) gets it pre-selected.
+  if (step === 2) {
+    document.getElementById('wizard-type-label').innerText = (AGENT_WIZARD_TYPES[agentWizard.type] || {}).label || 'agent';
+    const options = Array.from(modal.querySelectorAll('#wizard-target-options .wizard-option'));
+    const visible = options.filter(o => o.dataset.types.split(',').includes(agentWizard.type));
+    options.forEach(o => { o.hidden = !visible.includes(o); });
+    if (visible.length === 1 && !agentWizard.target) agentWizard.target = visible[0].dataset.value;
+    options.forEach(o => o.classList.toggle('selected', !o.hidden && o.dataset.value === agentWizard.target));
+  }
+
+  document.getElementById('wizard-back').hidden = step === 1;
+  const next = document.getElementById('wizard-next');
+  next.hidden = step === 3;
+  next.disabled = (step === 1 && !agentWizard.type) || (step === 2 && !agentWizard.target);
+  document.getElementById('wizard-done').hidden = step !== 3;
+
+  if (step === 3) agentWizardRenderInstructions();
+}
+
+async function agentWizardToken() {
+  if (agentWizard.token) return agentWizard.token;
+  const resp = await apiFetch('/api/v1/tokens', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: `Wizard-${agentWizard.type}-${new Date().toISOString().slice(0, 19)}`, max_uses: 1, expires_at: new Date(Date.now() + 24 * 3600 * 1000) })
+  });
+  if (!resp.ok) throw new Error('Token generation failed');
+  const data = await resp.json();
+  agentWizard.token = data.raw_token;
+  return agentWizard.token;
+}
+
+async function agentWizardRenderInstructions() {
+  const root = document.getElementById('wizard-instructions');
+  root.innerHTML = '';
+  const wait = document.createElement('p');
+  wait.className = 'wizard-lead';
+  wait.innerText = 'Generating a single-use enrollment token...';
+  root.appendChild(wait);
+
+  let token;
+  try {
+    token = await agentWizardToken();
+  } catch (err) {
+    wait.innerText = `Error: ${err.message}`;
+    return;
+  }
+  if (agentWizard.step !== 3) return; // the administrator went back meanwhile
+
+  root.innerHTML = '';
+  const sections = agentWizardSections(agentWizard.type, agentWizard.target, window.location.origin, token);
+  sections.forEach((s, i) => root.appendChild(agentWizardSection(s, i)));
+}
+
+// The server URL and token are inserted as text nodes, never as markup
+function agentWizardSection(s, i) {
+  const wrap = document.createElement('div');
+  wrap.className = 'wizard-section';
+  const h = document.createElement('h4');
+  h.innerText = `${i + 1}. ${s.title}`;
+  wrap.appendChild(h);
+  if (s.text) {
+    const p = document.createElement('p');
+    p.innerText = s.text;
+    wrap.appendChild(p);
+  }
+  if (s.code) {
+    const id = `wizard-code-${i}`;
+    const code = document.createElement('div');
+    code.className = 'code-block';
+    code.id = id;
+    code.innerText = s.code;
+    wrap.appendChild(code);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-secondary btn-sm';
+    btn.innerText = 'Copy';
+    btn.onclick = () => copyToClipboard(id);
+    wrap.appendChild(btn);
+  }
+  if (s.note) {
+    const n = document.createElement('p');
+    n.className = 'wizard-note';
+    n.innerText = s.note;
+    wrap.appendChild(n);
+  }
+  return wrap;
+}
+
+const AGENT_WIZARD_RELEASES = 'https://github.com/osshield/fallbck/releases';
+const AGENT_WIZARD_RAW = 'https://raw.githubusercontent.com/osshield/fallbck/main';
+
+// Package repository setup per platform. Proxmox VE nodes are administered as root
+// and ship without sudo, so their commands carry no sudo prefix.
+function agentWizardRepo(target, pkg) {
+  const sudo = target === 'proxmox' ? '' : 'sudo ';
+  switch (target) {
+    case 'debian':
+    case 'proxmox':
+      return `${sudo}apt-get update\n${sudo}apt-get -y install gnupg2 apt-transport-https curl\n\n` +
+        `${sudo}install -d -m 0755 /etc/apt/keyrings\n` +
+        `curl -fsSL https://deb.pkg.lv/key | ${sudo}gpg --dearmor -o /etc/apt/keyrings/pkg-lv.gpg\n` +
+        `echo "deb [signed-by=/etc/apt/keyrings/pkg-lv.gpg] https://deb.pkg.lv all main" | ${sudo}tee /etc/apt/sources.list.d/pkg-lv.list\n` +
+        `${sudo}apt update\n${sudo}apt install ${pkg}`;
+    case 'rhel':
+      return `sudo tee /etc/yum.repos.d/pkg-lv.repo <<'EOF'\n[pkg-lv]\nname=pkg.lv\nbaseurl=https://rpm.pkg.lv\nenabled=1\ngpgcheck=1\ngpgkey=https://rpm.pkg.lv/key\nEOF\n` +
+        `sudo rpm --import https://rpm.pkg.lv/key\nsudo yum install ${pkg}`;
+    case 'alpine':
+      return `apk update\napk add curl\ncd /etc/apk/keys && curl -JO https://alpine.pkg.lv/key\n` +
+        `echo "https://alpine.pkg.lv" >> /etc/apk/repositories\napk update\napk add ${pkg}`;
+  }
+  return '';
+}
+
+// Manual install from the GitHub release for distributions without a package:
+// binary, state directories, environment template and a service unit.
+function agentWizardManualLinux(type, pkg, svc) {
+  const isDB = type === 'database';
+  const asset = isDB ? 'fallbck_db_agent_Linux_${ARCH}.tar.gz' : 'fallbck_agent_Linux_${ARCH}.tar.gz';
+  const dataDir = isDB ? '/var/lib/fallbck/db-agent' : '/var/lib/fallbck/agent';
+  const env = isDB ? 'db-agent.env' : 'agent.env';
+  let install = `ARCH=x86_64   # or arm64\n` +
+    `curl -fsSL -o /tmp/${pkg}.tar.gz ${AGENT_WIZARD_RELEASES}/latest/download/${asset}\n` +
+    `sudo tar -xzf /tmp/${pkg}.tar.gz -C /usr/local/bin ${pkg}\n`;
+  if (isDB) {
+    install += `\n# the database agent service runs as the unprivileged user fallbck\n` +
+      `getent group fallbck >/dev/null || sudo groupadd --system fallbck\n` +
+      `getent passwd fallbck >/dev/null || sudo useradd --system --no-create-home --home-dir ${dataDir} --shell /sbin/nologin --gid fallbck fallbck\n`;
+  }
+  install += `\nsudo mkdir -p /etc/fallbck ${dataDir} /var/log/fallbck\n` +
+    `sudo chmod 0700 ${dataDir}\n` +
+    (isDB ? `sudo chown fallbck:fallbck ${dataDir} /var/log/fallbck\n` : '') +
+    `sudo curl -fsSL -o /etc/fallbck/${env} ${AGENT_WIZARD_RAW}/deploy/packaging/${env}\n` +
+    `sudo chmod 0600 /etc/fallbck/${env}`;
+
+  const service = `# systemd\n` +
+    `sudo curl -fsSL -o /etc/systemd/system/${svc}.service ${AGENT_WIZARD_RAW}/deploy/systemd/${svc}.service\n` +
+    `sudo systemctl daemon-reload\n\n` +
+    `# OpenRC instead\n` +
+    `sudo curl -fsSL -o /etc/init.d/${svc} ${AGENT_WIZARD_RAW}/deploy/openrc/${svc}.initd\n` +
+    `sudo chmod 0755 /etc/init.d/${svc}\n` +
+    `sudo curl -fsSL -o /etc/conf.d/${svc} ${AGENT_WIZARD_RAW}/deploy/openrc/${svc}.confd`;
+  return { install, service };
+}
+
+function agentWizardSections(type, target, serverUrl, token) {
+  const t = AGENT_WIZARD_TYPES[type] || AGENT_WIZARD_TYPES.files;
+  const isDB = type === 'database';
+  const sections = [];
+
+  if (type === 'kubernetes') {
+    sections.push({
+      title: 'Install the Helm chart',
+      text: 'Run this with a kubeconfig that is cluster-admin on the target cluster. The agent enrolls as k8s-<clusterName> and keeps its identity in a Secret in the fallbck namespace; helm upgrade never touches it.',
+      code: `helm upgrade --install fallbck-k8s-agent \\\n  oci://oci.fi/helm/fallbck-k8s-agent \\\n  --namespace fallbck --create-namespace \\\n  --set server.url=${serverUrl} \\\n  --set clusterName=my-cluster \\\n  --set enrollment.key=${token}`,
+      note: 'Private or self-signed server certificate: add --set-file server.caCert=ca.pem or, for testing only, --set server.insecureSkipVerify=true.'
+    });
+    sections.push({
+      title: 'Verify',
+      text: 'The cluster shows up on this page and on the Kubernetes page within a minute. Cluster jobs are created in the Kubernetes section; in-cluster database jobs on the Backup Jobs page.',
+      code: 'kubectl -n fallbck get pods\nkubectl -n fallbck logs deploy/fallbck-k8s-agent'
+    });
+    return sections;
+  }
+
+  if (target === 'windows') {
+    sections.push({
+      title: 'Install and enroll from an elevated PowerShell',
+      text: 'Downloads the MSI from the latest GitHub release, installs the fallbck-agent Windows service and enrolls it with this server.',
+      code: `& ([scriptblock]::Create((iwr -useb ${serverUrl}/install-agent.ps1).Content)) -Token ${token}`,
+      note: 'Private or self-signed server certificate: add -CaCert C:\\path\\to\\ca.pem. An already downloaded installer can be passed with -MsiPath.'
+    });
+    sections.push({
+      title: 'Or install the MSI by hand',
+      text: `Download fallbck-agent_Windows_x86_64.msi from ${AGENT_WIZARD_RELEASES}/latest and run it from an elevated prompt; the installer enrolls the agent and starts the service.`,
+      code: `msiexec /i fallbck-agent_Windows_x86_64.msi /qn /norestart SERVER_URL=${serverUrl} TOKEN=${token}`
+    });
+    sections.push({
+      title: 'Verify',
+      text: 'State, caches and logs live in %ProgramData%\\fallbck\\agent. Backup paths are Windows paths (C:\\Users, D:\\data or a whole volume C:\\); every run first takes a Volume Shadow Copy.',
+      code: '& "$env:ProgramFiles\\FallBCK\\fallbck-agent.exe" service status'
+    });
+    return sections;
+  }
+
+  // Linux: package (or manual install), client tools for the database agent,
+  // enrollment through the served helper script (or by hand), then verify.
+  const pkg = t.pkg;
+  const svc = t.service;
+  const sudo = target === 'proxmox' || target === 'alpine' ? '' : 'sudo ';
+
+  if (target === 'linux-other') {
+    const m = agentWizardManualLinux(type, pkg, svc);
+    sections.push({
+      title: 'Download the binary and the configuration template',
+      text: `Releases are published at ${AGENT_WIZARD_RELEASES}. The archive holds the static ${pkg} binary; the environment template and service units come from the repository.`,
+      code: m.install
+    });
+    sections.push({
+      title: 'Create the service',
+      text: 'Pick the init system of the host. The unit runs the agent from its state directory and reads the environment template.',
+      code: m.service
+    });
+  } else {
+    sections.push({
+      title: target === 'proxmox' ? 'Add the package repository and install the agent (as root on the node)' : 'Add the package repository and install the agent',
+      code: agentWizardRepo(target, pkg)
+    });
+  }
+
+  if (isDB) {
+    const tools = {
+      debian: 'sudo apt install postgresql-client mariadb-client',
+      rhel: 'sudo yum install postgresql mariadb',
+      alpine: 'apk add postgresql-client mariadb-client mongodb-tools',
+      'linux-other': '# for example on Debian:\nsudo apt install postgresql-client mariadb-client'
+    }[target];
+    sections.push({
+      title: 'Install the client tools for the engines you back up',
+      text: 'The package does not ship them: pg_dump must be at least as new as the server, mysqldump/mariadb-dump (binary-log fetching also needs mysqlbinlog/mariadb-binlog, on Alpine from the mariadb package) and mongodump from mongodb-database-tools (MongoDB\'s own repository on Debian and RHEL).',
+      code: tools
+    });
+  }
+
+  const enroll = `curl -sSL ${serverUrl}/install-agent.sh | ${sudo}sh -s -- \\\n  --server ${serverUrl} \\\n  --token ${token}` + (isDB ? ' \\\n  --type database' : '');
+  sections.push({
+    title: 'Enroll the agent and start the service',
+    text: isDB
+      ? 'Enrolls as the fallbck service user, checks the client tools and enables the service. The token is single use and valid for 24 hours.'
+      : 'Enrolls the installed agent with this server and enables the service. The token is single use and valid for 24 hours.',
+    code: enroll,
+    note: 'Private or self-signed server certificate: run the enroll command by hand below with --ca-cert <pem bundle>.'
+  });
+
+  const start = target === 'alpine'
+    ? `rc-update add ${svc} default && rc-service ${svc} start`
+    : `${sudo}systemctl enable --now ${svc}`;
+  const manual = isDB
+    ? (target === 'alpine'
+        ? `su -s /bin/sh fallbck -c "fallbck-db-agent enroll --server ${serverUrl} --token ${token} --data-dir /var/lib/fallbck/db-agent"\nfallbck-db-agent tools\n${start}`
+        : `sudo -u fallbck fallbck-db-agent enroll --server ${serverUrl} --token ${token} --data-dir /var/lib/fallbck/db-agent\nfallbck-db-agent tools\n${start}`)
+    : `${sudo}fallbck-agent enroll --server ${serverUrl} --token ${token}\n${start}`;
+  sections.push({ title: 'Or enroll by hand', code: manual });
+
+  if (type === 'proxmox') {
+    sections.push({
+      title: 'Create the Proxmox VE host job',
+      text: 'The agent reports itself as a PVE host with its next heartbeat (about 30 seconds). Then create a job of type Proxmox VE host on the Backup Jobs page; it archives the node configuration into one pve.pxar snapshot per run. Guest disks are not part of it, keep vzdump to PBS for those.'
+    });
+  } else {
+    sections.push({
+      title: 'Verify',
+      text: 'The host appears in the list above within a minute. Logs: ' + (target === 'alpine' ? `/var/log/fallbck/${isDB ? 'db-agent' : 'agent'}.log` : `journalctl -u ${svc}`) + '.'
+    });
+  }
+  return sections;
 }
 
 // 6. Action Handlers for Target, Job, and Run Creation

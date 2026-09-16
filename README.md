@@ -47,7 +47,7 @@ The agent needs exactly one endpoint: the server's public URL. It receives a bea
 
 ### Windows agent
 
-`fallbck-agent` also runs on **Windows** (x64 and arm64) as a Windows service. Install with the MSI from the release page, passing the enrollment token so the installer enrolls the agent and starts the service (the Agents page's *Windows* wizard tab prints this):
+`fallbck-agent` also runs on **Windows** (x64 and arm64) as a Windows service. Install with the MSI from the release page, passing the enrollment token so the installer enrolls the agent and starts the service (the Agents page's guided installation, *Files* then *Windows*, prints this):
 
 ```powershell
 & ([scriptblock]::Create((iwr -useb https://backup.example.com/install-agent.ps1).Content)) -Token <enrollment token>
@@ -148,7 +148,7 @@ systemctl enable --now fallbck-agent
 
 # database agent
 apt install ./fallbck_db_agent_Linux_amd64.deb postgresql-client mariadb-client
-sudo -u fallbck fallbck-db-agent enroll --server https://backup.example.com --token <enrollment token>
+sudo -u fallbck fallbck-db-agent enroll --server https://backup.example.com --token <enrollment token> --data-dir /var/lib/fallbck/db-agent
 systemctl enable --now fallbck-db-agent
 ```
 

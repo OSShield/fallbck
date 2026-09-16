@@ -499,15 +499,21 @@ func (u *UIHandler) HandleInstallScript(w http.ResponseWriter, r *http.Request) 
 		serverURL = "http://" + r.Host
 	}
 
-	script := fmt.Sprintf(`#!/usr/bin/env bash
+	script := fmt.Sprintf(`#!/bin/sh
+# FallBCK enrollment helper for the guided installation on the Agents page. It
+# enrolls an installed fallbck-agent (default) or fallbck-db-agent (--type database)
+# package with the server and enables its systemd or OpenRC service. POSIX sh so it
+# also runs on Alpine; install the package first (deb/rpm/apk or a manual install).
 set -e
 
 SERVER_URL="%s"
 TOKEN=""
 AGENT="fallbck-agent"
+DATA_DIR="/var/lib/fallbck/agent"
+RUN_AS=""
 
-while [[ $# -gt 0 ]]; do
-  case $1 in
+while [ $# -gt 0 ]; do
+  case "$1" in
     --server)
       SERVER_URL="$2"
       shift 2
@@ -517,8 +523,14 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --type)
-      # filesystem (default) or database
-      case "$2" in database|db) AGENT="fallbck-db-agent" ;; esac
+      # files (default) or database
+      case "$2" in
+        database|db)
+          AGENT="fallbck-db-agent"
+          DATA_DIR="/var/lib/fallbck/db-agent"
+          RUN_AS="fallbck"
+          ;;
+      esac
       shift 2
       ;;
     *)
@@ -528,16 +540,43 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [ -z "$TOKEN" ]; then
-  echo "Error: --token is required"
+  echo "Error: --token is required" >&2
+  exit 1
+fi
+if [ "$(id -u)" -ne 0 ]; then
+  echo "Error: run this script as root (sudo)" >&2
+  exit 1
+fi
+if ! command -v "$AGENT" >/dev/null 2>&1; then
+  echo "==> $AGENT is not installed; install the package first (deb/rpm/apk), then re-run this script" >&2
   exit 1
 fi
 
-echo "==> Enrolling $AGENT..."
-if command -v "$AGENT" &> /dev/null; then
-  "$AGENT" enroll --server "$SERVER_URL" --token "$TOKEN"
+echo "==> Enrolling $AGENT with $SERVER_URL..."
+if [ -n "$RUN_AS" ] && getent passwd "$RUN_AS" >/dev/null 2>&1; then
+  # the database agent service runs as this user, so the enrollment must be owned by it
+  mkdir -p "$DATA_DIR"
+  chown "$RUN_AS" "$DATA_DIR"
+  su -s /bin/sh "$RUN_AS" -c "$AGENT enroll --server '$SERVER_URL' --token '$TOKEN' --data-dir '$DATA_DIR'"
 else
-  echo "==> $AGENT is not installed; install the package first (deb/rpm/apk), then re-run this script"
-  exit 1
+  "$AGENT" enroll --server "$SERVER_URL" --token "$TOKEN" --data-dir "$DATA_DIR"
+fi
+
+if [ "$AGENT" = "fallbck-db-agent" ]; then
+  echo "==> Database client tools:"
+  "$AGENT" tools || true
+fi
+
+if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+  systemctl enable "$AGENT" >/dev/null 2>&1 || true
+  systemctl restart "$AGENT"
+  echo "==> $AGENT service enabled and started (logs: journalctl -u $AGENT)"
+elif command -v rc-service >/dev/null 2>&1; then
+  rc-update add "$AGENT" default >/dev/null 2>&1 || true
+  rc-service "$AGENT" restart
+  echo "==> $AGENT service enabled and started (logs: /var/log/fallbck/)"
+else
+  echo "==> No systemd or OpenRC found; start the agent yourself: $AGENT run --config $DATA_DIR/agent.yaml"
 fi
 `, serverURL)
 
