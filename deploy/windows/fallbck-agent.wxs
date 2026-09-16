@@ -59,7 +59,7 @@
           <util:PermissionEx User="Administrators" GenericAll="yes" />
           <util:PermissionEx User="SYSTEM" GenericAll="yes" />
         </CreateFolder>
-        <RemoveFolder Id="RemoveAgentDataDir" On="never" />
+        <RemoveFolder Id="RemoveAgentDataDir" On="uninstall" />
         <RegistryValue Root="HKLM" Key="Software\FallBCK\Agent" Name="DataDir" Type="string" Value="[AGENTDATADIR]" KeyPath="yes" />
       </Component>
     </DirectoryRef>
