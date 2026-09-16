@@ -1,14 +1,17 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
   FallBCK backup agent for Windows (WiX Toolset v3). Built by the release workflow:
-    candle -dVersion=1.2.3 -dSource=dist\fallbck-agent.exe fallbck-agent.wxs
-    light -ext WixUtilExtension fallbck-agent.wixobj -o fallbck-agent_Windows_x86_64.msi
+    candle -ext WixUtilExtension -ext WixUIExtension -dVersion=1.2.3 -dSource=dist\fallbck-agent.exe fallbck-agent.wxs
+    light -ext WixUtilExtension -ext WixUIExtension fallbck-agent.wixobj -o fallbck-agent_Windows_x86_64.msi
 
   Installs the agent to Program Files, registers it as the Windows service
-  "fallbck-agent" (LocalSystem, automatic start, restart on failure) and, when the
-  SERVER_URL and TOKEN properties are given, enrolls with the FallBCK server before
-  the service starts:
+  "fallbck-agent" (LocalSystem, automatic start, restart on failure) and enrolls it
+  with the FallBCK server before the service starts. A silent install takes the
+  server and the enrollment key as properties:
     msiexec /i fallbck-agent_Windows_x86_64.msi /qn SERVER_URL=https://backup.example.com TOKEN=<enrollment token>
+  An interactive install (double-click, or msiexec without /qn) asks for them in a
+  dialog instead; values given on the command line pre-fill it. Upgrades keep the
+  existing enrollment and never show the dialog.
   Data (agent.yaml, caches, logs) lives in %ProgramData%\fallbck\agent and survives
   uninstall.
 -->
@@ -75,6 +78,79 @@
       <Custom Action="EnrollAgent" After="InstallFiles">NOT Installed AND SERVER_URL AND TOKEN AND NOT CA_CERT</Custom>
       <Custom Action="EnrollAgentCA" After="InstallFiles">NOT Installed AND SERVER_URL AND TOKEN AND CA_CERT</Custom>
     </InstallExecuteSequence>
+
+    <!--
+      Interactive install: Welcome, enrollment dialog, VerifyReady, Progress, Exit.
+      The dialog is skipped on major upgrades (WIX_UPGRADE_DETECTED, set by
+      FindRelatedProducts before the first dialog) and in maintenance mode; a silent
+      install (/qn) never shows a UI and relies on the properties.
+    -->
+    <UI Id="WixUI_FallBCK">
+      <TextStyle Id="WixUI_Font_Normal" FaceName="Tahoma" Size="8" />
+      <TextStyle Id="WixUI_Font_Bigger" FaceName="Tahoma" Size="12" />
+      <TextStyle Id="WixUI_Font_Title" FaceName="Tahoma" Size="9" Bold="yes" />
+      <Property Id="DefaultUIFont" Value="WixUI_Font_Normal" />
+      <Property Id="WixUI_Mode" Value="Minimal" />
+
+      <DialogRef Id="ErrorDlg" />
+      <DialogRef Id="FatalError" />
+      <DialogRef Id="FilesInUse" />
+      <DialogRef Id="MsiRMFilesInUse" />
+      <DialogRef Id="PrepareDlg" />
+      <DialogRef Id="ProgressDlg" />
+      <DialogRef Id="ResumeDlg" />
+      <DialogRef Id="UserExit" />
+
+      <Dialog Id="EnrollDlg" Width="370" Height="270" Title="[ProductName] Setup">
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="WixUI_Bmp_Banner" />
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="300" Height="15" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Title}Connect to the FallBCK server" />
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="340" Height="15" Transparent="yes" NoPrefix="yes" Text="The agent enrolls with the server during installation and then starts as a service." />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
+
+        <Control Id="ServerLabel" Type="Text" X="20" Y="58" Width="330" Height="12" NoPrefix="yes" Text="Server URL (for example https://backup.example.com):" />
+        <Control Id="ServerEdit" Type="Edit" X="20" Y="72" Width="330" Height="17" Property="SERVER_URL" />
+        <Control Id="TokenLabel" Type="Text" X="20" Y="98" Width="330" Height="12" NoPrefix="yes" Text="Enrollment key (single-use token from the Agents page of the server):" />
+        <Control Id="TokenEdit" Type="Edit" X="20" Y="112" Width="330" Height="17" Property="TOKEN" />
+        <Control Id="CaLabel" Type="Text" X="20" Y="138" Width="330" Height="12" NoPrefix="yes" Text="CA certificate bundle (PEM file) for a private server certificate, optional:" />
+        <Control Id="CaEdit" Type="Edit" X="20" Y="152" Width="330" Height="17" Property="CA_CERT" />
+        <Control Id="Hint" Type="Text" X="20" Y="180" Width="330" Height="36" NoPrefix="yes" Text="Open the Agents page on the server, choose Add New Agent, Files, Windows, and copy the server URL and the enrollment key from the instructions. The key is valid for 24 hours and can be used once." />
+
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="&amp;Back" />
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="&amp;Next" />
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="Cancel">
+          <Publish Event="SpawnDialog" Value="CancelDlg">1</Publish>
+        </Control>
+      </Dialog>
+
+      <Dialog Id="EnrollMissingDlg" Width="260" Height="85" Title="[ProductName] Setup" NoMinimize="yes">
+        <Control Id="Icon" Type="Icon" X="15" Y="15" Width="24" Height="24" ToolTip="Information icon" FixedSize="yes" IconSize="32" Text="WixUI_Ico_Info" />
+        <Control Id="Text" Type="Text" X="48" Y="15" Width="194" Height="30" NoPrefix="yes" Text="Enter the server URL and the enrollment key to continue. Both are shown by the Agents page of the FallBCK server." />
+        <Control Id="Return" Type="PushButton" X="100" Y="57" Width="56" Height="17" Default="yes" Cancel="yes" Text="OK">
+          <Publish Event="EndDialog" Value="Return">1</Publish>
+        </Control>
+      </Dialog>
+
+      <Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog" Value="Return" Order="999">1</Publish>
+
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="EnrollDlg">NOT Installed AND NOT WIX_UPGRADE_DETECTED</Publish>
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg">WIX_UPGRADE_DETECTED OR (Installed AND PATCH)</Publish>
+
+      <Publish Dialog="EnrollDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg">1</Publish>
+      <Publish Dialog="EnrollDlg" Control="Next" Event="SpawnDialog" Value="EnrollMissingDlg" Order="1">NOT SERVER_URL OR NOT TOKEN</Publish>
+      <Publish Dialog="EnrollDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Order="2">SERVER_URL AND TOKEN</Publish>
+
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="EnrollDlg" Order="1">NOT Installed AND NOT WIX_UPGRADE_DETECTED</Publish>
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="2">NOT Installed AND WIX_UPGRADE_DETECTED</Publish>
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="MaintenanceTypeDlg" Order="3">Installed AND NOT PATCH</Publish>
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="4">Installed AND PATCH</Publish>
+
+      <Publish Dialog="MaintenanceWelcomeDlg" Control="Next" Event="NewDialog" Value="MaintenanceTypeDlg">1</Publish>
+      <Publish Dialog="MaintenanceTypeDlg" Control="RepairButton" Event="NewDialog" Value="VerifyReadyDlg">1</Publish>
+      <Publish Dialog="MaintenanceTypeDlg" Control="RemoveButton" Event="NewDialog" Value="VerifyReadyDlg">1</Publish>
+      <Publish Dialog="MaintenanceTypeDlg" Control="Back" Event="NewDialog" Value="MaintenanceWelcomeDlg">1</Publish>
+    </UI>
+    <UIRef Id="WixUI_Common" />
 
     <Feature Id="Agent" Title="FallBCK Backup Agent" Level="1">
       <ComponentRef Id="AgentExe" />

@@ -87,8 +87,8 @@ jobs:
         run: |
           WIXDIR="${WIX:-/c/Program Files (x86)/WiX Toolset v3.14}/bin"
           if [ ! -f "$WIXDIR/candle.exe" ]; then echo "WiX Toolset not found in $WIXDIR"; exit 1; fi
-          "$WIXDIR/candle.exe" -nologo -arch x64 -dVersion=${{ steps.version.outputs.version }} -dSource=dist/fallbck-agent.exe -ext WixUtilExtension -o dist/fallbck-agent.wixobj deploy/windows/fallbck-agent.wxs
-          "$WIXDIR/light.exe" -nologo -ext WixUtilExtension -o dist/fallbck-agent_Windows_x86_64.msi dist/fallbck-agent.wixobj
+          "$WIXDIR/candle.exe" -nologo -arch x64 -dVersion=${{ steps.version.outputs.version }} -dSource=dist/fallbck-agent.exe -ext WixUtilExtension -ext WixUIExtension -o dist/fallbck-agent.wixobj deploy/windows/fallbck-agent.wxs
+          "$WIXDIR/light.exe" -nologo -ext WixUtilExtension -ext WixUIExtension -o dist/fallbck-agent_Windows_x86_64.msi dist/fallbck-agent.wixobj
       - name: Upload MSI artifact
         uses: actions/upload-artifact@v4
         with:
