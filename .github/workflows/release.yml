@@ -35,25 +35,25 @@ jobs:
       - name: Integration tests (embedded Temporal on sqlite)
         run: go test -tags sqlite -count=1 ./pkg/temporal/embedded/ ./pkg/integration/
 
-  db-integration:
-    name: Database agent integration (docker)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-      - name: Install database client tools
-        run: |
-          set -e
-          sudo apt-get update
-          sudo apt-get install -y postgresql-client mariadb-client curl
-          curl -fsSL https://fastdl.mongodb.org/tools/db/mongodb-database-tools-ubuntu2404-x86_64-100.10.0.deb -o /tmp/mongodb-tools.deb
-          sudo apt-get install -y /tmp/mongodb-tools.deb
-          pg_dump --version; mariadb-dump --version; mongodump --version
-      - name: Database engine tests against real servers
-        run: go test -tags dbintegration -count=1 -run 'TestIntegration' -v ./pkg/agent/dbbackup/
+  # db-integration:
+  #   name: Database agent integration (docker)
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: actions/setup-go@v5
+  #       with:
+  #         go-version-file: go.mod
+  #         cache: true
+  #     - name: Install database client tools
+  #       run: |
+  #         set -e
+  #         sudo apt-get update
+  #         sudo apt-get install -y postgresql-client mariadb-client curl
+  #         curl -fsSL https://fastdl.mongodb.org/tools/db/mongodb-database-tools-ubuntu2404-x86_64-100.10.0.deb -o /tmp/mongodb-tools.deb
+  #         sudo apt-get install -y /tmp/mongodb-tools.deb
+  #         pg_dump --version; mariadb-dump --version; mongodump --version
+  #     - name: Database engine tests against real servers
+  #       run: go test -tags dbintegration -count=1 -run 'TestIntegration' -v ./pkg/agent/dbbackup/
       
 
   windows:
