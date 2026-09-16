@@ -355,6 +355,7 @@ async function editJob(jobId) {
       form.elements['pg_globals'].checked = pg.globals !== false;
       form.elements['my_single_transaction'].checked = my.single_transaction !== false;
       form.elements['my_include_binlogs'].checked = !!my.include_binlogs;
+      form.elements['my_per_database'].checked = !!my.per_database;
       form.elements['mongo_read_preference'].value = mo.read_preference || '';
       form.elements['mongo_auth_source'].value = mo.auth_source || '';
       form.elements['mongo_replica_set'].value = mo.replica_set || '';
@@ -461,7 +462,7 @@ async function submitJobForm(e) {
     if (engine === 'postgres') {
       dc.postgres = { mode: formData.get('pg_mode'), format: formData.get('pg_format'), role_passwords: formData.get('pg_role_passwords'), globals: formData.get('pg_globals') === 'on' };
     } else if (engine === 'mysql') {
-      dc.mysql = { single_transaction: formData.get('my_single_transaction') === 'on', include_binlogs: formData.get('my_include_binlogs') === 'on' };
+      dc.mysql = { single_transaction: formData.get('my_single_transaction') === 'on', include_binlogs: formData.get('my_include_binlogs') === 'on', per_database: formData.get('my_per_database') === 'on' };
     } else if (engine === 'mongodb') {
       dc.mongodb = { oplog: formData.get('mongo_oplog') === 'on', read_preference: formData.get('mongo_read_preference') || '', auth_source: formData.get('mongo_auth_source') || '', replica_set: formData.get('mongo_replica_set') || '' };
     }
@@ -865,6 +866,12 @@ function renderDBDetail(m) {
       ['Mode', rdEsc(m.postgres.mode)], ['Timeline', b.timeline], ['Compression', rdEsc(b.compression)],
       ['WAL start', rdMono(b.wal_start_lsn || '')], ['WAL end', rdMono(b.wal_end_lsn || '')],
       ['WAL files', rdEsc([b.wal_start_file, b.wal_end_file].filter(Boolean).join(' … '))],
+    ]));
+  }
+  if (m.mysql) {
+    html += rdCard('MySQL dump', rdKV([
+      ['Flavor', rdEsc(m.mysql.flavor || '')], ['Layout', m.mysql.per_database ? 'one file per database' : 'single --all-databases file'],
+      ['Dump files', String((m.mysql.dump_files || []).length)], ['Single transaction', m.mysql.single_transaction ? 'yes' : 'no'],
     ]));
   }
   if (m.mysql && m.mysql.binlog) {

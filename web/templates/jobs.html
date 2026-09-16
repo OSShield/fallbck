@@ -315,6 +315,10 @@
                 <input type="checkbox" id="my_binlogs" name="my_include_binlogs">
                 <label for="my_binlogs" style="font-size: 13px;">Include binary logs written since the previous run (needs log_bin, REPLICATION SLAVE; rotates the binlog per run)</label>
               </div>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <input type="checkbox" id="my_per_database" name="my_per_database">
+                <label for="my_per_database" style="font-size: 13px;">Dump each database to its own file (restore databases individually; dumps are taken one after another and are not mutually consistent)</label>
+              </div>
             </div>
           </div>
 

@@ -101,11 +101,16 @@ type MySQLOptions struct {
 	IncludeBinlogs bool  `json:"include_binlogs,omitempty"`
 	FlushLogs      *bool `json:"flush_logs,omitempty"` // default = IncludeBinlogs
 	// IncludeSystemSchemas also dumps the mysql schema when an explicit list is given
-	IncludeSystemSchemas bool     `json:"include_system_schemas,omitempty"`
-	Routines             *bool    `json:"routines,omitempty"` // default true
-	Triggers             *bool    `json:"triggers,omitempty"` // default true
-	Events               *bool    `json:"events,omitempty"`   // default true
-	ExtraDumpArgs        []string `json:"extra_dump_args,omitempty"`
+	IncludeSystemSchemas bool `json:"include_system_schemas,omitempty"`
+	// PerDatabase dumps every database to its own file instead of one --all-databases
+	// file (the mysql schema included), so a single database can be restored on its
+	// own; the dumps are taken one after another and are not mutually consistent.
+	// An explicit database or exclude list always dumps per database.
+	PerDatabase   bool     `json:"per_database,omitempty"`
+	Routines      *bool    `json:"routines,omitempty"` // default true
+	Triggers      *bool    `json:"triggers,omitempty"` // default true
+	Events        *bool    `json:"events,omitempty"`   // default true
+	ExtraDumpArgs []string `json:"extra_dump_args,omitempty"`
 }
 
 // MongoOptions are the MongoDB-specific job settings

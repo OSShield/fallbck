@@ -123,6 +123,7 @@ type MySQLManifest struct {
 	Flavor                 string       `json:"flavor"`
 	DumpFiles              []string     `json:"dump_files"`
 	AllDatabases           bool         `json:"all_databases"`
+	PerDatabase            bool         `json:"per_database"`
 	SingleTransaction      bool         `json:"single_transaction"`
 	FlushLogs              bool         `json:"flush_logs"`
 	NonTransactionalTables int          `json:"non_transactional_tables"`
