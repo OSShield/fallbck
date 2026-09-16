@@ -81,7 +81,7 @@ func Run(ctx context.Context, opts Options) (*temporal.BackupExecutionResult, er
 	if opts.Dial == nil && opts.Direct == nil {
 		return nil, errors.New("backup session dialer or direct PBS options are required")
 	}
-	paths, err := db.ValidateBackupPaths(s.BackupPaths)
+	paths, err := db.ValidateLocalBackupPaths(s.BackupPaths)
 	if err != nil {
 		return nil, err
 	}

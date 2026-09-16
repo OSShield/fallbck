@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/osshield/gopbs/scan"
 	"path"
+	"runtime"
 	"sort"
 	"strings"
 )
@@ -34,6 +35,12 @@ func ValidateBackupPathsFor(agentOS string, paths []string) ([]string, error) {
 		return validateWindowsPaths(paths)
 	}
 	return ValidateBackupPaths(paths)
+}
+
+// ValidateLocalBackupPaths validates paths with the rules of the operating system
+// the caller runs on; the agent uses it for the paths it is about to read.
+func ValidateLocalBackupPaths(paths []string) ([]string, error) {
+	return ValidateBackupPathsFor(runtime.GOOS, paths)
 }
 
 // validateWindowsPaths applies ValidateBackupPaths' rules to Windows paths: a drive
