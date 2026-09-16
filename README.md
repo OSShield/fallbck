@@ -152,6 +152,8 @@ sudo -u fallbck fallbck-db-agent enroll --server https://backup.example.com --to
 systemctl enable --now fallbck-db-agent
 ```
 
+Upgrading a package (`apt install ./…deb`, `rpm -U`, `apk add`) restarts the service if it is running, so the new binary takes effect immediately; a service that is stopped or not yet enrolled is left alone and the post-install hint is printed instead. Data, enrollment and configuration files are never touched by an upgrade. A running backup on that host is interrupted by the restart and retried by the server on its normal schedule.
+
 Publishing to the package repositories needs the `PKG_UPLOAD_PASSWORD` repository secret (the `linux_push` user of `*.pkg.lv`).
 
 ## Development
