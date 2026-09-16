@@ -38,10 +38,15 @@ func TestUIRenderRoutes(t *testing.T) {
 		{"/runs", http.StatusOK, "Duration"},
 		{"/runs/00000000-0000-0000-0000-000000000000", http.StatusOK, "run-detail-root"},
 		{"/agents", http.StatusOK, "Database agent"},
+		{"/agents", http.StatusOK, `id="modal-add-agent"`},
+		{"/agents", http.StatusOK, `data-kind="target" data-value="proxmox"`},
 		{"/runs", http.StatusOK, "Backup Executions"},
 		{"/tokens", http.StatusOK, "Enrollment Tokens"},
 		{"/apikeys", http.StatusOK, "API Keys"},
-		{"/install-agent.sh", http.StatusOK, "#!/usr/bin/env bash"},
+		{"/install-agent.sh", http.StatusOK, "#!/bin/sh"},
+		{"/install-agent.sh", http.StatusOK, "systemctl restart"},
+		{"/install-agent.sh", http.StatusOK, "rc-service"},
+		{"/install-agent.ps1", http.StatusOK, "msiexec.exe"},
 		{"/login", http.StatusFound, ""},      // insecure mode skips the login page
 		{"/auth/login", http.StatusFound, ""}, // ... and the OIDC redirect
 		{"/temporal/", http.StatusNotFound, ""},

@@ -67,11 +67,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      # Temporarily disable for testing
-      # - name: Vet
-      #   run: go vet ./cmd/fallbck-agent ./pkg/agent/... ./pkg/config ./pkg/db
-      # - name: Unit tests (portable packages)
-      #   run: go test ./pkg/config ./pkg/db ./pkg/agent/backup ./pkg/agent/runtime ./pkg/agent/vss
+      - name: Vet
+        run: go vet ./cmd/fallbck-agent ./pkg/agent/... ./pkg/config ./pkg/db
+      - name: Unit tests (portable packages)
+        run: go test ./pkg/config ./pkg/db ./pkg/agent/backup ./pkg/agent/runtime ./pkg/agent/vss
       - name: Version
         id: version
         shell: bash

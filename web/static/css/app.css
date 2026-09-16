@@ -616,28 +616,140 @@ tbody tr:hover {
   color: var(--text-main);
 }
 
-/* Step Wizard Navigation */
-.wizard-steps {
+/* Guided agent installation wizard */
+.wizard-progress {
   display: flex;
   gap: 8px;
-  margin-bottom: 12px;
+  margin-bottom: 18px;
 }
 
-.step-tab {
+.wizard-progress-step {
   flex: 1;
-  text-align: center;
-  padding: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
   border-radius: var(--radius-sm);
   background-color: var(--bg-subtle);
   color: var(--text-muted);
   font-size: 12px;
   font-weight: 600;
-  cursor: pointer;
 }
 
-.step-tab.active {
+.wizard-progress-num {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--bg-hover);
+  font-size: 11px;
+}
+
+.wizard-progress-step.active {
+  background-color: var(--primary-light);
+  border-color: var(--primary-border);
+  color: var(--primary);
+}
+
+.wizard-progress-step.active .wizard-progress-num {
   background-color: var(--primary);
   color: #ffffff;
+}
+
+.wizard-progress-step.done {
+  color: var(--success-text);
+}
+
+.wizard-progress-step.done .wizard-progress-num {
+  background-color: var(--success);
+  color: #ffffff;
+}
+
+.wizard-page {
+  display: none;
+}
+
+.wizard-page.active {
+  display: block;
+}
+
+.wizard-lead {
+  font-size: 14px;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+}
+
+.wizard-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.wizard-option {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 14px;
+  cursor: pointer;
+  background-color: var(--bg-surface);
+  transition: border-color 0.12s, background-color 0.12s;
+}
+
+.wizard-option:hover,
+.wizard-option:focus-visible {
+  border-color: var(--primary-border);
+  background-color: var(--bg-subtle);
+  outline: none;
+}
+
+.wizard-option.selected {
+  border-color: var(--primary);
+  background-color: var(--primary-light);
+  box-shadow: 0 0 0 1px var(--primary) inset;
+}
+
+.wizard-option[hidden],
+.btn[hidden] {
+  display: none;
+}
+
+.wizard-option-title {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+
+.wizard-option-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.wizard-section {
+  margin-bottom: 18px;
+}
+
+.wizard-section h4 {
+  font-size: 14px;
+  margin-bottom: 6px;
+}
+
+.wizard-section p {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.wizard-section .btn {
+  margin-top: 6px;
+}
+
+.wizard-note {
+  font-size: 12px;
+  color: var(--text-dim);
 }
 
 /* Toast Notifications */
