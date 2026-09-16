@@ -355,8 +355,8 @@ function agentWizardSections(type, target, serverUrl, token) {
     });
     sections.push({
       title: 'Or install the MSI by hand',
-      text: `Download fallbck-agent_Windows_x86_64.msi from ${AGENT_WIZARD_RELEASES}/latest and run it from an elevated prompt; the installer enrolls the agent and starts the service.`,
-      code: `msiexec /i fallbck-agent_Windows_x86_64.msi /qn /norestart SERVER_URL=${serverUrl} TOKEN=${token}`
+      text: `Download fallbck-agent_Windows_x86_64.msi from ${AGENT_WIZARD_RELEASES}/latest. Double-click it and enter the server URL and enrollment key below when asked; the installer enrolls the agent and starts the service. For an unattended install pass them on the command line instead:`,
+      code: `# Server URL:      ${serverUrl}\n# Enrollment key:  ${token}\n\nmsiexec /i fallbck-agent_Windows_x86_64.msi /qn /norestart SERVER_URL=${serverUrl} TOKEN=${token}`
     });
     sections.push({
       title: 'Verify',

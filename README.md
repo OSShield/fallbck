@@ -47,7 +47,7 @@ The agent needs exactly one endpoint: the server's public URL. It receives a bea
 
 ### Windows agent
 
-`fallbck-agent` also runs on **Windows** (x64 and arm64) as a Windows service. Install with the MSI from the release page, passing the enrollment token so the installer enrolls the agent and starts the service (the Agents page's guided installation, *Files* then *Windows*, prints this):
+`fallbck-agent` also runs on **Windows** (x64 and arm64) as a Windows service. Install with the MSI from the release page. Run interactively (double-click), it asks for the server URL and the enrollment key (plus an optional CA bundle) and enrolls the agent before starting the service. Unattended, pass them as properties or use the PowerShell one-liner the Agents page's guided installation (*Files* then *Windows*) prints:
 
 ```powershell
 & ([scriptblock]::Create((iwr -useb https://backup.example.com/install-agent.ps1).Content)) -Token <enrollment token>
