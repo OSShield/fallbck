@@ -58,7 +58,7 @@ The service runs as LocalSystem, keeps its state (`agent.yaml`, caches, logs) in
 
 ### Database agent
 
-`fallbck-db-agent` backs up **PostgreSQL** (`pg_dump` per database + `pg_dumpall --globals-only`, and/or `pg_basebackup` with streamed WAL), **MySQL/MariaDB** (`mysqldump`/`mariadb-dump --single-transaction` with the binlog position, optionally the binary logs written since the previous run) and **MongoDB** (`mongodump --oplog`, restorable with `--oplogReplay`). It enrolls like the filesystem agent but as agent type `database`, with its own data directory:
+`fallbck-db-agent` backs up **PostgreSQL** (`pg_dump` per database + `pg_dumpall --globals-only`, and/or `pg_basebackup` with streamed WAL), **MySQL/MariaDB** (`mysqldump`/`mariadb-dump --single-transaction` with the binlog position, one `--all-databases` file or one file per database, optionally the binary logs written since the previous run) and **MongoDB** (`mongodump --oplog`, restorable with `--oplogReplay`). It enrolls like the filesystem agent but as agent type `database`, with its own data directory:
 
 ```bash
 fallbck-db-agent enroll --server https://backup.example.com --token <enrollment token>

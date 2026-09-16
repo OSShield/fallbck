@@ -220,3 +220,60 @@ func TestVersionParsing(t *testing.T) {
 		t.Errorf("server version: %d", maj)
 	}
 }
+
+func TestMySQLRunPerDatabase(t *testing.T) {
+	bin := t.TempDir()
+	logs := installMySQLTools(t, bin, "mariadb-dump", "mariadb-dump  Ver 10.19 Distrib 10.11.6-MariaDB, for debian-linux-gnu (x86_64)")
+	withPath(t, bin)
+	mysqlConnect = func(context.Context, dbspec.Credentials) (querier, error) {
+		return mysqlFake("10.11.6-MariaDB-ubu2404"), nil
+	}
+	t.Cleanup(func() { mysqlConnect = nil })
+
+	cfg := testConfig(t)
+	up := &captureUpload{}
+	spec := &dbspec.Spec{Engine: "mariadb", Host: "db02", User: "backup", MySQL: &dbspec.MySQLOptions{PerDatabase: true}}
+	if _, err := Run(context.Background(), RunOptions{Session: testSession(uuid.New()), Spec: spec, Password: "pw", Config: cfg, Upload: up.fn}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	dumps := invocations(t, logs["dump"])
+	// user databases in SHOW DATABASES order, then the mysql schema; system schemas skipped
+	if len(dumps) != 3 {
+		t.Fatalf("expected one dump per database, got %d: %v", len(dumps), dumps)
+	}
+	for i, want := range []string{"app", "shop", "mysql"} {
+		args := dumps[i]
+		target := ""
+		for j, a := range args {
+			if a == "--databases" && j+1 < len(args) {
+				target = args[j+1]
+			}
+		}
+		if hasArg(args, "--all-databases") || target != want {
+			t.Errorf("dump %d should target only %s: %v", i, want, args)
+		}
+		if !up.has("mysql/" + want + ".sql") {
+			t.Errorf("missing mysql/%s.sql in %v", want, up.files)
+		}
+	}
+	if up.has("mysql/all-databases.sql") {
+		t.Errorf("no all-databases dump expected: %v", up.files)
+	}
+	m := up.manifest(t)
+	if !m.MySQL.PerDatabase || m.MySQL.AllDatabases || len(m.MySQL.DumpFiles) != 3 || len(m.Databases) != 3 {
+		t.Errorf("mysql manifest: %+v databases=%+v", m.MySQL, m.Databases)
+	}
+	if m.Spec == nil || m.Spec.MySQL == nil || !m.Spec.MySQL.PerDatabase {
+		t.Errorf("per_database not recorded in the manifest spec")
+	}
+	found := false
+	for _, n := range m.Notes {
+		if strings.Contains(n, "not mutually consistent") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected the consistency note, got %v", m.Notes)
+	}
+	_ = os.RemoveAll(cfg.StateDir)
+}

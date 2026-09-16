@@ -142,7 +142,9 @@ func (mysqlEngine) Precheck(ctx context.Context, req *DumpRequest) (ServerInfo, 
 			list = append(list, "mysql")
 		}
 		req.Databases = list
-	} else if len(req.Spec.ExcludeDatabases) > 0 {
+	} else if len(req.Spec.ExcludeDatabases) > 0 || opts.PerDatabase {
+		// One file per user database plus the mysql schema (grants); an --all-databases
+		// dump would cover the same set in a single file
 		excl := map[string]bool{}
 		for _, e := range req.Spec.ExcludeDatabases {
 			excl[e] = true
@@ -313,7 +315,7 @@ func (mysqlEngine) Dump(ctx context.Context, req *DumpRequest) (*EngineResult, e
 	conn := mysqlConnArgs(req, secret)
 	common := mysqlDumpArgs(req)
 	all := req.Databases == nil
-	man := &dbspec.MySQLManifest{Flavor: req.Server.Flavor, AllDatabases: all, SingleTransaction: dbspec.Bool(opts.SingleTransaction, true), FlushLogs: dbspec.Bool(opts.FlushLogs, opts.IncludeBinlogs), NonTransactionalTables: atoi(req.Server.Attrs["non_transactional_tables"])}
+	man := &dbspec.MySQLManifest{Flavor: req.Server.Flavor, AllDatabases: all, PerDatabase: !all, SingleTransaction: dbspec.Bool(opts.SingleTransaction, true), FlushLogs: dbspec.Bool(opts.FlushLogs, opts.IncludeBinlogs), NonTransactionalTables: atoi(req.Server.Attrs["non_transactional_tables"])}
 	res := &EngineResult{MySQL: man}
 	client := "mysql"
 	if tool.Flavor == "mariadb" {
