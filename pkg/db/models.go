@@ -55,8 +55,9 @@ func NormalizeJobType(t string) (string, bool) {
 
 // JobAllowedOnAgent reports whether an agent of agentType may run a job of jobType.
 // Job types normally match the agent type; the exceptions are database jobs on a
-// kubernetes agent (dumped from a pod inside the cluster) and Proxmox VE / Docker
-// host jobs, which run on the filesystem agent installed on the host.
+// kubernetes agent (dumped from a pod inside the cluster) or on a filesystem agent
+// (the combined agent, when it reports database client tools), and Proxmox VE /
+// Docker host jobs, which run on the filesystem agent installed on the host.
 func JobAllowedOnAgent(jobType, agentType string) bool {
 	jobType, _ = NormalizeJobType(jobType)
 	agentType, _ = NormalizeAgentType(agentType)
@@ -65,11 +66,41 @@ func JobAllowedOnAgent(jobType, agentType string) bool {
 	}
 	switch jobType {
 	case JobTypeDatabase:
-		return agentType == AgentTypeKubernetes
+		return agentType == AgentTypeKubernetes || agentType == AgentTypeFilesystem
 	case JobTypePVE, JobTypeDocker:
 		return agentType == AgentTypeFilesystem
 	}
 	return false
+}
+
+// AgentCapabilities are the host facts a filesystem agent reports with every heartbeat
+type AgentCapabilities struct {
+	PVEHost    bool
+	DockerHost bool
+	DBTools    bool
+}
+
+// CanRunJob reports whether this agent may run a job of jobType, including the
+// capability flags a filesystem agent reports (Proxmox VE node, Docker daemon,
+// database client tools)
+func (a *Agent) CanRunJob(jobType string) bool {
+	jobType, _ = NormalizeJobType(jobType)
+	agentType, _ := NormalizeAgentType(a.AgentType)
+	if !JobAllowedOnAgent(jobType, agentType) {
+		return false
+	}
+	if agentType != AgentTypeFilesystem {
+		return true
+	}
+	switch jobType {
+	case JobTypePVE:
+		return a.PVEHost
+	case JobTypeDocker:
+		return a.DockerHost
+	case JobTypeDatabase:
+		return a.DBTools
+	}
+	return true
 }
 
 // AgentStatus represents the lifecycle state of an agent
@@ -97,7 +128,10 @@ type Agent struct {
 	// PVEHost is reported by the agent when it runs on a Proxmox VE node
 	PVEHost bool `json:"pve_host" db:"pve_host"`
 	// DockerHost is reported by the agent when a Docker daemon answers on its host
-	DockerHost bool        `json:"docker_host" db:"docker_host"`
+	DockerHost bool `json:"docker_host" db:"docker_host"`
+	// DBTools is reported by a filesystem agent that found database client tools
+	// (pg_dump, mysqldump/mariadb-dump, mongodump) and can therefore run database jobs
+	DBTools    bool        `json:"db_tools" db:"db_tools"`
 	Status     AgentStatus `json:"status" db:"status"`
 	LastSeenAt *time.Time  `json:"last_seen_at" db:"last_seen_at"`
 	CreatedAt  time.Time   `json:"created_at" db:"created_at"`

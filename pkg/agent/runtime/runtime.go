@@ -58,7 +58,13 @@ type Agent struct {
 	// PersistToken overrides where token rotations are stored (TokenStore.Persist);
 	// used by the kubernetes agent to write into its identity Secret
 	PersistToken func(cfg *config.AgentConfig) error
+	// DBTools reports whether database client tools are installed (the combined
+	// filesystem agent probes them); nil means the agent never runs database jobs
+	DBTools func() bool
 }
+
+// dbTools evaluates the DBTools probe when set
+func (a Agent) dbTools() bool { return a.DBTools != nil && a.DBTools() }
 
 // FindDefaultConfig returns the first existing agent.yaml among the conventional
 // locations for the agent type: the default data dir (env / system dir as root /
@@ -95,6 +101,7 @@ func LoadConfig(a Agent, configPath string) (*config.AgentConfig, string, error)
 		_, err := enrollment.Enroll(ctx, enrollment.Options{
 			ServerURL: cfg.ServerURL, Token: cfg.EnrollmentKey, DataDir: cfg.DataDir, AgentType: a.Type, Version: a.Version,
 			CACertPath: cfg.ServerCACertPath, InsecureSkipVerify: cfg.InsecureSkipVerify,
+			DockerSocket: cfg.DockerBackup.EffSocket(), DBTools: a.dbTools(),
 		})
 		cancel()
 		if err != nil {
@@ -392,7 +399,8 @@ func ProgressReporter(cfg *config.AgentConfig, store *TokenStore) func(ctx conte
 // StartHeartbeat reports the agent online every 30 s, applies the server's remote
 // debug-logging toggle from the response, and rotates the token when it approaches
 // expiry; it returns when ctx is cancelled. logging may be nil.
-func StartHeartbeat(ctx context.Context, cfg *config.AgentConfig, store *TokenStore, agentType, version string, logging *Logging) {
+func StartHeartbeat(ctx context.Context, cfg *config.AgentConfig, store *TokenStore, a Agent) {
+	agentType, version, logging := a.Type, a.Version, a.Logging
 	// Only the filesystem agent runs Docker host jobs, so only it probes the daemon
 	dockerHost := func() bool {
 		if agentType != "" && agentType != config.AgentTypeFilesystem {
@@ -424,7 +432,7 @@ func StartHeartbeat(ctx context.Context, cfg *config.AgentConfig, store *TokenSt
 	}
 
 	sendHeartbeat := func() {
-		resp, err := do("/api/v1/agents/heartbeat", api.HeartbeatRequest{AgentID: agentUUID, Status: "online", Version: version, PVEHost: pvebackup.IsPVEHost(), DockerHost: dockerHost()})
+		resp, err := do("/api/v1/agents/heartbeat", api.HeartbeatRequest{AgentID: agentUUID, Status: "online", Version: version, PVEHost: pvebackup.IsPVEHost(), DockerHost: dockerHost(), DBTools: a.dbTools()})
 		if err != nil {
 			slog.Warn("Heartbeat failed", "error", err)
 			return
@@ -546,7 +554,7 @@ func RunUntil(a Agent, cfg *config.AgentConfig, configPath string, register func
 	defer w.Stop()
 	slog.Info("Agent Temporal worker listening", "queue", cfg.TaskQueue)
 
-	go StartHeartbeat(ctx, cfg, store, a.Type, a.Version, a.Logging)
+	go StartHeartbeat(ctx, cfg, store, a)
 
 	<-stop
 	slog.Info("Shutting down " + a.Name + "...")

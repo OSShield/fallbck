@@ -41,7 +41,7 @@
               {{end}}
             </td>
             <td><strong>{{.Hostname}}</strong></td>
-            <td>{{if eq .AgentType "database"}}<span class="badge badge-info">database</span>{{else if eq .AgentType "kubernetes"}}<span class="badge badge-info">kubernetes</span>{{else}}<span class="badge badge-neutral">filesystem</span>{{end}}{{if .PVEHost}} <span class="badge badge-warning" title="Runs on a Proxmox VE node">PVE</span>{{end}}{{if .DockerHost}} <span class="badge badge-info" title="A Docker daemon answers on this host">Docker</span>{{end}}</td>
+            <td>{{if eq .AgentType "database"}}<span class="badge badge-info">database</span>{{else if eq .AgentType "kubernetes"}}<span class="badge badge-info">kubernetes</span>{{else}}<span class="badge badge-neutral">filesystem</span>{{end}}{{if .PVEHost}} <span class="badge badge-warning" title="Runs on a Proxmox VE node">PVE</span>{{end}}{{if .DockerHost}} <span class="badge badge-info" title="A Docker daemon answers on this host">Docker</span>{{end}}{{if .DBTools}} <span class="badge badge-success" title="Database client tools found: can run database jobs">DB tools</span>{{end}}</td>
             <td style="font-family: var(--font-mono); font-size: 13px;">{{if .IPAddress}}{{.IPAddress}}{{else}}-{{end}}</td>
             <td>
               <span class="badge badge-neutral">{{.OS}}/{{.Arch}}</span>
@@ -100,7 +100,7 @@
           </div>
           <div class="wizard-option" role="button" tabindex="0" data-kind="type" data-value="database" onclick="agentWizardSelect(this)" onkeydown="agentWizardKey(event, this)">
             <div class="wizard-option-title">Database</div>
-            <div class="wizard-option-desc">Database agent for Linux hosts. Dumps PostgreSQL, MySQL/MariaDB and MongoDB with the vendor tools and records WAL, binlog and oplog positions for point-in-time restores.</div>
+            <div class="wizard-option-desc">Database agent: the same fallbck-agent with the vendor client tools installed. Dumps PostgreSQL, MySQL/MariaDB and MongoDB and records WAL, binlog and oplog positions for point-in-time restores.</div>
           </div>
           <div class="wizard-option" role="button" tabindex="0" data-kind="type" data-value="kubernetes" onclick="agentWizardSelect(this)" onkeydown="agentWizardKey(event, this)">
             <div class="wizard-option-title">Kubernetes</div>
@@ -144,9 +144,9 @@
             <div class="wizard-option-title">Kubernetes cluster</div>
             <div class="wizard-option-desc">Helm chart from oci.fi installed into the fallbck namespace of the target cluster.</div>
           </div>
-          <div class="wizard-option" role="button" tabindex="0" data-kind="target" data-value="docker-container" data-types="docker" onclick="agentWizardSelect(this)" onkeydown="agentWizardKey(event, this)">
+          <div class="wizard-option" role="button" tabindex="0" data-kind="target" data-value="docker-container" data-types="docker,database" onclick="agentWizardSelect(this)" onkeydown="agentWizardKey(event, this)">
             <div class="wizard-option-title">Docker container</div>
-            <div class="wizard-option-desc">The file-agent image run as root with the Docker socket and the volumes directory mounted (compose snippet).</div>
+            <div class="wizard-option-desc">The agent container image (compose snippet): as root with the Docker socket mounted for Docker host backups, or the tools flavour for databases reachable over the network.</div>
           </div>
           <div class="wizard-option" role="button" tabindex="0" data-kind="target" data-value="proxmox" data-types="proxmox" onclick="agentWizardSelect(this)" onkeydown="agentWizardKey(event, this)">
             <div class="wizard-option-title">Proxmox VE node</div>

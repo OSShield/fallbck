@@ -20,6 +20,8 @@ type EnrollRequest struct {
 	PVEHost bool `json:"pve_host,omitempty"`
 	// DockerHost is set by a filesystem agent that can reach a Docker daemon
 	DockerHost bool `json:"docker_host,omitempty"`
+	// DBTools is set by a filesystem agent that found database client tools
+	DBTools bool `json:"db_tools,omitempty"`
 }
 
 // EnrollResponse contains the credentials and configuration needed for the agent to start.
@@ -67,6 +69,24 @@ type HeartbeatRequest struct {
 	PVEHost bool `json:"pve_host,omitempty"`
 	// DockerHost reports whether a Docker daemon answers on the agent's host
 	DockerHost bool `json:"docker_host,omitempty"`
+	// DBTools reports whether database client tools are installed on the agent's host
+	DBTools bool `json:"db_tools,omitempty"`
+}
+
+// MergeAgentRequest moves the jobs and runs of one agent onto another and deletes
+// the first (POST /agents/{id}/merge): used to retire a fallbck-db-agent in favour of
+// the combined fallbck-agent on the same host
+type MergeAgentRequest struct {
+	Into uuid.UUID `json:"into"`
+}
+
+// MergeAgentResponse reports what was moved
+type MergeAgentResponse struct {
+	Status    string    `json:"status"`
+	From      uuid.UUID `json:"from"`
+	Into      uuid.UUID `json:"into"`
+	JobsMoved int64     `json:"jobs_moved"`
+	RunsMoved int64     `json:"runs_moved"`
 }
 
 // HeartbeatResponse acknowledges a heartbeat and carries server-side agent settings

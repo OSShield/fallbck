@@ -106,7 +106,7 @@
           <label>Job Type</label>
           <select name="job_type" class="form-control" onchange="setJobType(this.value)">
             <option value="filesystem">Filesystem (directories, fallbck-agent)</option>
-            <option value="database">Database (PostgreSQL / MySQL / MongoDB, fallbck-db-agent or a Kubernetes agent)</option>
+            <option value="database">Database (PostgreSQL / MySQL / MongoDB; fallbck-agent with the client tools, or a Kubernetes agent)</option>
             <option value="pve">Proxmox VE host (configuration, package list, optional data paths; fallbck-agent on the node)</option>
             <option value="docker">Docker host (container, network and volume definitions, compose files, named volumes; fallbck-agent on the host)</option>
           </select>
@@ -118,7 +118,7 @@
             <select name="agent_id" class="form-control" required onchange="updateDBTarget()">
               <option value="">-- Choose Agent --</option>
               {{range .Agents}}
-                <option value="{{.ID}}" data-agent-type="{{.AgentType}}" data-pve="{{if .PVEHost}}true{{else}}false{{end}}" data-docker="{{if .DockerHost}}true{{else}}false{{end}}">{{.Hostname}} ({{.OS}}, {{.AgentType}}{{if .PVEHost}}, Proxmox VE{{end}}{{if .DockerHost}}, Docker{{end}})</option>
+                <option value="{{.ID}}" data-agent-type="{{.AgentType}}" data-pve="{{if .PVEHost}}true{{else}}false{{end}}" data-docker="{{if .DockerHost}}true{{else}}false{{end}}" data-db="{{if .DBTools}}true{{else}}false{{end}}">{{.Hostname}} ({{.OS}}, {{.AgentType}}{{if .PVEHost}}, Proxmox VE{{end}}{{if .DockerHost}}, Docker{{end}}{{if .DBTools}}, DB tools{{end}})</option>
               {{end}}
             </select>
           </div>

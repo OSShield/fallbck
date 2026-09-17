@@ -83,6 +83,7 @@ func (s *ServerAPI) RegisterRoutes(r chi.Router, admin, agent Middleware) {
 			r.Get("/agents/{id}", s.HandleGetAgent)
 			r.Delete("/agents/{id}", s.HandleDeleteAgent)
 			r.Post("/agents/{id}/debug", s.HandleSetAgentDebug)
+			r.Post("/agents/{id}/merge", s.HandleMergeAgent)
 
 			// Enrollment tokens
 			r.Post("/tokens", s.HandleCreateToken)
@@ -181,6 +182,7 @@ func (s *ServerAPI) HandleAgentEnroll(w http.ResponseWriter, r *http.Request) {
 		Status:     db.AgentStatusOnline,
 		PVEHost:    req.PVEHost,
 		DockerHost: req.DockerHost,
+		DBTools:    req.DBTools,
 	}
 
 	now := time.Now().UTC()
@@ -248,7 +250,7 @@ func (s *ServerAPI) HandleAgentHeartbeat(w http.ResponseWriter, r *http.Request)
 		status = db.AgentStatus(req.Status)
 	}
 
-	debug, err := s.DB.UpdateAgentHeartbeat(r.Context(), claims.AgentID, status, req.PVEHost, req.DockerHost)
+	debug, err := s.DB.UpdateAgentHeartbeat(r.Context(), claims.AgentID, status, db.AgentCapabilities{PVEHost: req.PVEHost, DockerHost: req.DockerHost, DBTools: req.DBTools})
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			s.writeError(w, http.StatusUnauthorized, "agent no longer exists")
@@ -310,6 +312,68 @@ func (s *ServerAPI) HandleDeleteAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+// HandleMergeAgent moves the jobs and run history of one agent onto another agent
+// and deletes the first. Every job must be runnable by the target (type and
+// capability flags), which is what makes this safe for retiring a database agent
+// once the combined fallbck-agent on the same host reports database tools.
+func (s *ServerAPI) HandleMergeAgent(w http.ResponseWriter, r *http.Request) {
+	from, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "Invalid agent ID")
+		return
+	}
+	var req MergeAgentRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Into == uuid.Nil {
+		s.writeError(w, http.StatusBadRequest, "Body must name the target agent: {\"into\": \"<agent id>\"}")
+		return
+	}
+	if req.Into == from {
+		s.writeError(w, http.StatusBadRequest, "An agent cannot be merged into itself")
+		return
+	}
+	ctx := r.Context()
+	source, err := s.DB.GetAgentByID(ctx, from)
+	if err != nil {
+		s.writeError(w, http.StatusNotFound, "Agent not found")
+		return
+	}
+	target, err := s.DB.GetAgentByID(ctx, req.Into)
+	if err != nil {
+		s.writeError(w, http.StatusNotFound, "Target agent not found")
+		return
+	}
+	jobs, err := s.DB.ListJobs(ctx)
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "Failed to list jobs")
+		return
+	}
+	for _, job := range jobs {
+		if job.AgentID != from {
+			continue
+		}
+		if !target.CanRunJob(job.JobType) {
+			s.writeError(w, http.StatusConflict, fmt.Sprintf("Agent %s cannot run job %q (type %s): it has not reported the required capability (database client tools, Proxmox VE node or Docker daemon); wait for its next heartbeat or install the tools first",
+				target.Hostname, job.Name, job.JobType))
+			return
+		}
+	}
+	jobsMoved, runsMoved, err := s.DB.MergeAgents(ctx, from, req.Into)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			s.writeError(w, http.StatusNotFound, "Agent not found")
+			return
+		}
+		slog.Error("Merging agents failed", "from", from, "into", req.Into, "error", err)
+		s.writeError(w, http.StatusInternalServerError, "Failed to merge agents")
+		return
+	}
+	if s.Verifier != nil {
+		s.Verifier.Invalidate(from)
+	}
+	slog.Info("Merged agent", "from", source.Hostname, "from_type", source.AgentType, "into", target.Hostname, "jobs", jobsMoved, "runs", runsMoved)
+	s.writeJSON(w, http.StatusOK, MergeAgentResponse{Status: "merged", From: from, Into: req.Into, JobsMoved: jobsMoved, RunsMoved: runsMoved})
 }
 
 // HandleCreateToken creates a new one-time enrollment token

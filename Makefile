@@ -20,8 +20,10 @@ docker:
 	cd deploy && \
 	FALLBCK_VERSION=$(BVERSION) docker compose build --no-cache --pull && \
 	FALLBCK_VERSION=$(BVERSION) docker compose --profile=k8s build --no-cache --pull && \
+	FALLBCK_VERSION=$(BVERSION) docker compose --profile=db-agent --profile=legacy build --no-cache --pull && \
 	docker compose push && \
-	docker compose --profile=k8s push
+	docker compose --profile=k8s push && \
+	docker compose --profile=db-agent --profile=legacy push
 
 binary:
 	@echo "Building binary for version $(BVERSION)"

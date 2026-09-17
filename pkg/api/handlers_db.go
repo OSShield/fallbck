@@ -108,6 +108,9 @@ func (s *ServerAPI) validateJob(ctx context.Context, job *db.BackupJob, existing
 		}
 		job.DBConfig.ClearPassword = false
 		job.DBConfig.HasPassword = false
+		if agentType == db.AgentTypeFilesystem && agent != nil && !agent.DBTools {
+			return "Agent " + agent.Hostname + " has not reported database client tools (install pg_dump / mariadb-dump / mongodump on the host and wait for its next heartbeat, or run fallbck-agent tools)", errors.New("agent without db tools")
+		}
 		if agentType == db.AgentTypeKubernetes && job.DBConfig.Kubernetes == nil {
 			return "Database jobs on a kubernetes agent need the kubernetes target settings (namespace and service)", errors.New("missing kubernetes target")
 		}

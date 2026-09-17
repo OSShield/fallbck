@@ -1,5 +1,9 @@
 // fallbck-db-agent backs up databases (PostgreSQL, MySQL/MariaDB, MongoDB) to Proxmox
 // Backup Server through the FallBCK server.
+//
+// Deprecated: fallbck-agent runs database jobs itself when the client tools are
+// installed (it reports them as db_tools). Existing installations keep working; move
+// them with `fallbck-agent migrate-db-agent` and `fallbck-ctl agents merge`.
 package main
 
 import (
@@ -74,6 +78,7 @@ func main() {
 			os.Exit(1)
 		}
 		logging.ApplyConfigLogLevel(cfg)
+		slog.Warn("fallbck-db-agent is deprecated: fallbck-agent runs database jobs when the client tools are installed; migrate with `fallbck-agent migrate-db-agent` and `fallbck-ctl agents merge <this agent> --into <fallbck-agent>`")
 		dbCfg := cfg.DBBackup
 		dbCfg.ApplyDefaults(cfg.DataDir)
 		if err := dbrun.CleanSpool(dbCfg); err != nil {
@@ -133,7 +138,8 @@ func main() {
 
 // dbPasswordFetcher retrieves the server-stored database password for a run
 func printUsage() {
-	fmt.Println(`FallBCK Database Backup Agent
+	fmt.Println(`FallBCK Database Backup Agent (deprecated: fallbck-agent runs database jobs when the
+client tools are installed; see fallbck-agent migrate-db-agent)
 
 Usage:
   fallbck-db-agent <command> [arguments]

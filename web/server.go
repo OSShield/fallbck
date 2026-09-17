@@ -501,13 +501,16 @@ func (u *UIHandler) HandleInstallScript(w http.ResponseWriter, r *http.Request) 
 
 	script := fmt.Sprintf(`#!/bin/sh
 # FallBCK enrollment helper for the guided installation on the Agents page. It
-# enrolls an installed fallbck-agent (default) or fallbck-db-agent (--type database)
-# package with the server and enables its systemd or OpenRC service. POSIX sh so it
-# also runs on Alpine; install the package first (deb/rpm/apk or a manual install).
+# enrolls the installed fallbck-agent package with the server and enables its systemd
+# or OpenRC service. --type database is accepted for older instructions: the combined
+# fallbck-agent runs database jobs itself, so it only selects the deprecated
+# fallbck-db-agent when that is the only agent installed. POSIX sh so it also runs on
+# Alpine; install the package first (deb/rpm/apk or a manual install).
 set -e
 
 SERVER_URL="%s"
 TOKEN=""
+TYPE="files"
 AGENT="fallbck-agent"
 DATA_DIR="/var/lib/fallbck/agent"
 RUN_AS=""
@@ -525,11 +528,7 @@ while [ $# -gt 0 ]; do
     --type)
       # files (default) or database
       case "$2" in
-        database|db)
-          AGENT="fallbck-db-agent"
-          DATA_DIR="/var/lib/fallbck/db-agent"
-          RUN_AS="fallbck"
-          ;;
+        database|db) TYPE="database" ;;
       esac
       shift 2
       ;;
@@ -547,6 +546,12 @@ if [ "$(id -u)" -ne 0 ]; then
   echo "Error: run this script as root (sudo)" >&2
   exit 1
 fi
+if [ "$TYPE" = "database" ] && ! command -v fallbck-agent >/dev/null 2>&1 && command -v fallbck-db-agent >/dev/null 2>&1; then
+  echo "==> fallbck-agent is not installed; using the deprecated fallbck-db-agent"
+  AGENT="fallbck-db-agent"
+  DATA_DIR="/var/lib/fallbck/db-agent"
+  RUN_AS="fallbck"
+fi
 if ! command -v "$AGENT" >/dev/null 2>&1; then
   echo "==> $AGENT is not installed; install the package first (deb/rpm/apk), then re-run this script" >&2
   exit 1
@@ -562,8 +567,8 @@ else
   "$AGENT" enroll --server "$SERVER_URL" --token "$TOKEN" --data-dir "$DATA_DIR"
 fi
 
-if [ "$AGENT" = "fallbck-db-agent" ]; then
-  echo "==> Database client tools:"
+if [ "$TYPE" = "database" ]; then
+  echo "==> Database client tools (the agent reports them to the server with its heartbeat):"
   "$AGENT" tools || true
 fi
 

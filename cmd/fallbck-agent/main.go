@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	dbrun "github.com/osshield/fallbck/pkg/agent/dbbackup"
 	"github.com/osshield/fallbck/pkg/agent/enrollment"
 	"github.com/osshield/fallbck/pkg/agent/runtime"
 	"github.com/osshield/fallbck/pkg/agent/vss"
@@ -53,6 +54,13 @@ func main() {
 
 	serviceCmd := flag.NewFlagSet("service", flag.ExitOnError)
 	serviceConfig := serviceCmd.String("config", "", "Path to agent YAML configuration file the service runs with")
+
+	toolsCmd := flag.NewFlagSet("tools", flag.ExitOnError)
+	toolsConfig := toolsCmd.String("config", "", "Path to agent YAML configuration file")
+
+	migrateCmd := flag.NewFlagSet("migrate-db-agent", flag.ExitOnError)
+	migrateFrom := migrateCmd.String("from", config.SystemDBAgentDataDir, "Data directory of the fallbck-db-agent installation to take over")
+	migrateConfig := migrateCmd.String("config", "", "Path to this agent's YAML configuration file (default: the enrolled agent.yaml)")
 
 	// Under the Windows service control manager there is no console: keep the log
 	// in the data directory instead
@@ -112,6 +120,14 @@ func main() {
 			os.Exit(1)
 		}
 		logging.ApplyConfigLogLevel(cfg)
+		// Database jobs run on this agent too when the host has the client tools:
+		// the probe feeds the db_tools flag in heartbeats and gates the jobs server-side
+		dbCfg := cfg.DBBackup
+		dbCfg.ApplyDefaults(cfg.DataDir)
+		if err := dbrun.CleanSpool(dbCfg); err != nil {
+			slog.Warn("Could not clean the spool directory", "dir", dbCfg.SpoolDir, "error", err)
+		}
+		agent.DBTools = runtime.DBToolsProbe(dbCfg, 10*time.Minute)
 		register := func(w worker.Worker, conns *runtime.Conns, store *runtime.TokenStore) error {
 			acts := activities.NewAgentActivities()
 			acts.Tunnel = conns.Tunnel
@@ -129,6 +145,18 @@ func main() {
 				vss.Sweep(acts.VSSDir)
 			}
 			w.RegisterActivity(acts)
+
+			dbActs := activities.NewDBAgentActivities()
+			dbActs.Tunnel = conns.Tunnel
+			dbActs.Credentials = runtime.PBSCredentialsFetcher(cfg, store)
+			dbActs.RefreshTicket = runtime.TicketRefresher(cfg, store)
+			dbActs.DBPassword = runtime.DBPasswordFetcher(cfg, store)
+			dbActs.Config = dbCfg
+			dbActs.Hostname = cfg.Hostname
+			dbActs.Version = AgentVersion
+			dbActs.LogTail = logging.Tail
+			dbActs.ReportProgress = runtime.ProgressReporter(cfg, store)
+			w.RegisterActivity(dbActs)
 			return nil
 		}
 		if runtime.IsWindowsService() {
@@ -140,6 +168,35 @@ func main() {
 		}
 		if err != nil {
 			slog.Error("Agent stopped with an error", "error", err)
+			os.Exit(1)
+		}
+
+	case "tools":
+		_ = toolsCmd.Parse(os.Args[2:])
+		var tools config.AgentConfig
+		if path := *toolsConfig; path != "" || runtime.FindDefaultConfig(agent.Type) != "" {
+			if path == "" {
+				path = runtime.FindDefaultConfig(agent.Type)
+			}
+			if cfg, err := config.LoadAgentConfig(path); err == nil {
+				tools = *cfg
+			}
+		}
+		for _, d := range dbrun.DetectAll(context.Background(), dbrun.NewRunner(0), tools.DBBackup.Tools) {
+			fmt.Print(d.Format())
+		}
+
+	case "migrate-db-agent":
+		// Take over a fallbck-db-agent installation on this host: chain state and
+		// credential profiles move into this agent; the server-side move of the jobs
+		// is done with fallbck-ctl agents merge (printed at the end)
+		_ = migrateCmd.Parse(os.Args[2:])
+		cfgPath := *migrateConfig
+		if cfgPath == "" {
+			cfgPath = runtime.FindDefaultConfig(agent.Type)
+		}
+		if err := runtime.MigrateDBAgent(*migrateFrom, cfgPath); err != nil {
+			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
 		}
 
@@ -159,8 +216,12 @@ Usage:
   fallbck-agent <command> [arguments]
 
 Commands:
-  enroll    Register this host with a FallBCK central server
-  run       Start the backup agent worker daemon
-  service   Windows: install|uninstall|start|stop|status the Windows service
-  version   Print version information`)
+  enroll            Register this host with a FallBCK central server
+  run               Start the backup agent worker daemon (filesystem, Proxmox VE, Docker
+                    and, when the client tools are installed, database jobs)
+  tools             Show the detected database client tools (pg_dump, mariadb-dump, mongodump, ...)
+  migrate-db-agent  Take over a fallbck-db-agent installation on this host (state and
+                    credential profiles), then retire it with fallbck-ctl agents merge
+  service           Windows: install|uninstall|start|stop|status the Windows service
+  version           Print version information`)
 }

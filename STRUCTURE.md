@@ -49,7 +49,7 @@ Database jobs (`job_type: database`, `db_config`) follow the same path with `fal
 | Package | Purpose |
 |---|---|
 | `cmd/fallbck-server` | server entry point: config, database, embedded Temporal, worker, gateway, UI, single h2c listener |
-| `cmd/fallbck-agent` | agent: enrollment, activity worker through the gateway, heartbeats, token rotation |
+| `cmd/fallbck-agent` | agent: enrollment, activity worker through the gateway (filesystem, PVE, Docker and database activities), heartbeats with capability flags (`pve_host`, `docker_host`, `db_tools`), token rotation, `tools` and `migrate-db-agent` |
 | `cmd/fallbck-ctl` | admin CLI (API key authenticated) |
 | `pkg/auth` | JWT token manager, agent tokens + verifier, sessions, API keys, OIDC, HTTP middleware |
 | `pkg/gateway` | authenticating, task-queue-scoped Temporal gRPC gateway for agents |
@@ -59,7 +59,7 @@ Database jobs (`job_type: database`, `db_config`) follow the same path with `fal
 | `pkg/temporal/scheduler` | Temporal Schedules for cron jobs (sync on job changes, reconcile at startup) |
 | `pkg/api`, `web` | REST API and server-rendered Web UI |
 | `pkg/proxy` | PBS backup-session tunnel (gRPC byte stream, server-side protocol upgrade, TLS pinning); `pbstest` fake PBS for tests |
-| `cmd/fallbck-db-agent` | database agent: enrollment as type `database`, `tools` diagnostics, database activities |
+| `cmd/fallbck-db-agent` | deprecated standalone database agent (type `database`); `fallbck-agent` registers the same database activities and reports `db_tools` when the client tools are installed |
 | `pkg/agent/runtime` | shared agent daemon skeleton (config + self-enrollment, gateway connections, worker, heartbeat/token rotation) |
 | `pkg/agent/backup` | agent backup engine on top of gopbs (pxar upload, blobs) |
 | `pkg/dbbackup` | database job spec, credential profiles, manifest (shared by server, agent and config) |

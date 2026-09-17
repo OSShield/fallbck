@@ -91,7 +91,7 @@ Usage:
 
 Resources:
   token     create, list enrollment tokens
-  agents    list, get, delete agents
+  agents    list agents; merge <db-agent> --into <agent> retires a database agent into the combined agent on the same host
   targets   list PBS backup targets; credentials <target> prints proxmox-backup-client exports
   jobs      create, list, get, run backup jobs
   runs      list backup executions
@@ -193,7 +193,86 @@ func handleAgentCommands(serverURL string, args []string) {
 			)
 		}
 		w.Flush()
+
+	case "merge":
+		// fallbck-ctl agents merge <agent id, prefix or hostname> --into <agent id, prefix or hostname>
+		fs := flag.NewFlagSet("merge", flag.ExitOnError)
+		into := fs.String("into", "", "Agent that takes over the jobs and run history (id, id prefix or hostname)")
+		if len(args) < 2 {
+			fmt.Println("Usage: fallbck-ctl agents merge <agent> --into <agent>")
+			os.Exit(2)
+		}
+		_ = fs.Parse(args[2:])
+		if *into == "" {
+			fmt.Println("Error: --into is required")
+			os.Exit(2)
+		}
+		from, err := resolveAgent(serverURL, args[1])
+		if err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
+		target, err := resolveAgent(serverURL, *into)
+		if err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
+		body, _ := json.Marshal(api.MergeAgentRequest{Into: target.ID})
+		resp, err := apiPost(fmt.Sprintf("%s/api/v1/agents/%s/merge", serverURL, from.ID), body)
+		if err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			var e struct {
+				Error string `json:"error"`
+			}
+			_ = json.NewDecoder(resp.Body).Decode(&e)
+			fmt.Printf("Error: %s\n", e.Error)
+			os.Exit(1)
+		}
+		var out api.MergeAgentResponse
+		_ = json.NewDecoder(resp.Body).Decode(&out)
+		fmt.Printf("Merged %s (%s) into %s (%s): %d jobs and %d runs moved; the old agent is deleted and its token revoked.\n",
+			from.Hostname, from.AgentType, target.Hostname, target.AgentType, out.JobsMoved, out.RunsMoved)
+		fmt.Println("On the host: stop and remove fallbck-db-agent (systemctl disable --now fallbck-db-agent; apt remove fallbck-db-agent).")
+
+	default:
+		fmt.Println("Usage: fallbck-ctl agents [list|merge <agent> --into <agent>]")
+		os.Exit(2)
 	}
+}
+
+// resolveAgent finds an agent by full id, unique id prefix or unique hostname
+func resolveAgent(serverURL, ref string) (*db.Agent, error) {
+	resp, err := apiGet(fmt.Sprintf("%s/api/v1/agents", serverURL))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var agents []*db.Agent
+	if err := json.NewDecoder(resp.Body).Decode(&agents); err != nil {
+		return nil, fmt.Errorf("listing agents: %w", err)
+	}
+	var matches []*db.Agent
+	for _, a := range agents {
+		id := a.ID.String()
+		if id == ref || strings.HasPrefix(id, ref) || a.Hostname == ref {
+			matches = append(matches, a)
+		}
+	}
+	switch len(matches) {
+	case 1:
+		return matches[0], nil
+	case 0:
+		return nil, fmt.Errorf("no agent matches %q (use the id, an id prefix or the hostname)", ref)
+	}
+	var names []string
+	for _, a := range matches {
+		names = append(names, fmt.Sprintf("%s (%s, %s)", a.ID.String()[:8], a.Hostname, a.AgentType))
+	}
+	return nil, fmt.Errorf("%q is ambiguous: %s", ref, strings.Join(names, ", "))
 }
 
 func handleTargetCommands(serverURL string, args []string) {

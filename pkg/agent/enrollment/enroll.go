@@ -47,6 +47,8 @@ type Options struct {
 	// DockerSocket overrides the Docker daemon socket probed for the docker_host flag
 	// (filesystem agents; default DOCKER_HOST or /var/run/docker.sock)
 	DockerSocket string
+	// DBTools reports database client tools on the host (the combined filesystem agent)
+	DBTools bool
 }
 
 // EnrollAgent enrolls a filesystem agent (see Enroll)
@@ -94,6 +96,7 @@ func Enroll(ctx context.Context, o Options) (*config.AgentConfig, error) {
 	}
 	if reqBody.DockerHost {
 		reqBody.DockerHost = dockerbackup.IsDockerHost(o.DockerSocket)
+		reqBody.DBTools = o.DBTools
 	}
 
 	jsonBytes, err := json.Marshal(reqBody)
