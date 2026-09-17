@@ -104,10 +104,13 @@ services:
   # The agent talks to http://server:8080 for everything (REST + Temporal gRPC over h2c).
   # -------------------------------------------------------------------------
   agent:
-    image: oci.fi/fallbck/file-agent:latest
+    image: oci.fi/fallbck/agent:latest
     build:
       context: ..
       dockerfile: Dockerfile.agent
+      target: slim
+      args:
+        FALLBCK_VERSION: ${FALLBCK_VERSION:-0.3.0}
     container_name: fallbck-agent
     restart: unless-stopped
     profiles:
@@ -135,10 +138,13 @@ services:
   #       FALLBCK_AGENT_ENROLLMENT_KEY=<raw_token> docker compose --profile docker-host-agent up -d
   # -------------------------------------------------------------------------
   docker-host-agent:
-    image: oci.fi/fallbck/file-agent:latest
+    image: oci.fi/fallbck/agent:latest
     build:
       context: ..
       dockerfile: Dockerfile.agent
+      target: slim
+      args:
+        FALLBCK_VERSION: ${FALLBCK_VERSION:-0.3.0}
     container_name: fallbck-docker-host-agent
     restart: unless-stopped
     user: "0:0"
@@ -163,15 +169,17 @@ services:
       - fallbck-net
 
   # -------------------------------------------------------------------------
-  # 4. Database agent (optional, profile "db-agent"): backs up PostgreSQL, MySQL/MariaDB
-  #    and MongoDB with the vendor tools shipped in the image. The profile "postgres"
-  #    below lets a job against postgres:5432 (user fallbck) leave its password blank.
+  # 4. Agent with database tools (optional, profile "db-agent"): the same agent image
+  #    in its "tools" flavour (PostgreSQL, MariaDB and MongoDB client tools), so it
+  #    reports db_tools and can run database jobs. The profile "postgres" below lets a
+  #    job against postgres:5432 (user fallbck) leave its password blank.
   # -------------------------------------------------------------------------
   db-agent:
-    image: oci.fi/fallbck/db-agent:latest
+    image: oci.fi/fallbck/agent:tools
     build:
       context: ..
-      dockerfile: Dockerfile.db-agent
+      dockerfile: Dockerfile.agent
+      target: tools
       args:
         FALLBCK_VERSION: ${FALLBCK_VERSION:-0.3.0}
     container_name: fallbck-db-agent
@@ -182,16 +190,45 @@ services:
       server:
         condition: service_healthy
     environment:
+      - FALLBCK_AGENT_HOSTNAME=${HOSTNAME:-db-agent}
       - FALLBCK_AGENT_SERVER_URL=http://server:8080
       - FALLBCK_AGENT_ENROLLMENT_KEY=${FALLBCK_DB_AGENT_ENROLLMENT_KEY:-}
-      - FALLBCK_AGENT_DATA_DIR=/var/lib/fallbck/db-agent
+      - FALLBCK_AGENT_DATA_DIR=/var/lib/fallbck/agent
       - FALLBCK_AGENT_DB_PROFILE_POSTGRES_USER=fallbck
       - FALLBCK_AGENT_DB_PROFILE_POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-fallbck_password}
       - DEBUG=${DEBUG:-false}
     volumes:
-      - db_agent_data:/var/lib/fallbck/db-agent
+      - db_agent_data:/var/lib/fallbck/agent
     networks:
       - fallbck-net
+
+  # -------------------------------------------------------------------------
+  # 4b. Deprecated image names (profile "legacy"), still published so existing
+  #     deployments keep pulling them: file-agent = the slim agent, db-agent = the
+  #     standalone fallbck-db-agent. New deployments use agent:latest / agent:tools.
+  # -------------------------------------------------------------------------
+  file-agent-legacy:
+    image: oci.fi/fallbck/file-agent:latest
+    build:
+      context: ..
+      dockerfile: Dockerfile.agent
+      target: slim
+      args:
+        FALLBCK_VERSION: ${FALLBCK_VERSION:-0.3.0}
+    profiles:
+      - legacy
+    entrypoint: ["/usr/local/bin/fallbck-agent", "version"]
+
+  db-agent-legacy:
+    image: oci.fi/fallbck/db-agent:latest
+    build:
+      context: ..
+      dockerfile: Dockerfile.db-agent
+      args:
+        FALLBCK_VERSION: ${FALLBCK_VERSION:-0.3.0}
+    profiles:
+      - legacy
+    entrypoint: ["/usr/local/bin/fallbck-db-agent", "version"]
 
   k8s-agent:
     image: oci.fi/fallbck/k8s-agent:latest

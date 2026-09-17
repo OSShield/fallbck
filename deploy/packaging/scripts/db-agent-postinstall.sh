@@ -34,4 +34,6 @@ elif command -v rc-service >/dev/null 2>&1; then
     fi
 fi
 echo "Database client tools are not part of this package: install postgresql-client / mariadb-client (or mysql-client) / mongodb-database-tools as needed."
+echo "NOTE: fallbck-db-agent is deprecated. fallbck-agent runs database jobs itself when the client tools are installed;"
+echo "      migrate with: fallbck-agent migrate-db-agent && fallbck-ctl agents merge <this agent> --into <fallbck-agent>"
 exit 0

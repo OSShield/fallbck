@@ -129,7 +129,7 @@ const AGENT_WIZARD_TYPES = {
   files:      { label: 'filesystem agent', pkg: 'fallbck-agent',    service: 'fallbck-agent' },
   proxmox:    { label: 'filesystem agent', pkg: 'fallbck-agent',    service: 'fallbck-agent' },
   docker:     { label: 'filesystem agent', pkg: 'fallbck-agent',    service: 'fallbck-agent' },
-  database:   { label: 'database agent',   pkg: 'fallbck-db-agent', service: 'fallbck-db-agent' },
+  database:   { label: 'database agent',   pkg: 'fallbck-agent',    service: 'fallbck-agent' },
   kubernetes: { label: 'Kubernetes agent' }
 };
 
@@ -299,21 +299,14 @@ function agentWizardRepo(target, pkg) {
 // Manual install from the GitHub release for distributions without a package:
 // binary, state directories, environment template and a service unit.
 function agentWizardManualLinux(type, pkg, svc) {
-  const isDB = type === 'database';
-  const asset = isDB ? 'fallbck_db_agent_Linux_${ARCH}.tar.gz' : 'fallbck_agent_Linux_${ARCH}.tar.gz';
-  const dataDir = isDB ? '/var/lib/fallbck/db-agent' : '/var/lib/fallbck/agent';
-  const env = isDB ? 'db-agent.env' : 'agent.env';
-  let install = `ARCH=x86_64   # or arm64\n` +
+  const asset = 'fallbck_agent_Linux_${ARCH}.tar.gz';
+  const dataDir = '/var/lib/fallbck/agent';
+  const env = 'agent.env';
+  const install = `ARCH=x86_64   # or arm64\n` +
     `curl -fsSL -o /tmp/${pkg}.tar.gz ${AGENT_WIZARD_RELEASES}/latest/download/${asset}\n` +
-    `sudo tar -xzf /tmp/${pkg}.tar.gz -C /usr/local/bin ${pkg}\n`;
-  if (isDB) {
-    install += `\n# the database agent service runs as the unprivileged user fallbck\n` +
-      `getent group fallbck >/dev/null || sudo groupadd --system fallbck\n` +
-      `getent passwd fallbck >/dev/null || sudo useradd --system --no-create-home --home-dir ${dataDir} --shell /sbin/nologin --gid fallbck fallbck\n`;
-  }
-  install += `\nsudo mkdir -p /etc/fallbck ${dataDir} /var/log/fallbck\n` +
+    `sudo tar -xzf /tmp/${pkg}.tar.gz -C /usr/local/bin ${pkg}\n` +
+    `\nsudo mkdir -p /etc/fallbck ${dataDir} /var/log/fallbck\n` +
     `sudo chmod 0700 ${dataDir}\n` +
-    (isDB ? `sudo chown fallbck:fallbck ${dataDir} /var/log/fallbck\n` : '') +
     `sudo curl -fsSL -o /etc/fallbck/${env} ${AGENT_WIZARD_RAW}/deploy/packaging/${env}\n` +
     `sudo chmod 0600 /etc/fallbck/${env}`;
 
@@ -347,11 +340,26 @@ function agentWizardSections(type, target, serverUrl, token) {
     return sections;
   }
 
+  if (target === 'docker-container' && type === 'database') {
+    sections.push({
+      title: 'Run the agent as a container (tools flavour)',
+      text: 'The tools flavour of the agent image ships pg_dump, mariadb-dump and mongodump. It backs up databases reachable over the network from the container; no host mounts are needed. The agent enrolls itself on first start with the key below; remove the key afterwards.',
+      code: `services:\n  fallbck-agent:\n    image: oci.fi/fallbck/agent:tools\n    container_name: fallbck-agent\n    restart: unless-stopped\n    environment:\n      FALLBCK_AGENT_HOSTNAME: ${'$'}{HOSTNAME:-db-host}\n      FALLBCK_AGENT_SERVER_URL: ${serverUrl}\n      FALLBCK_AGENT_ENROLLMENT_KEY: ${token}\n      # credential profiles for jobs that leave the password blank:\n      # FALLBCK_AGENT_DB_PROFILE_MAIN_ENGINE: postgres\n      # FALLBCK_AGENT_DB_PROFILE_MAIN_USER: backup\n      # FALLBCK_AGENT_DB_PROFILE_MAIN_PASSWORD: secret\n    volumes:\n      - fallbck_agent_data:/var/lib/fallbck/agent\nvolumes:\n  fallbck_agent_data:`,
+      note: 'Private or self-signed server certificate: mount the CA bundle and set FALLBCK_AGENT_SERVER_CA to its path, or FALLBCK_AGENT_INSECURE_SKIP_VERIFY=true for testing only.'
+    });
+    sections.push({
+      title: 'Create the database job',
+      text: 'The agent reports the client tools with its first heartbeat (about 30 seconds) and gets a DB tools badge on this page. Then create a job of type Database on the Backup Jobs page and assign it to this agent.',
+      code: 'docker compose logs -f fallbck-agent'
+    });
+    return sections;
+  }
+
   if (target === 'docker-container') {
     sections.push({
       title: 'Run the agent as a container',
       text: 'Save this as docker-compose.yml on the Docker host and start it with docker compose up -d. The agent enrolls itself on first start with the key below and keeps its identity in the fallbck_agent_data volume; remove the key afterwards. FALLBCK_AGENT_HOSTNAME names the agent and its snapshot group (host/<hostname>-docker), so set it to the host\'s real name rather than the container id.',
-      code: `services:\n  fallbck-agent:\n    image: oci.fi/fallbck/file-agent:latest\n    container_name: fallbck-agent\n    user: "0:0"\n    restart: unless-stopped\n    environment:\n      FALLBCK_AGENT_HOSTNAME: ${'$'}{HOSTNAME:-docker-host}\n      FALLBCK_AGENT_SERVER_URL: ${serverUrl}\n      FALLBCK_AGENT_ENROLLMENT_KEY: ${token}\n      FALLBCK_AGENT_DOCKER_VOLUME_ACCESS: auto\n    volumes:\n      - fallbck_agent_data:/var/lib/fallbck/agent\n      - /var/run/docker.sock:/var/run/docker.sock\n      - /var/lib/docker/volumes:/var/lib/docker/volumes:ro\n      - /etc/docker:/etc/docker:ro\n      # compose project directories, so their config files can be archived:\n      - /opt/compose:/opt/compose:ro\nvolumes:\n  fallbck_agent_data:`,
+      code: `services:\n  fallbck-agent:\n    image: oci.fi/fallbck/agent:latest\n    container_name: fallbck-agent\n    user: "0:0"\n    restart: unless-stopped\n    environment:\n      FALLBCK_AGENT_HOSTNAME: ${'$'}{HOSTNAME:-docker-host}\n      FALLBCK_AGENT_SERVER_URL: ${serverUrl}\n      FALLBCK_AGENT_ENROLLMENT_KEY: ${token}\n      FALLBCK_AGENT_DOCKER_VOLUME_ACCESS: auto\n    volumes:\n      - fallbck_agent_data:/var/lib/fallbck/agent\n      - /var/run/docker.sock:/var/run/docker.sock\n      - /var/lib/docker/volumes:/var/lib/docker/volumes:ro\n      - /etc/docker:/etc/docker:ro\n      # compose project directories, so their config files can be archived:\n      - /opt/compose:/opt/compose:ro\nvolumes:\n  fallbck_agent_data:`,
       note: 'Without the /var/lib/docker/volumes mount the agent reads volumes through short-lived helper containers instead (slower, needs spool space). Private or self-signed server certificate: mount the CA bundle and set FALLBCK_AGENT_SERVER_CA to its path, or FALLBCK_AGENT_INSECURE_SKIP_VERIFY=true for testing only.'
     });
     sections.push({
@@ -425,7 +433,7 @@ function agentWizardSections(type, target, serverUrl, token) {
   sections.push({
     title: 'Enroll the agent and start the service',
     text: isDB
-      ? 'Enrolls as the fallbck service user, checks the client tools and enables the service. The token is single use and valid for 24 hours.'
+      ? 'Enrolls the agent with this server, lists the detected client tools and enables the service. The agent reports the tools with its heartbeat, which is what allows database jobs on it. The token is single use and valid for 24 hours.'
       : 'Enrolls the installed agent with this server and enables the service. The token is single use and valid for 24 hours.',
     code: enroll,
     note: 'Private or self-signed server certificate: run the enroll command by hand below with --ca-cert <pem bundle>.'
@@ -434,11 +442,7 @@ function agentWizardSections(type, target, serverUrl, token) {
   const start = target === 'alpine'
     ? `rc-update add ${svc} default && rc-service ${svc} start`
     : `${sudo}systemctl enable --now ${svc}`;
-  const manual = isDB
-    ? (target === 'alpine'
-        ? `su -s /bin/sh fallbck -c "fallbck-db-agent enroll --server ${serverUrl} --token ${token} --data-dir /var/lib/fallbck/db-agent"\nfallbck-db-agent tools\n${start}`
-        : `sudo -u fallbck fallbck-db-agent enroll --server ${serverUrl} --token ${token} --data-dir /var/lib/fallbck/db-agent\nfallbck-db-agent tools\n${start}`)
-    : `${sudo}fallbck-agent enroll --server ${serverUrl} --token ${token}\n${start}`;
+  const manual = `${sudo}fallbck-agent enroll --server ${serverUrl} --token ${token}\n` + (isDB ? 'fallbck-agent tools\n' : '') + start;
   sections.push({ title: 'Or enroll by hand', code: manual });
 
   if (type === 'docker') {
@@ -454,7 +458,7 @@ function agentWizardSections(type, target, serverUrl, token) {
   } else {
     sections.push({
       title: 'Verify',
-      text: 'The host appears in the list above within a minute. Logs: ' + (target === 'alpine' ? `/var/log/fallbck/${isDB ? 'db-agent' : 'agent'}.log` : `journalctl -u ${svc}`) + '.'
+      text: 'The host appears in the list above within a minute' + (isDB ? ', with a DB tools badge once the client tools were detected' : '') + '. Logs: ' + (target === 'alpine' ? '/var/log/fallbck/agent.log' : `journalctl -u ${svc}`) + '.'
     });
   }
   return sections;
@@ -569,7 +573,7 @@ function setJobType(type) {
     // Database jobs may also run on a kubernetes agent (dumped from a pod in the
     // cluster); Proxmox VE jobs need the filesystem agent installed on a PVE node
     let match = agentType === type;
-    if (type === 'database') match = match || agentType === 'kubernetes';
+    if (type === 'database') match = match || agentType === 'kubernetes' || (agentType === 'filesystem' && opt.dataset.db === 'true');
     if (type === 'pve') match = agentType === 'filesystem' && opt.dataset.pve === 'true';
     if (type === 'docker') match = agentType === 'filesystem' && opt.dataset.docker === 'true';
     opt.hidden = !match; opt.disabled = !match;

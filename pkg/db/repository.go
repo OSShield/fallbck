@@ -35,8 +35,8 @@ func (d *DB) CreateAgent(ctx context.Context, agent *Agent) error {
 	agent.UpdatedAt = now
 
 	query := `
-		INSERT INTO agents (id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, pve_host, docker_host)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+		INSERT INTO agents (id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, pve_host, docker_host, db_tools)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 		RETURNING id, created_at, updated_at
 	`
 	if agent.AgentType == "" {
@@ -45,7 +45,7 @@ func (d *DB) CreateAgent(ctx context.Context, agent *Agent) error {
 	return d.Pool.QueryRow(ctx, query,
 		agent.ID, agent.Hostname, agent.IPAddress, agent.OS, agent.Arch,
 		agent.Version, agent.TaskQueue, agent.Status, agent.LastSeenAt,
-		agent.CreatedAt, agent.UpdatedAt, agent.AgentType, agent.PVEHost, agent.DockerHost,
+		agent.CreatedAt, agent.UpdatedAt, agent.AgentType, agent.PVEHost, agent.DockerHost, agent.DBTools,
 	).Scan(&agent.ID, &agent.CreatedAt, &agent.UpdatedAt)
 }
 
@@ -54,12 +54,13 @@ func (d *DB) UpsertAgent(ctx context.Context, agent *Agent) error {
 	agent.UpdatedAt = now
 
 	query := `
-		INSERT INTO agents (id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, pve_host, docker_host)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+		INSERT INTO agents (id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, pve_host, docker_host, db_tools)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 		ON CONFLICT (id) DO UPDATE SET
 			agent_type = EXCLUDED.agent_type,
 			pve_host = EXCLUDED.pve_host,
 			docker_host = EXCLUDED.docker_host,
+			db_tools = EXCLUDED.db_tools,
 			hostname = EXCLUDED.hostname,
 			ip_address = EXCLUDED.ip_address,
 			os = EXCLUDED.os,
@@ -74,18 +75,18 @@ func (d *DB) UpsertAgent(ctx context.Context, agent *Agent) error {
 	return d.Pool.QueryRow(ctx, query,
 		agent.ID, agent.Hostname, agent.IPAddress, agent.OS, agent.Arch,
 		agent.Version, agent.TaskQueue, agent.Status, agent.LastSeenAt,
-		now, now, agent.AgentType, agent.PVEHost, agent.DockerHost,
+		now, now, agent.AgentType, agent.PVEHost, agent.DockerHost, agent.DBTools,
 	).Scan(&agent.CreatedAt, &agent.UpdatedAt)
 }
 
 func (d *DB) GetAgentByID(ctx context.Context, id uuid.UUID) (*Agent, error) {
 	query := `
-		SELECT id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, debug_logging, pve_host, docker_host
+		SELECT id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, debug_logging, pve_host, docker_host, db_tools
 		FROM agents WHERE id = $1
 	`
 	row := d.Pool.QueryRow(ctx, query, id)
 	var a Agent
-	err := row.Scan(&a.ID, &a.Hostname, &a.IPAddress, &a.OS, &a.Arch, &a.Version, &a.TaskQueue, &a.Status, &a.LastSeenAt, &a.CreatedAt, &a.UpdatedAt, &a.AgentType, &a.DebugLogging, &a.PVEHost, &a.DockerHost)
+	err := row.Scan(&a.ID, &a.Hostname, &a.IPAddress, &a.OS, &a.Arch, &a.Version, &a.TaskQueue, &a.Status, &a.LastSeenAt, &a.CreatedAt, &a.UpdatedAt, &a.AgentType, &a.DebugLogging, &a.PVEHost, &a.DockerHost, &a.DBTools)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -97,7 +98,7 @@ func (d *DB) GetAgentByID(ctx context.Context, id uuid.UUID) (*Agent, error) {
 
 func (d *DB) ListAgents(ctx context.Context) ([]*Agent, error) {
 	query := `
-		SELECT id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, debug_logging, pve_host, docker_host
+		SELECT id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, debug_logging, pve_host, docker_host, db_tools
 		FROM agents ORDER BY hostname ASC
 	`
 	rows, err := d.Pool.Query(ctx, query)
@@ -109,7 +110,7 @@ func (d *DB) ListAgents(ctx context.Context) ([]*Agent, error) {
 	var agents []*Agent
 	for rows.Next() {
 		var a Agent
-		if err := rows.Scan(&a.ID, &a.Hostname, &a.IPAddress, &a.OS, &a.Arch, &a.Version, &a.TaskQueue, &a.Status, &a.LastSeenAt, &a.CreatedAt, &a.UpdatedAt, &a.AgentType, &a.DebugLogging, &a.PVEHost, &a.DockerHost); err != nil {
+		if err := rows.Scan(&a.ID, &a.Hostname, &a.IPAddress, &a.OS, &a.Arch, &a.Version, &a.TaskQueue, &a.Status, &a.LastSeenAt, &a.CreatedAt, &a.UpdatedAt, &a.AgentType, &a.DebugLogging, &a.PVEHost, &a.DockerHost, &a.DBTools); err != nil {
 			return nil, err
 		}
 		agents = append(agents, &a)
@@ -119,11 +120,11 @@ func (d *DB) ListAgents(ctx context.Context) ([]*Agent, error) {
 
 // UpdateAgentHeartbeat records the heartbeat and returns the agent's remote
 // debug-logging setting for the response.
-func (d *DB) UpdateAgentHeartbeat(ctx context.Context, id uuid.UUID, status AgentStatus, pveHost, dockerHost bool) (bool, error) {
+func (d *DB) UpdateAgentHeartbeat(ctx context.Context, id uuid.UUID, status AgentStatus, caps AgentCapabilities) (bool, error) {
 	now := time.Now().UTC()
-	query := `UPDATE agents SET last_seen_at = $1, status = $2, updated_at = $1, pve_host = $4, docker_host = $5 WHERE id = $3 RETURNING debug_logging`
+	query := `UPDATE agents SET last_seen_at = $1, status = $2, updated_at = $1, pve_host = $4, docker_host = $5, db_tools = $6 WHERE id = $3 RETURNING debug_logging`
 	var debug bool
-	if err := d.Pool.QueryRow(ctx, query, now, status, id, pveHost, dockerHost).Scan(&debug); err != nil {
+	if err := d.Pool.QueryRow(ctx, query, now, status, id, caps.PVEHost, caps.DockerHost, caps.DBTools).Scan(&debug); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return false, ErrNotFound
 		}
@@ -148,6 +149,36 @@ func (d *DB) DeleteAgent(ctx context.Context, id uuid.UUID) error {
 	query := `DELETE FROM agents WHERE id = $1`
 	_, err := d.Pool.Exec(ctx, query, id)
 	return err
+}
+
+// MergeAgents moves every job and run of the agent from onto the agent into and
+// deletes from, in one transaction. Deleting an agent cascades to its jobs and runs,
+// so the move must come first. It returns the number of jobs and runs moved.
+func (d *DB) MergeAgents(ctx context.Context, from, into uuid.UUID) (int64, int64, error) {
+	tx, err := d.Pool.Begin(ctx)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	jobs, err := tx.Exec(ctx, `UPDATE backup_jobs SET agent_id = $2, updated_at = NOW() WHERE agent_id = $1`, from, into)
+	if err != nil {
+		return 0, 0, err
+	}
+	runs, err := tx.Exec(ctx, `UPDATE backup_runs SET agent_id = $2 WHERE agent_id = $1`, from, into)
+	if err != nil {
+		return 0, 0, err
+	}
+	tag, err := tx.Exec(ctx, `DELETE FROM agents WHERE id = $1`, from)
+	if err != nil {
+		return 0, 0, err
+	}
+	if tag.RowsAffected() == 0 {
+		return 0, 0, ErrNotFound
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, 0, err
+	}
+	return jobs.RowsAffected(), runs.RowsAffected(), nil
 }
 
 // ==========================================

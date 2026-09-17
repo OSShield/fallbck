@@ -212,9 +212,14 @@ nfpms:
     ids:
       - fallbck-agent
     package_name: "fallbck-agent"
-    description: "fallbck-agent - Backup agent"
+    description: "fallbck-agent - Backup agent (filesystem, Proxmox VE and Docker hosts; databases with the client tools installed)"
     vendor: "clysec"
     maintainer: clysec
+    # Database jobs need the vendor client tools; they are optional (suggested, not
+    # pulled in) because most hosts only back up files
+    suggests:
+      - postgresql-client
+      - mariadb-client
     file_name_template: >-
       {{ .ProjectName }}_agent_
       {{- title .Os }}_
@@ -273,7 +278,7 @@ nfpms:
     ids:
       - fallbck-db-agent
     package_name: "fallbck-db-agent"
-    description: "fallbck-db-agent - Database backup agent (PostgreSQL, MySQL/MariaDB, MongoDB)"
+    description: "fallbck-db-agent - Database backup agent (deprecated: fallbck-agent runs database jobs; migrate with fallbck-agent migrate-db-agent)"
     vendor: "clysec"
     maintainer: clysec
     file_name_template: >-

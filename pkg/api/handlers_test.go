@@ -212,3 +212,28 @@ func TestFreshBackupTimeNeverGoesBackwards(t *testing.T) {
 		t.Fatalf("expected a current timestamp, got %d", got)
 	}
 }
+
+// The merge endpoint validates its input before touching the database (the test
+// router has none): bad ids, a missing target and self-merges are rejected.
+func TestMergeAgentValidation(t *testing.T) {
+	r := newTestRouter()
+	id := uuid.New()
+	cases := []struct {
+		name, path, body string
+		want             int
+	}{
+		{"bad id", "/api/v1/agents/not-a-uuid/merge", `{"into":"` + uuid.New().String() + `"}`, http.StatusBadRequest},
+		{"missing target", "/api/v1/agents/" + id.String() + "/merge", `{}`, http.StatusBadRequest},
+		{"invalid body", "/api/v1/agents/" + id.String() + "/merge", `nope`, http.StatusBadRequest},
+		{"self merge", "/api/v1/agents/" + id.String() + "/merge", `{"into":"` + id.String() + `"}`, http.StatusBadRequest},
+	}
+	for _, c := range cases {
+		req := httptest.NewRequest(http.MethodPost, c.path, strings.NewReader(c.body))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		r.ServeHTTP(rr, req)
+		if rr.Code != c.want {
+			t.Errorf("%s: status %d, want %d (%s)", c.name, rr.Code, c.want, rr.Body.String())
+		}
+	}
+}
