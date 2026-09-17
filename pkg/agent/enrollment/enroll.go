@@ -16,6 +16,7 @@ import (
 
 	"github.com/osshield/fallbck/pkg/api"
 	"github.com/osshield/fallbck/pkg/config"
+	"github.com/osshield/fallbck/pkg/dockerbackup"
 	"github.com/osshield/fallbck/pkg/pvebackup"
 )
 
@@ -43,6 +44,9 @@ type Options struct {
 	// InsecureSkipVerify disables certificate verification for ServerURL (enrollment
 	// request and agent.yaml)
 	InsecureSkipVerify bool
+	// DockerSocket overrides the Docker daemon socket probed for the docker_host flag
+	// (filesystem agents; default DOCKER_HOST or /var/run/docker.sock)
+	DockerSocket string
 }
 
 // EnrollAgent enrolls a filesystem agent (see Enroll)
@@ -74,13 +78,17 @@ func Enroll(ctx context.Context, o Options) (*config.AgentConfig, error) {
 		hostname, _ = os.Hostname()
 	}
 	reqBody := api.EnrollRequest{
-		Token:     token,
-		Hostname:  hostname,
-		OS:        runtime.GOOS,
-		Arch:      runtime.GOARCH,
-		Version:   o.Version,
-		AgentType: o.AgentType,
-		PVEHost:   pvebackup.IsPVEHost(),
+		Token:      token,
+		Hostname:   hostname,
+		OS:         runtime.GOOS,
+		Arch:       runtime.GOARCH,
+		Version:    o.Version,
+		AgentType:  o.AgentType,
+		PVEHost:    pvebackup.IsPVEHost(),
+		DockerHost: o.AgentType == "" || o.AgentType == config.AgentTypeFilesystem,
+	}
+	if reqBody.DockerHost {
+		reqBody.DockerHost = dockerbackup.IsDockerHost(o.DockerSocket)
 	}
 
 	jsonBytes, err := json.Marshal(reqBody)

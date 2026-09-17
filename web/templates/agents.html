@@ -41,7 +41,7 @@
               {{end}}
             </td>
             <td><strong>{{.Hostname}}</strong></td>
-            <td>{{if eq .AgentType "database"}}<span class="badge badge-info">database</span>{{else if eq .AgentType "kubernetes"}}<span class="badge badge-info">kubernetes</span>{{else}}<span class="badge badge-neutral">filesystem</span>{{end}}{{if .PVEHost}} <span class="badge badge-warning" title="Runs on a Proxmox VE node">PVE</span>{{end}}</td>
+            <td>{{if eq .AgentType "database"}}<span class="badge badge-info">database</span>{{else if eq .AgentType "kubernetes"}}<span class="badge badge-info">kubernetes</span>{{else}}<span class="badge badge-neutral">filesystem</span>{{end}}{{if .PVEHost}} <span class="badge badge-warning" title="Runs on a Proxmox VE node">PVE</span>{{end}}{{if .DockerHost}} <span class="badge badge-info" title="A Docker daemon answers on this host">Docker</span>{{end}}</td>
             <td style="font-family: var(--font-mono); font-size: 13px;">{{if .IPAddress}}{{.IPAddress}}{{else}}-{{end}}</td>
             <td>
               <span class="badge badge-neutral">{{.OS}}/{{.Arch}}</span>
@@ -110,25 +110,29 @@
             <div class="wizard-option-title">Proxmox VE host</div>
             <div class="wizard-option-desc">Filesystem agent on a Proxmox VE node. Archives the node configuration (/etc/pve, packages, storage, network, disk layout) for disaster recovery. Guest disks stay with vzdump.</div>
           </div>
+          <div class="wizard-option" role="button" tabindex="0" data-kind="type" data-value="docker" onclick="agentWizardSelect(this)" onkeydown="agentWizardKey(event, this)">
+            <div class="wizard-option-title">Docker host</div>
+            <div class="wizard-option-desc">Filesystem agent on a Docker host, as a package or as a container with the socket mounted. Archives container, network and volume definitions, compose files and every named volume.</div>
+          </div>
         </div>
       </div>
 
       <div class="wizard-page" data-step="2">
         <p class="wizard-lead">Where will the <span id="wizard-type-label">agent</span> run?</p>
         <div id="wizard-target-options" class="wizard-options">
-          <div class="wizard-option" role="button" tabindex="0" data-kind="target" data-value="debian" data-types="files,database" onclick="agentWizardSelect(this)" onkeydown="agentWizardKey(event, this)">
+          <div class="wizard-option" role="button" tabindex="0" data-kind="target" data-value="debian" data-types="files,database,docker" onclick="agentWizardSelect(this)" onkeydown="agentWizardKey(event, this)">
             <div class="wizard-option-title">Debian / Ubuntu</div>
             <div class="wizard-option-desc">apt package from deb.pkg.lv, managed by systemd.</div>
           </div>
-          <div class="wizard-option" role="button" tabindex="0" data-kind="target" data-value="rhel" data-types="files,database" onclick="agentWizardSelect(this)" onkeydown="agentWizardKey(event, this)">
+          <div class="wizard-option" role="button" tabindex="0" data-kind="target" data-value="rhel" data-types="files,database,docker" onclick="agentWizardSelect(this)" onkeydown="agentWizardKey(event, this)">
             <div class="wizard-option-title">RHEL / Rocky / Alma / Fedora</div>
             <div class="wizard-option-desc">rpm package from rpm.pkg.lv, managed by systemd.</div>
           </div>
-          <div class="wizard-option" role="button" tabindex="0" data-kind="target" data-value="alpine" data-types="files,database" onclick="agentWizardSelect(this)" onkeydown="agentWizardKey(event, this)">
+          <div class="wizard-option" role="button" tabindex="0" data-kind="target" data-value="alpine" data-types="files,database,docker" onclick="agentWizardSelect(this)" onkeydown="agentWizardKey(event, this)">
             <div class="wizard-option-title">Alpine Linux</div>
             <div class="wizard-option-desc">apk package from alpine.pkg.lv, managed by OpenRC.</div>
           </div>
-          <div class="wizard-option" role="button" tabindex="0" data-kind="target" data-value="linux-other" data-types="files,database" onclick="agentWizardSelect(this)" onkeydown="agentWizardKey(event, this)">
+          <div class="wizard-option" role="button" tabindex="0" data-kind="target" data-value="linux-other" data-types="files,database,docker" onclick="agentWizardSelect(this)" onkeydown="agentWizardKey(event, this)">
             <div class="wizard-option-title">Other Linux</div>
             <div class="wizard-option-desc">Static binary from the GitHub release with a hand-installed systemd or OpenRC service.</div>
           </div>
@@ -139,6 +143,10 @@
           <div class="wizard-option" role="button" tabindex="0" data-kind="target" data-value="kubernetes" data-types="kubernetes" onclick="agentWizardSelect(this)" onkeydown="agentWizardKey(event, this)">
             <div class="wizard-option-title">Kubernetes cluster</div>
             <div class="wizard-option-desc">Helm chart from oci.fi installed into the fallbck namespace of the target cluster.</div>
+          </div>
+          <div class="wizard-option" role="button" tabindex="0" data-kind="target" data-value="docker-container" data-types="docker" onclick="agentWizardSelect(this)" onkeydown="agentWizardKey(event, this)">
+            <div class="wizard-option-title">Docker container</div>
+            <div class="wizard-option-desc">The file-agent image run as root with the Docker socket and the volumes directory mounted (compose snippet).</div>
           </div>
           <div class="wizard-option" role="button" tabindex="0" data-kind="target" data-value="proxmox" data-types="proxmox" onclick="agentWizardSelect(this)" onkeydown="agentWizardKey(event, this)">
             <div class="wizard-option-title">Proxmox VE node</div>

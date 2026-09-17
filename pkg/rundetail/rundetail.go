@@ -11,6 +11,7 @@ const (
 	TypeDatabase   = "database"
 	TypeKubernetes = "kubernetes"
 	TypePVE        = "pve"
+	TypeDocker     = "docker"
 )
 
 // ArchiveStat is one pxar/catalog/payload archive uploaded in a snapshot

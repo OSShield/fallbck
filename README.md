@@ -103,6 +103,23 @@ bash /var/tmp/fallbck-pve-restore/collect/fallbck-pve-restore.sh --yes          
 
 The script reinstalls the manually selected packages (never downgrading), stops the PVE services, restores the cluster configuration from `config.db` (or file by file through `pmxcfs -l`), restores identity/network/apt/SSH host keys/cron/PVE settings from the archived `/etc`, restarts the services and verifies with `pvesh get /version`. Single nodes only; clusters are not supported.
 
+### Docker host backup
+
+Install `fallbck-agent` on a Docker host (as the OS package, running as root, or as the `file-agent` container image run as root with the Docker socket mounted; the Agents page's guided installation, *Docker host*, prints both) and create a job of type **Docker host** on the Backup Jobs page once the agent has reported a reachable daemon with its heartbeat. Every run writes one `docker.pxar` snapshot into the group `host/<hostname>-docker` with a `collect` entry holding `docker inspect` of every container, network and volume, the compose config files named in the `com.docker.compose.*` labels (plus `.env`), `/etc/docker/daemon.json`, image references with digests (per job also `docker save` tarballs of locally built or all images), the manifest `fallbck-docker.json` and a generated restore runbook, plus one `vol-<name>` entry per named volume archived file by file. Bind mounts are listed in the manifest but not archived (a filesystem job covers them); Swarm services, remote daemons and database dumps from inside containers are out of scope (use the database agent against a published port).
+
+Volumes are copied live by default. Label a container `fallbck.io/pause=true` (or list it in the job) to `docker pause` it while the volumes it mounts are copied; label a container or volume `fallbck.io/skip=true` to leave it out. The agent reads volumes directly from `/var/lib/docker/volumes` when that directory is visible (package install, or the container with it mounted) and otherwise streams them through short-lived helper containers (`docker_backup.volume_access: auto|direct|helper`, `docker_backup.helper_image`, default `alpine:3.20`); paused and helper-read volumes are staged in the agent's spool directory first, so size it for the largest such volume. The daemon is reached on `DOCKER_HOST` (unix sockets only) or `/var/run/docker.sock` (`docker_backup.socket`).
+
+Restore onto a host with Docker and the compose plugin: fetch the archive with PBS's own client and run the runbook stored in the archive (`collect/fallbck-docker-restore.sh`, also summarised on the run detail page):
+
+```bash
+export PBS_REPOSITORY=... PBS_PASSWORD=... PBS_FINGERPRINT=...   # fallbck-ctl targets credentials <target>
+proxmox-backup-client restore host/dock01-docker/2026-09-17T02:00:00Z docker.pxar /var/tmp/fallbck-docker-restore
+bash /var/tmp/fallbck-docker-restore/collect/fallbck-docker-restore.sh --dry-run
+bash /var/tmp/fallbck-docker-restore/collect/fallbck-docker-restore.sh --yes   # --containers also recreates standalone containers
+```
+
+The script restores `daemon.json`, recreates user-defined networks and volumes, copies each `vol-<name>` back in with a helper container, loads saved images and pulls the rest by digest, puts the compose files back and runs `docker compose up -d` per project, and prints a best-effort `docker run` for every container that is not part of a compose project (executed only with `--containers`).
+
 ## Scheduling
 
 A job with a cron expression gets a **Temporal Schedule** (managed by the server, visible under `/temporal/` → Schedules): standard 5-field cron plus `@daily` / `@every 6h`, evaluated in the **server's timezone** (`timezone:` in `server.yaml` or `FALLBCK_TIMEZONE`; auto-detected from `TZ`/the host zone, UTC when undetectable — set `TZ` on the Docker container). DST is handled by Temporal: `0 2 * * *` stays 02:00 local year round. A firing starts the same workflow as "Run Now"; a firing that lands while the previous run of the job is still going is **skipped**, and after server downtime one missed firing within the last hour is caught up. Disabling a job pauses its schedule; clearing the cron or deleting the job removes it. The server reconciles schedules with the jobs table at every start. The jobs page shows the next fire time.

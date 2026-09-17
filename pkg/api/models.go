@@ -18,6 +18,8 @@ type EnrollRequest struct {
 	AgentType string `json:"agent_type,omitempty"`
 	// PVEHost is set by a filesystem agent running on a Proxmox VE node
 	PVEHost bool `json:"pve_host,omitempty"`
+	// DockerHost is set by a filesystem agent that can reach a Docker daemon
+	DockerHost bool `json:"docker_host,omitempty"`
 }
 
 // EnrollResponse contains the credentials and configuration needed for the agent to start.
@@ -63,6 +65,8 @@ type HeartbeatRequest struct {
 	Version string    `json:"version"`
 	// PVEHost reports whether the agent runs on a Proxmox VE node
 	PVEHost bool `json:"pve_host,omitempty"`
+	// DockerHost reports whether a Docker daemon answers on the agent's host
+	DockerHost bool `json:"docker_host,omitempty"`
 }
 
 // HeartbeatResponse acknowledges a heartbeat and carries server-side agent settings

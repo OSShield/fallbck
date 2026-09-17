@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/osshield/fallbck/pkg/dbbackup"
+	"github.com/osshield/fallbck/pkg/dockerbackup"
 	"log/slog"
 	"net/url"
 	"os"
@@ -170,6 +171,9 @@ type AgentConfig struct {
 	LogLevel string `yaml:"log_level,omitempty" json:"log_level,omitempty"`
 	// DBBackup configures fallbck-db-agent (spool, tools, credential profiles)
 	DBBackup dbbackup.Config `yaml:"db_backup,omitempty" json:"db_backup"`
+	// DockerBackup configures Docker host jobs on fallbck-agent (socket, volume
+	// access mode, helper image)
+	DockerBackup dockerbackup.Config `yaml:"docker_backup,omitempty" json:"docker_backup"`
 }
 
 // Agent types (agents.agent_type); each has its own binary and data directory
@@ -426,6 +430,12 @@ func LoadAgentConfig(filePath string) (*AgentConfig, error) {
 	envString("FALLBCK_AGENT_DB_MYSQL_BINDIR", &cfg.DBBackup.Tools.MySQLBinDir)
 	envString("FALLBCK_AGENT_DB_MONGO_BINDIR", &cfg.DBBackup.Tools.MongoBinDir)
 	applyProfileEnv(&cfg.DBBackup, os.Environ())
+	envString("FALLBCK_AGENT_DOCKER_VOLUME_ACCESS", &cfg.DockerBackup.VolumeAccess)
+	envString("FALLBCK_AGENT_DOCKER_HELPER_IMAGE", &cfg.DockerBackup.HelperImage)
+	envString("FALLBCK_AGENT_DOCKER_SOCKET", &cfg.DockerBackup.Socket)
+	if err := cfg.DockerBackup.Validate(); err != nil {
+		return nil, err
+	}
 	if err := cfg.DBBackup.Validate(); err != nil {
 		return nil, err
 	}

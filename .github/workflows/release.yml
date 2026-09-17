@@ -134,19 +134,20 @@ jobs:
           UPLOAD_RPMPKG_SECRET: ${{ secrets.PKG_UPLOAD_PASSWORD }}
 
       - name: Attach the Windows MSI to the release
-        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        if: ${{ always() && startsWith(github.ref, 'refs/tags/v') }}
         uses: actions/download-artifact@v4
         with:
           name: windows-msi-${{ github.sha }}
           path: dist/msi
+
       - name: Upload MSI to the GitHub release
-        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        if: ${{ always() && startsWith(github.ref, 'refs/tags/v') }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "${GITHUB_REF#refs/tags/}" dist/msi/fallbck-agent_Windows_x86_64.msi --clobber
 
       - name: Upload snapshot packages
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        if: ${{ always() && !startsWith(github.ref, 'refs/tags/v') }}
         uses: actions/upload-artifact@v4
         with:
           name: packages-${{ github.sha }}

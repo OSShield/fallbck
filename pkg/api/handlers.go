@@ -170,16 +170,17 @@ func (s *ServerAPI) HandleAgentEnroll(w http.ResponseWriter, r *http.Request) {
 	}
 
 	agent := &db.Agent{
-		ID:        agentID,
-		Hostname:  req.Hostname,
-		IPAddress: ip,
-		OS:        req.OS,
-		Arch:      req.Arch,
-		Version:   req.Version,
-		AgentType: agentType,
-		TaskQueue: taskQueue,
-		Status:    db.AgentStatusOnline,
-		PVEHost:   req.PVEHost,
+		ID:         agentID,
+		Hostname:   req.Hostname,
+		IPAddress:  ip,
+		OS:         req.OS,
+		Arch:       req.Arch,
+		Version:    req.Version,
+		AgentType:  agentType,
+		TaskQueue:  taskQueue,
+		Status:     db.AgentStatusOnline,
+		PVEHost:    req.PVEHost,
+		DockerHost: req.DockerHost,
 	}
 
 	now := time.Now().UTC()
@@ -247,7 +248,7 @@ func (s *ServerAPI) HandleAgentHeartbeat(w http.ResponseWriter, r *http.Request)
 		status = db.AgentStatus(req.Status)
 	}
 
-	debug, err := s.DB.UpdateAgentHeartbeat(r.Context(), claims.AgentID, status, req.PVEHost)
+	debug, err := s.DB.UpdateAgentHeartbeat(r.Context(), claims.AgentID, status, req.PVEHost, req.DockerHost)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			s.writeError(w, http.StatusUnauthorized, "agent no longer exists")
