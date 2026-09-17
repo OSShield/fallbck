@@ -67,12 +67,14 @@
       </Component>
     </DirectoryRef>
 
-    <!-- Enrollment (deferred, as SYSTEM) runs after the files are in place and before the service starts -->
+    <!-- Enrollment (deferred, as SYSTEM) runs after the files are in place and before the service starts.
+         Directory properties end with a backslash, which would escape the closing quote of
+         the argument on the command line, hence the doubled backslash after [AGENTDATADIR]. -->
     <SetProperty Id="EnrollAgent" Before="EnrollAgent" Sequence="execute"
-                 Value="&quot;[INSTALLDIR]fallbck-agent.exe&quot; enroll --server &quot;[SERVER_URL]&quot; --token &quot;[TOKEN]&quot; --data-dir &quot;[AGENTDATADIR]&quot;" />
+                 Value="&quot;[INSTALLDIR]fallbck-agent.exe&quot; enroll --server &quot;[SERVER_URL]&quot; --token &quot;[TOKEN]&quot; --data-dir &quot;[AGENTDATADIR]\&quot;" />
     <CustomAction Id="EnrollAgent" BinaryKey="WixCA" DllEntry="WixQuietExec64" Execute="deferred" Impersonate="no" Return="check" />
     <SetProperty Id="EnrollAgentCA" Before="EnrollAgentCA" Sequence="execute"
-                 Value="&quot;[INSTALLDIR]fallbck-agent.exe&quot; enroll --server &quot;[SERVER_URL]&quot; --token &quot;[TOKEN]&quot; --data-dir &quot;[AGENTDATADIR]&quot; --ca-cert &quot;[CA_CERT]&quot;" />
+                 Value="&quot;[INSTALLDIR]fallbck-agent.exe&quot; enroll --server &quot;[SERVER_URL]&quot; --token &quot;[TOKEN]&quot; --data-dir &quot;[AGENTDATADIR]\&quot; --ca-cert &quot;[CA_CERT]&quot;" />
     <CustomAction Id="EnrollAgentCA" BinaryKey="WixCA" DllEntry="WixQuietExec64" Execute="deferred" Impersonate="no" Return="check" />
     <InstallExecuteSequence>
       <Custom Action="EnrollAgent" After="InstallFiles">NOT Installed AND SERVER_URL AND TOKEN AND NOT CA_CERT</Custom>

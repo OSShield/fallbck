@@ -66,7 +66,12 @@ func Enroll(ctx context.Context, o Options) (*config.AgentConfig, error) {
 	if o.Version == "" {
 		o.Version = AgentVersion
 	}
+	// Clean the directory: a trailing separator (Windows directory properties end
+	// with one) or a "\." from a command line must not end up in agent.yaml
 	dataDir := o.DataDir
+	if dataDir != "" {
+		dataDir = filepath.Clean(dataDir)
+	}
 	if dataDir == "" {
 		dataDir = config.DefaultAgentDataDirFor(o.AgentType)
 	}
