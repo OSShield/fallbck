@@ -393,5 +393,6 @@ uploads:
     target: https://rpm.pkg.lv/upload?repo=all
     custom_artifact_name: true
 
+
 release:
   disable: "{{ eq .Env.GITHUB_RUN_ID "0" }}"
