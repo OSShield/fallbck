@@ -123,6 +123,7 @@ func main() {
 			acts.CacheDir = filepath.Join(cfg.DataDir, "pxar-cache")
 			acts.Hostname = cfg.Hostname
 			acts.Version = AgentVersion
+			acts.Docker = cfg.DockerBackup
 			if vss.Supported() && cfg.UseVSS() {
 				acts.VSSDir = filepath.Join(cfg.DataDir, "vss")
 				vss.Sweep(acts.VSSDir)

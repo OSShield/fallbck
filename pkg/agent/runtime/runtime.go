@@ -29,6 +29,7 @@ import (
 	"github.com/osshield/fallbck/pkg/agent/enrollment"
 	"github.com/osshield/fallbck/pkg/api"
 	"github.com/osshield/fallbck/pkg/config"
+	"github.com/osshield/fallbck/pkg/dockerbackup"
 	"github.com/osshield/fallbck/pkg/pvebackup"
 	"github.com/osshield/fallbck/pkg/rundetail"
 	"go.temporal.io/sdk/client"
@@ -391,7 +392,14 @@ func ProgressReporter(cfg *config.AgentConfig, store *TokenStore) func(ctx conte
 // StartHeartbeat reports the agent online every 30 s, applies the server's remote
 // debug-logging toggle from the response, and rotates the token when it approaches
 // expiry; it returns when ctx is cancelled. logging may be nil.
-func StartHeartbeat(ctx context.Context, cfg *config.AgentConfig, store *TokenStore, version string, logging *Logging) {
+func StartHeartbeat(ctx context.Context, cfg *config.AgentConfig, store *TokenStore, agentType, version string, logging *Logging) {
+	// Only the filesystem agent runs Docker host jobs, so only it probes the daemon
+	dockerHost := func() bool {
+		if agentType != "" && agentType != config.AgentTypeFilesystem {
+			return false
+		}
+		return dockerbackup.IsDockerHost(cfg.DockerBackup.EffSocket())
+	}
 	ticker := time.NewTicker(heartbeatInterval)
 	defer ticker.Stop()
 
@@ -416,7 +424,7 @@ func StartHeartbeat(ctx context.Context, cfg *config.AgentConfig, store *TokenSt
 	}
 
 	sendHeartbeat := func() {
-		resp, err := do("/api/v1/agents/heartbeat", api.HeartbeatRequest{AgentID: agentUUID, Status: "online", Version: version, PVEHost: pvebackup.IsPVEHost()})
+		resp, err := do("/api/v1/agents/heartbeat", api.HeartbeatRequest{AgentID: agentUUID, Status: "online", Version: version, PVEHost: pvebackup.IsPVEHost(), DockerHost: dockerHost()})
 		if err != nil {
 			slog.Warn("Heartbeat failed", "error", err)
 			return
@@ -538,7 +546,7 @@ func RunUntil(a Agent, cfg *config.AgentConfig, configPath string, register func
 	defer w.Stop()
 	slog.Info("Agent Temporal worker listening", "queue", cfg.TaskQueue)
 
-	go StartHeartbeat(ctx, cfg, store, a.Version, a.Logging)
+	go StartHeartbeat(ctx, cfg, store, a.Type, a.Version, a.Logging)
 
 	<-stop
 	slog.Info("Shutting down " + a.Name + "...")

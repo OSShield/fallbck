@@ -10,9 +10,11 @@ import (
 
 	"github.com/osshield/fallbck/pkg/agent/backup"
 	dbrun "github.com/osshield/fallbck/pkg/agent/dbbackup"
+	dockerrun "github.com/osshield/fallbck/pkg/agent/dockerbackup"
 	pverun "github.com/osshield/fallbck/pkg/agent/pvebackup"
 	"github.com/osshield/fallbck/pkg/agent/vss"
 	"github.com/osshield/fallbck/pkg/db"
+	dockerspec "github.com/osshield/fallbck/pkg/dockerbackup"
 	"github.com/osshield/fallbck/pkg/proxy"
 	pvespec "github.com/osshield/fallbck/pkg/pvebackup"
 	"github.com/osshield/fallbck/pkg/temporal"
@@ -40,8 +42,10 @@ type AgentActivities struct {
 	LogTail func() string
 	// ReportProgress posts live phase updates to the server (best-effort)
 	ReportProgress ProgressFunc
-	// SpoolDir stages collected data for Proxmox VE host backups (<data dir>/spool)
+	// SpoolDir stages collected data for Proxmox VE and Docker host backups (<data dir>/spool)
 	SpoolDir string
+	// Docker is the agent's docker_backup settings block (socket, volume access, helper image)
+	Docker dockerspec.Config
 	// CacheDir holds the per-group metadata caches for change detection
 	// (<data dir>/pxar-cache); empty disables change detection
 	CacheDir string
@@ -216,6 +220,83 @@ func (a *AgentActivities) ExecutePVEBackup(ctx context.Context, session *tempora
 		}
 		if ctx.Err() != nil {
 			return nil, err
+		}
+		return failed(err)
+	}
+	return result, nil
+}
+
+// ExecuteDockerBackup backs up the Docker host this agent runs on: container,
+// network, volume and image definitions, compose files and the daemon configuration
+// (collect/) plus every named volume (vol-<name>) go into one docker.pxar archive.
+func (a *AgentActivities) ExecuteDockerBackup(ctx context.Context, session *temporal.BackupSessionInfo) (*temporal.BackupExecutionResult, error) {
+	info := activity.GetInfo(ctx)
+	if session.JobType != db.JobTypeDocker {
+		return nil, sdktemporal.NewNonRetryableApplicationError("session is not a Docker host backup", ErrTypeDBPrecheckFailed, nil)
+	}
+	session = sessionForAttempt(ctx, session, a.RefreshTicket)
+	slog.Info("Agent activity started: ExecuteDockerBackup", "activity_id", info.ActivityID, "attempt", info.Attempt,
+		"job_id", session.JobID, "datastore", session.Datastore, "direct_pbs", session.DirectPBS)
+
+	pt := newPhaseTracker()
+	stopHeartbeats := startHeartbeats(ctx, pt)
+	defer stopHeartbeats()
+	reportPh := func() { reportPhase(a.ReportProgress, ctx, session.Ticket, session.BackupRunID, pt.Current()) }
+	stopProgress := startProgress(ctx, pt, 5*time.Second, func(string) { reportPh() })
+	defer stopProgress()
+
+	failed := func(err error) (*temporal.BackupExecutionResult, error) {
+		slog.Error("Docker host backup failed", "error", err, "phase", pt.Current())
+		return &temporal.BackupExecutionResult{Status: db.RunStatusFailed, ErrorMessage: err.Error()},
+			backupFailure(ctx, err, pt, a.LogTail)
+	}
+
+	var dial func(ctx context.Context, ref pbs.SnapshotRef) (net.Conn, error)
+	var direct *backup.DirectOptions
+	if session.DirectPBS {
+		if a.Credentials == nil {
+			return failed(errors.New("job requires direct PBS access but the agent has no credentials fetcher"))
+		}
+		pt.Set("fetching PBS credentials")
+		d, err := a.Credentials(ctx, session.Ticket)
+		if err != nil {
+			return failed(err)
+		}
+		direct = d
+	} else {
+		if a.Tunnel == nil {
+			return failed(errors.New("agent tunnel connection is not configured"))
+		}
+		dial = func(ctx context.Context, _ pbs.SnapshotRef) (net.Conn, error) {
+			return proxy.Dial(ctx, a.Tunnel, session.Ticket)
+		}
+	}
+
+	upload := func(ctx context.Context, paths, readPaths, excludes []string, blobs []gopbs.Blob) (*temporal.BackupExecutionResult, error) {
+		s := *session
+		s.BackupPaths = paths
+		s.ExcludePaths = excludes
+		return backup.Run(ctx, backup.Options{
+			Session: &s, Workers: a.Workers, Dial: dial, Direct: direct, ReadPaths: readPaths,
+			ArchiveName: dockerspec.ArchiveName, Blobs: blobs, CacheDir: a.groupCacheDir(session),
+			OnPhase: func(p string) { pt.Set(p); reportPh() },
+		})
+	}
+	result, err := dockerrun.Run(ctx, dockerrun.RunOptions{
+		Session: session, Spec: session.DockerConfig, Settings: a.Docker, SpoolDir: a.SpoolDir, Upload: upload,
+		Hostname: a.Hostname, AgentVersion: a.Version,
+		Progress: func(p string) { pt.Set(p); reportPh() },
+	})
+	if err != nil {
+		if dbrun.IsPrecheck(err) {
+			slog.Error("Docker host backup precheck failed", "error", err)
+			tail := ""
+			if a.LogTail != nil {
+				tail = a.LogTail()
+			}
+			return &temporal.BackupExecutionResult{Status: db.RunStatusFailed, ErrorMessage: err.Error()},
+				sdktemporal.NewNonRetryableApplicationError(err.Error(), ErrTypeDBPrecheckFailed, err,
+					temporal.BackupFailureDetails{Phase: pt.Current(), LogTail: tail})
 		}
 		return failed(err)
 	}

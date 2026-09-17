@@ -128,6 +128,7 @@ const agentWizard = { step: 1, type: '', target: '', token: '' };
 const AGENT_WIZARD_TYPES = {
   files:      { label: 'filesystem agent', pkg: 'fallbck-agent',    service: 'fallbck-agent' },
   proxmox:    { label: 'filesystem agent', pkg: 'fallbck-agent',    service: 'fallbck-agent' },
+  docker:     { label: 'filesystem agent', pkg: 'fallbck-agent',    service: 'fallbck-agent' },
   database:   { label: 'database agent',   pkg: 'fallbck-db-agent', service: 'fallbck-db-agent' },
   kubernetes: { label: 'Kubernetes agent' }
 };
@@ -346,6 +347,21 @@ function agentWizardSections(type, target, serverUrl, token) {
     return sections;
   }
 
+  if (target === 'docker-container') {
+    sections.push({
+      title: 'Run the agent as a container',
+      text: 'Save this as docker-compose.yml on the Docker host and start it with docker compose up -d. The agent enrolls itself on first start with the key below and keeps its identity in the fallbck_agent_data volume; remove the key afterwards. FALLBCK_AGENT_HOSTNAME names the agent and its snapshot group (host/<hostname>-docker), so set it to the host\'s real name rather than the container id.',
+      code: `services:\n  fallbck-agent:\n    image: oci.fi/fallbck/file-agent:latest\n    container_name: fallbck-agent\n    user: "0:0"\n    restart: unless-stopped\n    environment:\n      FALLBCK_AGENT_HOSTNAME: ${'$'}{HOSTNAME:-docker-host}\n      FALLBCK_AGENT_SERVER_URL: ${serverUrl}\n      FALLBCK_AGENT_ENROLLMENT_KEY: ${token}\n      FALLBCK_AGENT_DOCKER_VOLUME_ACCESS: auto\n    volumes:\n      - fallbck_agent_data:/var/lib/fallbck/agent\n      - /var/run/docker.sock:/var/run/docker.sock\n      - /var/lib/docker/volumes:/var/lib/docker/volumes:ro\n      - /etc/docker:/etc/docker:ro\n      # compose project directories, so their config files can be archived:\n      - /opt/compose:/opt/compose:ro\nvolumes:\n  fallbck_agent_data:`,
+      note: 'Without the /var/lib/docker/volumes mount the agent reads volumes through short-lived helper containers instead (slower, needs spool space). Private or self-signed server certificate: mount the CA bundle and set FALLBCK_AGENT_SERVER_CA to its path, or FALLBCK_AGENT_INSECURE_SKIP_VERIFY=true for testing only.'
+    });
+    sections.push({
+      title: 'Create the Docker host job',
+      text: 'The agent reports a reachable Docker daemon with its first heartbeat (about 30 seconds). Then create a job of type Docker host on the Backup Jobs page. Label containers fallbck.io/pause=true to pause them while their volumes are copied, and fallbck.io/skip=true on containers or volumes to leave them out.',
+      code: 'docker compose logs -f fallbck-agent'
+    });
+    return sections;
+  }
+
   if (target === 'windows') {
     sections.push({
       title: 'Install and enroll from an elevated PowerShell',
@@ -425,7 +441,12 @@ function agentWizardSections(type, target, serverUrl, token) {
     : `${sudo}fallbck-agent enroll --server ${serverUrl} --token ${token}\n${start}`;
   sections.push({ title: 'Or enroll by hand', code: manual });
 
-  if (type === 'proxmox') {
+  if (type === 'docker') {
+    sections.push({
+      title: 'Create the Docker host job',
+      text: 'The agent runs as root, so it reads the Docker socket and /var/lib/docker/volumes directly. It reports a reachable daemon with its next heartbeat (about 30 seconds); then create a job of type Docker host on the Backup Jobs page. Label containers fallbck.io/pause=true to pause them while their volumes are copied, and fallbck.io/skip=true on containers or volumes to leave them out.'
+    });
+  } else if (type === 'proxmox') {
     sections.push({
       title: 'Create the Proxmox VE host job',
       text: 'The agent reports itself as a PVE host with its next heartbeat (about 30 seconds). Then create a job of type Proxmox VE host on the Backup Jobs page; it archives the node configuration into one pve.pxar snapshot per run. Guest disks are not part of it, keep vzdump to PBS for those.'
@@ -531,12 +552,15 @@ function setJobType(type) {
   const form = jobForm();
   const isDB = type === 'database';
   const isPVE = type === 'pve';
+  const isDocker = type === 'docker';
   const fs = document.getElementById('job-fs-fields');
   const dbf = document.getElementById('job-db-fields');
   const pve = document.getElementById('job-pve-fields');
-  fs.hidden = isDB || isPVE; fs.disabled = isDB || isPVE;
+  const dock = document.getElementById('job-docker-fields');
+  fs.hidden = isDB || isPVE || isDocker; fs.disabled = isDB || isPVE || isDocker;
   dbf.hidden = !isDB; dbf.disabled = !isDB;
   pve.hidden = !isPVE; pve.disabled = !isPVE;
+  dock.hidden = !isDocker; dock.disabled = !isDocker;
   const sel = form.elements['agent_id'];
   let keep = false;
   for (const opt of sel.options) {
@@ -547,6 +571,7 @@ function setJobType(type) {
     let match = agentType === type;
     if (type === 'database') match = match || agentType === 'kubernetes';
     if (type === 'pve') match = agentType === 'filesystem' && opt.dataset.pve === 'true';
+    if (type === 'docker') match = agentType === 'filesystem' && opt.dataset.docker === 'true';
     opt.hidden = !match; opt.disabled = !match;
     if (match && opt.selected) keep = true;
   }
@@ -618,6 +643,16 @@ async function editJob(jobId) {
       form.elements['pve_exclude_paths'].value = (pc.exclude_paths || []).join('\n');
       form.elements['pve_include_root_home'].checked = pc.include_root_home !== false;
       form.elements['pve_include_guest_images'].checked = !!pc.include_guest_images;
+    }
+    if (jobType === 'docker') {
+      const dc = job.docker_config || {};
+      form.elements['docker_exclude_containers'].value = (dc.exclude_containers || []).join('\n');
+      form.elements['docker_exclude_volumes'].value = (dc.exclude_volumes || []).join('\n');
+      form.elements['docker_pause_containers'].value = (dc.pause_containers || []).join('\n');
+      form.elements['docker_exclude_paths'].value = (dc.exclude_paths || []).join('\n');
+      form.elements['docker_images'].value = dc.images || 'refs';
+      form.elements['docker_include_unused_volumes'].checked = dc.include_unused_volumes !== false;
+      form.elements['docker_include_stopped'].checked = dc.include_stopped !== false;
     }
     if (jobType === 'database' && job.db_config) {
       const dc = job.db_config;
@@ -710,6 +745,21 @@ async function submitJobForm(e) {
       exclude_paths: lines('pve_exclude_paths'),
       include_root_home: formData.get('pve_include_root_home') === 'on',
       include_guest_images: formData.get('pve_include_guest_images') === 'on'
+    };
+  }
+
+  if (payload.job_type === 'docker') {
+    payload.backup_paths = [];
+    payload.exclude_paths = [];
+    const lines = v => (formData.get(v) || '').split('\n').map(p => p.trim()).filter(p => p.length > 0);
+    payload.docker_config = {
+      exclude_containers: lines('docker_exclude_containers'),
+      exclude_volumes: lines('docker_exclude_volumes'),
+      pause_containers: lines('docker_pause_containers'),
+      exclude_paths: lines('docker_exclude_paths'),
+      images: formData.get('docker_images') || 'refs',
+      include_unused_volumes: formData.get('docker_include_unused_volumes') === 'on',
+      include_stopped: formData.get('docker_include_stopped') === 'on'
     };
   }
 
@@ -1065,7 +1115,7 @@ function renderRun(run) {
   }
   const d = run.details || {};
   const type = d.type || 'filesystem';
-  const typeLabel = { filesystem: 'Filesystem', database: 'Database', kubernetes: 'Kubernetes', pve: 'Proxmox VE host' }[type] || type;
+  const typeLabel = { filesystem: 'Filesystem', database: 'Database', kubernetes: 'Kubernetes', pve: 'Proxmox VE host', docker: 'Docker host' }[type] || type;
 
   const active = RUN_ACTIVE.includes(run.status);
   let html = '';
@@ -1095,6 +1145,7 @@ function renderRun(run) {
   if (type === 'database') html += renderDBDetail(d.manifest || {});
   else if (type === 'kubernetes') html += renderK8sDetail(d.manifest || {});
   else if (type === 'pve') html += renderPVEDetail(d.manifest || {});
+  else if (type === 'docker') html += renderDockerDetail(d.manifest || {});
   else if (d.archives || d.paths) html += renderFsDetail(d);
 
   if (run.log_tail) html += rdCard('Agent log (captured at the run)', rdPre(run.log_tail));
@@ -1208,6 +1259,46 @@ function renderPVEDetail(m) {
     let b = '';
     if (failed.length) b += '<div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">Collectors that failed (best effort)</div>' +
       rdTable(['Collector', 'Command', 'Error'], failed.map(c => [rdEsc(c.name), rdMono(c.command || ''), rdEsc(c.error)]));
+    if (m.warnings && m.warnings.length) b += '<div style="margin-top:12px;font-size:11px;color:var(--text-muted);text-transform:uppercase;">Warnings</div><ul style="margin:4px 0 0 18px;font-size:13px;">' + m.warnings.map(n => `<li>${rdEsc(n)}</li>`).join('') + '</ul>';
+    html += rdCard('Warnings', b);
+  }
+  if (m.restore && m.restore.commands && m.restore.commands.length)
+    html += rdCard('Restore', (m.restore.summary ? `<p style="font-size:13px;margin-bottom:8px;">${rdEsc(m.restore.summary)}</p>` : '') +
+      (m.restore.script ? `<p style="font-size:13px;margin-bottom:8px;">The full runbook is stored in the archive as <code>${rdEsc(m.restore.script)}</code>.</p>` : '') +
+      rdPre(m.restore.commands.join('\n')));
+  return html;
+}
+
+function renderDockerDetail(m) {
+  const h = m.host || {};
+  let html = rdCard('Docker host', rdKV([
+    ['Host', rdEsc((m.generator || {}).hostname || h.hostname || '')], ['Docker', rdEsc(h.docker_version || '-') + (h.api_version ? ` (API ${rdEsc(h.api_version)})` : '')],
+    ['OS', rdEsc(h.os || '-')], ['Kernel', rdEsc(h.kernel || '-')], ['Storage driver', rdEsc(h.storage_driver || '-')],
+    ['Root dir', rdMono(h.root_dir || '-')], ['Volume access', rdEsc(h.volume_access || '-')],
+    ['Swarm', rdEsc(h.swarm || 'inactive') + (h.swarm_manager ? ' (manager)' : '')],
+    ['Containers', `${h.containers || 0} (${h.containers_running || 0} running)`],
+  ]));
+  const containers = (m.containers || []).map(c => [rdEsc(c.name), rdEsc(c.state || ''), rdEsc(c.image || ''), rdEsc(c.compose_project ? `${c.compose_project} / ${c.compose_service || ''}` : ''),
+    rdEsc((c.mounts || []).filter(x => x.type === 'volume').map(x => x.volume).join(', ')), c.paused_for_backup ? 'paused' : '', rdEsc(c.skipped || '')]);
+  html += rdCard('Containers', rdTable(['Name', 'State', 'Image', 'Compose', 'Volumes', 'Consistency', 'Skipped'], containers));
+  const volumes = (m.volumes || []).map(v => [rdEsc(v.name), rdEsc(v.driver || ''), rdEsc((v.used_by || []).join(', ')), v.entry ? rdMono(v.entry) : '-', rdEsc(v.access || ''), rdEsc((v.paused_containers || []).join(', ')), rdEsc(v.skipped || '')]);
+  html += rdCard('Volumes', rdTable(['Name', 'Driver', 'Used by', 'Archive entry', 'Access', 'Paused', 'Skipped'], volumes));
+  const nets = (m.networks || []).filter(n => !n.builtin).map(n => [rdEsc(n.name), rdEsc(n.driver || ''), rdEsc((n.subnets || []).map(s => s.subnet).filter(Boolean).join(', ')), n.internal ? 'yes' : '', rdEsc((n.containers || []).join(', '))]);
+  if (nets.length) html += rdCard('Networks (user-defined)', rdTable(['Name', 'Driver', 'Subnets', 'Internal', 'Containers'], nets));
+  const compose = (m.compose_projects || []).map(p => [rdEsc(p.name), rdMono(p.working_dir || ''), rdEsc((p.services || []).join(', ')), rdEsc((p.archived || []).map(f => f.source).join(', ')) || '<span style="color:var(--warning-text)">none archived</span>']);
+  if (compose.length) html += rdCard('Compose projects', rdTable(['Project', 'Working dir', 'Services', 'Archived files'], compose));
+  const images = (m.images || []).map(i => [rdEsc((i.repo_tags || [])[0] || rdShort((i.id || '').replace('sha256:', ''))), rdEsc(((i.repo_digests || [])[0] || '').split('@')[1] || '').slice(0, 19), rdBytes(i.size_bytes || 0), i.saved ? 'saved' : (i.local ? 'local, not saved' : 'reference'), rdEsc((i.used_by || []).join(', '))]);
+  html += rdCard('Images', rdTable(['Image', 'Digest', 'Size', 'In backup', 'Used by'], images));
+  const entries = (m.entries || []).map(e => [rdMono(e.name), rdMono(e.source), rdEsc(e.kind)]);
+  let layout = rdTable(['Archive entry', 'Source', 'Kind'], entries);
+  if (m.excludes && m.excludes.length) layout += `<div style="margin-top:12px;font-size:11px;color:var(--text-muted);text-transform:uppercase;">Excludes</div>${rdChips(m.excludes)}`;
+  if (m.bind_mounts && m.bind_mounts.length) layout += `<div style="margin-top:12px;font-size:11px;color:var(--text-muted);text-transform:uppercase;">Bind mounts (not archived)</div>` + rdTable(['Host path', 'Containers'], m.bind_mounts.map(b => [rdMono(b.source), rdEsc((b.containers || []).join(', '))]));
+  html += rdCard('Archive layout (' + rdEsc((m.snapshot || {}).archive || 'docker.pxar') + ')', layout);
+  const failed = (m.collected || []).filter(c => c.error);
+  if (failed.length || (m.warnings && m.warnings.length)) {
+    let b = '';
+    if (failed.length) b += '<div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;">Collectors that failed (best effort)</div>' +
+      rdTable(['Collector', 'Source', 'Error'], failed.map(c => [rdEsc(c.name), rdMono(c.endpoint || ''), rdEsc(c.error)]));
     if (m.warnings && m.warnings.length) b += '<div style="margin-top:12px;font-size:11px;color:var(--text-muted);text-transform:uppercase;">Warnings</div><ul style="margin:4px 0 0 18px;font-size:13px;">' + m.warnings.map(n => `<li>${rdEsc(n)}</li>`).join('') + '</ul>';
     html += rdCard('Warnings', b);
   }

@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/osshield/fallbck/pkg/auth"
 	"github.com/osshield/fallbck/pkg/db"
+	"github.com/osshield/fallbck/pkg/dockerbackup"
 	"github.com/osshield/fallbck/pkg/pvebackup"
 )
 
@@ -48,6 +49,22 @@ func (s *ServerAPI) validateJob(ctx context.Context, job *db.BackupJob, existing
 	}
 
 	switch jobType {
+	case db.JobTypeDocker:
+		if len(job.BackupPaths) > 0 {
+			return "Docker host jobs do not take backup paths", errors.New("paths on docker job")
+		}
+		if job.DBConfig != nil || job.K8sConfig != nil || job.PVEConfig != nil {
+			return "Docker host jobs do not take db_config, k8s_config or pve_config", errors.New("foreign config on docker job")
+		}
+		if job.DockerConfig == nil {
+			job.DockerConfig = &dockerbackup.Spec{}
+		}
+		if err := job.DockerConfig.Validate(); err != nil {
+			return err.Error(), err
+		}
+		if agent != nil && !agent.DockerHost {
+			return "Agent " + agent.Hostname + " has not reported a reachable Docker daemon (install the agent on the Docker host, as root or with the socket mounted, and wait for its next heartbeat)", errors.New("agent not a docker host")
+		}
 	case db.JobTypePVE:
 		if len(job.BackupPaths) > 0 {
 			return "Proxmox VE jobs do not take backup paths (add data paths in the PVE settings)", errors.New("paths on pve job")
@@ -109,6 +126,9 @@ func (s *ServerAPI) validateJob(ctx context.Context, job *db.BackupJob, existing
 		}
 		if job.PVEConfig != nil {
 			return "Filesystem jobs do not take pve_config", errors.New("pve_config on filesystem job")
+		}
+		if job.DockerConfig != nil {
+			return "Filesystem jobs do not take docker_config", errors.New("docker_config on filesystem job")
 		}
 		agentOS := ""
 		if agent != nil {

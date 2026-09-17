@@ -40,6 +40,8 @@ func TestUIRenderRoutes(t *testing.T) {
 		{"/agents", http.StatusOK, "Database agent"},
 		{"/agents", http.StatusOK, `id="modal-add-agent"`},
 		{"/agents", http.StatusOK, `data-kind="target" data-value="proxmox"`},
+		{"/agents", http.StatusOK, `data-kind="target" data-value="docker-container"`},
+		{"/jobs", http.StatusOK, `id="job-docker-fields"`},
 		{"/runs", http.StatusOK, "Backup Executions"},
 		{"/tokens", http.StatusOK, "Enrollment Tokens"},
 		{"/apikeys", http.StatusOK, "API Keys"},

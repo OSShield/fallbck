@@ -68,6 +68,8 @@ Database jobs (`job_type: database`, `db_config`) follow the same path with `fal
 | `pkg/k8sbackup` | kubernetes job spec, discovery plan, run manifest (shared) |
 | `pkg/pvebackup` | Proxmox VE host job spec and run manifest (shared) |
 | `pkg/agent/pvebackup` | PVE host collectors (/etc/pve copy, packages, storage/network/disks), restore runbook, run flow |
+| `pkg/dockerbackup` | Docker host job spec, agent-side settings (socket, volume access), run manifest, daemon detection (shared) |
+| `pkg/agent/dockerbackup` | Engine API client over the unix socket, definition/compose/image collectors, direct and helper-container volume reads, pause bracket, restore runbook, run flow |
 | `pkg/agent/vss` | Windows Volume Shadow Copies for backup runs (no-op elsewhere) |
 | `deploy/windows` | WiX source of the Windows MSI (service + enrollment on install) |
 | `pkg/agent/k8sbackup` | resource dump, PVC snapshot/clone, worker pods, Secret identity, orphan sweep |

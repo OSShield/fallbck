@@ -12,3 +12,7 @@ token_expires_at: 2027-08-25T00:00:00Z
 # insecure_skip_verify: false
 # log_level: info                    # debug|info|warn|error; DEBUG=true env wins; the web UI can raise it to debug live
 # enrollment_key: ""                 # set (or FALLBCK_AGENT_ENROLLMENT_KEY) to self-enroll on first start
+# docker_backup:                     # Docker host jobs (env FALLBCK_AGENT_DOCKER_*)
+#   volume_access: auto              # auto | direct (read /var/lib/docker/volumes) | helper (throwaway containers)
+#   helper_image: alpine:3.20        # image of the helper containers
+#   socket: /var/run/docker.sock     # default: DOCKER_HOST (unix://) or /var/run/docker.sock

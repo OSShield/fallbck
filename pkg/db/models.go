@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/osshield/fallbck/pkg/config"
 	"github.com/osshield/fallbck/pkg/dbbackup"
+	"github.com/osshield/fallbck/pkg/dockerbackup"
 	"github.com/osshield/fallbck/pkg/k8sbackup"
 	"github.com/osshield/fallbck/pkg/pvebackup"
 )
@@ -23,6 +24,9 @@ const (
 	// JobTypePVE backs up a Proxmox VE host's configuration; it runs on the
 	// filesystem agent installed on the node
 	JobTypePVE = "pve"
+	// JobTypeDocker backs up a Docker host (definitions, compose files, volumes); it
+	// runs on the filesystem agent installed on the host
+	JobTypeDocker = "docker"
 )
 
 // NormalizeAgentType maps "" to filesystem and reports unknown values
@@ -38,18 +42,21 @@ func NormalizeAgentType(t string) (string, bool) {
 	return t, false
 }
 
-// NormalizeJobType maps "" to filesystem and accepts the job-only type pve
+// NormalizeJobType maps "" to filesystem and accepts the job-only types pve and docker
 func NormalizeJobType(t string) (string, bool) {
-	if t == JobTypePVE {
+	switch t {
+	case JobTypePVE:
 		return JobTypePVE, true
+	case JobTypeDocker:
+		return JobTypeDocker, true
 	}
 	return NormalizeAgentType(t)
 }
 
 // JobAllowedOnAgent reports whether an agent of agentType may run a job of jobType.
 // Job types normally match the agent type; the exceptions are database jobs on a
-// kubernetes agent (dumped from a pod inside the cluster) and Proxmox VE host jobs,
-// which run on the filesystem agent installed on the node.
+// kubernetes agent (dumped from a pod inside the cluster) and Proxmox VE / Docker
+// host jobs, which run on the filesystem agent installed on the host.
 func JobAllowedOnAgent(jobType, agentType string) bool {
 	jobType, _ = NormalizeJobType(jobType)
 	agentType, _ = NormalizeAgentType(agentType)
@@ -59,7 +66,7 @@ func JobAllowedOnAgent(jobType, agentType string) bool {
 	switch jobType {
 	case JobTypeDatabase:
 		return agentType == AgentTypeKubernetes
-	case JobTypePVE:
+	case JobTypePVE, JobTypeDocker:
 		return agentType == AgentTypeFilesystem
 	}
 	return false
@@ -88,7 +95,9 @@ type Agent struct {
 	// DebugLogging raises the agent's log level to debug (applied via heartbeats)
 	DebugLogging bool `json:"debug_logging" db:"debug_logging"`
 	// PVEHost is reported by the agent when it runs on a Proxmox VE node
-	PVEHost    bool        `json:"pve_host" db:"pve_host"`
+	PVEHost bool `json:"pve_host" db:"pve_host"`
+	// DockerHost is reported by the agent when a Docker daemon answers on its host
+	DockerHost bool        `json:"docker_host" db:"docker_host"`
 	Status     AgentStatus `json:"status" db:"status"`
 	LastSeenAt *time.Time  `json:"last_seen_at" db:"last_seen_at"`
 	CreatedAt  time.Time   `json:"created_at" db:"created_at"`
@@ -180,8 +189,10 @@ type BackupJob struct {
 	K8sConfig *k8sbackup.Spec `json:"k8s_config,omitempty" db:"k8s_config"`
 	// PVEConfig is the Proxmox VE host job specification
 	PVEConfig *pvebackup.Spec `json:"pve_config,omitempty" db:"pve_config"`
-	CreatedAt time.Time       `json:"created_at" db:"created_at"`
-	UpdatedAt time.Time       `json:"updated_at" db:"updated_at"`
+	// DockerConfig is the Docker host job specification
+	DockerConfig *dockerbackup.Spec `json:"docker_config,omitempty" db:"docker_config"`
+	CreatedAt    time.Time          `json:"created_at" db:"created_at"`
+	UpdatedAt    time.Time          `json:"updated_at" db:"updated_at"`
 
 	// Joined fields for display
 	AgentName  string `json:"agent_name,omitempty"`
@@ -272,6 +283,9 @@ func (j *BackupJob) IsKubernetes() bool { return j.JobType == JobTypeKubernetes 
 // IsPVE reports whether the job is a Proxmox VE host backup
 func (j *BackupJob) IsPVE() bool { return j.JobType == JobTypePVE }
 
+// IsDocker reports whether the job is a Docker host backup
+func (j *BackupJob) IsDocker() bool { return j.JobType == JobTypeDocker }
+
 // Sanitize redacts the stored database password (HasPassword tells whether one exists)
 func (j *BackupJob) Sanitize() *BackupJob {
 	if j.JobType == "" {
@@ -293,6 +307,9 @@ func (j *BackupJob) Summary() string {
 	}
 	if j.IsPVE() {
 		return j.PVEConfig.Summary()
+	}
+	if j.IsDocker() {
+		return j.DockerConfig.Summary()
 	}
 	return strings.Join(j.BackupPaths, ", ")
 }

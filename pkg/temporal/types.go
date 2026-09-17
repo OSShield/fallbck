@@ -3,6 +3,7 @@ package temporal
 import (
 	"encoding/json"
 	"github.com/osshield/fallbck/pkg/dbbackup"
+	"github.com/osshield/fallbck/pkg/dockerbackup"
 	"github.com/osshield/fallbck/pkg/k8sbackup"
 	"github.com/osshield/fallbck/pkg/pvebackup"
 	"time"
@@ -49,6 +50,8 @@ type BackupSessionInfo struct {
 	K8sConfig *k8sbackup.Spec `json:"k8s_config,omitempty"`
 	// PVEConfig is the Proxmox VE host job specification (job_type pve)
 	PVEConfig *pvebackup.Spec `json:"pve_config,omitempty"`
+	// DockerConfig is the Docker host job specification (job_type docker)
+	DockerConfig *dockerbackup.Spec `json:"docker_config,omitempty"`
 	// JobName is informational (manifest)
 	JobName         string             `json:"job_name,omitempty"`
 	BackupPaths     []string           `json:"backup_paths"`

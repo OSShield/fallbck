@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/osshield/fallbck/pkg/dbbackup"
+	"github.com/osshield/fallbck/pkg/dockerbackup"
 	"github.com/osshield/fallbck/pkg/k8sbackup"
 	"github.com/osshield/fallbck/pkg/pvebackup"
 	sdktemporal "go.temporal.io/sdk/temporal"
@@ -98,7 +99,17 @@ func (s *ServerActivities) PrepareBackupSession(ctx context.Context, jobID uuid.
 	var sessionSpec *dbbackup.Spec
 	var k8sSpec *k8sbackup.Spec
 	var pveSpec *pvebackup.Spec
+	var dockerSpec *dockerbackup.Spec
 	passwordOnServer := false
+	if jobType == db.JobTypeDocker {
+		dockerSpec = job.DockerConfig
+		if dockerSpec == nil {
+			dockerSpec = &dockerbackup.Spec{}
+		}
+		// Definitions and volumes live in their own group next to the host's
+		// filesystem backups
+		claims.BackupID = agent.Hostname + "-docker"
+	}
 	if jobType == db.JobTypePVE {
 		pveSpec = job.PVEConfig
 		if pveSpec == nil {
@@ -181,6 +192,7 @@ func (s *ServerActivities) PrepareBackupSession(ctx context.Context, jobID uuid.
 		DBPasswordOnServer: passwordOnServer,
 		K8sConfig:          k8sSpec,
 		PVEConfig:          pveSpec,
+		DockerConfig:       dockerSpec,
 		BackupPaths:        job.BackupPaths,
 		ExcludePaths:       job.ExcludePaths,
 		RetentionPolicy:    job.RetentionPolicy,
