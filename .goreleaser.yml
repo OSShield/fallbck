@@ -352,7 +352,7 @@ nfpms:
 
 uploads:
   - name: "debpkg"
-    skip: "{{ gt (.Env.GITHUB_RUN_ID | toDecimal ) 0 }}"
+    skip: "{{ ne (envOrDefault \"GITHUB_RUN_ID\" \"\") \"\" }}"
     ids:
       - fallbck-server
       - fallbck-agent
@@ -366,7 +366,7 @@ uploads:
     custom_artifact_name: true
 
   - name: "apkpkg"
-    skip: "{{ gt (.Env.GITHUB_RUN_ID | toDecimal ) 0 }}"
+    skip: "{{ ne (envOrDefault \"GITHUB_RUN_ID\" \"\") \"\" }}"
     ids:
       - fallbck-server
       - fallbck-agent
@@ -380,7 +380,7 @@ uploads:
     custom_artifact_name: true
 
   - name: "rpmpkg"
-    skip: "{{ gt (.Env.GITHUB_RUN_ID | toDecimal ) 0 }}"
+    skip: "{{ ne (envOrDefault \"GITHUB_RUN_ID\" \"\") \"\" }}"
     ids:
       - fallbck-server
       - fallbck-agent
