@@ -352,6 +352,7 @@ nfpms:
 
 uploads:
   - name: "debpkg"
+    skip: "{{ gt .Env.GITHUB_RUN_ID 0 }}"
     ids:
       - fallbck-server
       - fallbck-agent
@@ -365,6 +366,7 @@ uploads:
     custom_artifact_name: true
 
   - name: "apkpkg"
+    skip: "{{ gt .Env.GITHUB_RUN_ID 0 }}"
     ids:
       - fallbck-server
       - fallbck-agent
@@ -378,6 +380,7 @@ uploads:
     custom_artifact_name: true
 
   - name: "rpmpkg"
+    skip: "{{ gt .Env.GITHUB_RUN_ID 0 }}"
     ids:
       - fallbck-server
       - fallbck-agent
@@ -389,3 +392,6 @@ uploads:
     username: "linux_push"
     target: https://rpm.pkg.lv/upload?repo=all
     custom_artifact_name: true
+
+release:
+  disable: "{{ eq .Env.GITHUB_RUN_ID 0 }}"
