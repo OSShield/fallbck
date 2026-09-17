@@ -82,6 +82,16 @@ jobs:
         run: |
           mkdir -p dist
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.AgentVersion=${{ steps.version.outputs.version }}" -o dist/fallbck-agent.exe ./cmd/fallbck-agent
+
+      - name: Sign executable
+        uses: ossign/ossign@main
+        with:
+          config: ${{ secrets.OSSIGN_CONFIG }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          installOnly: false
+          inputFile: dist/fallbck-agent.exe
+          fileType: pecoff
+
       - name: Build MSI (WiX)
         shell: bash
         run: |
@@ -89,6 +99,16 @@ jobs:
           if [ ! -f "$WIXDIR/candle.exe" ]; then echo "WiX Toolset not found in $WIXDIR"; exit 1; fi
           "$WIXDIR/candle.exe" -nologo -arch x64 -dVersion=${{ steps.version.outputs.version }} -dSource=dist/fallbck-agent.exe -ext WixUtilExtension -ext WixUIExtension -o dist/fallbck-agent.wixobj deploy/windows/fallbck-agent.wxs
           "$WIXDIR/light.exe" -nologo -ext WixUtilExtension -ext WixUIExtension -o dist/fallbck-agent_Windows_x86_64.msi dist/fallbck-agent.wixobj
+      
+      - name: Sign MSI
+        uses: ossign/ossign@main
+        with:
+          config: ${{ secrets.OSSIGN_CONFIG }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          installOnly: false
+          inputFile: dist/fallbck-agent_Windows_x86_64.msi
+          fileType: msi
+
       - name: Upload MSI artifact
         uses: actions/upload-artifact@v4
         with:
