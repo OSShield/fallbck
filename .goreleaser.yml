@@ -394,4 +394,4 @@ uploads:
     custom_artifact_name: true
 
 release:
-  disable: "{{ eq .Env.GITHUB_RUN_ID 0 }}"
+  disable: "{{ eq .Env.GITHUB_RUN_ID "0" }}"
