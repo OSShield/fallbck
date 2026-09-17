@@ -130,6 +130,7 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_RUN_ID: ${{ env.GITHUB_RUN_ID }}
           UPLOAD_DEBPKG_SECRET: ${{ secrets.PKG_UPLOAD_PASSWORD }}
           UPLOAD_APKPKG_SECRET: ${{ secrets.PKG_UPLOAD_PASSWORD }}
           UPLOAD_RPMPKG_SECRET: ${{ secrets.PKG_UPLOAD_PASSWORD }}
