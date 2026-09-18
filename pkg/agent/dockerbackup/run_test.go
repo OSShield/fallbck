@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -238,11 +239,11 @@ func TestRunHelperMode(t *testing.T) {
 	procSelfCgroup, procSelfMounts = "/nonexistent/cgroup", "/nonexistent/mountinfo"
 	_ = os.WriteFile(daemonConfigPath, []byte(`{"log-driver":"json-file"}`), 0o600)
 
-	spec := &dockerspec.Spec{Images: dockerspec.ImagesLocal, ExcludeVolumes: []string{"tool*"}}
+	spec := &dockerspec.Spec{Images: dockerspec.ImagesLocal, ExcludeVolumes: []string{"tool*"}, HostPaths: []string{"/srv/app"}}
 	call, m := runWith(t, f, spec, dockerspec.Config{VolumeAccess: dockerspec.VolumeAccessHelper}, spool)
 
 	// Archive layout: collect + the two volumes that were not excluded (orphan is unused but included by default)
-	wantPaths := []string{logicalRoot + "/collect", logicalRoot + "/vol-data", logicalRoot + "/vol-orphan"}
+	wantPaths := []string{logicalRoot + "/collect", logicalRoot + "/vol-data", logicalRoot + "/vol-orphan", logicalRoot + "/host-srv-app"}
 	if strings.Join(call.paths, " ") != strings.Join(wantPaths, " ") {
 		t.Errorf("paths %v", call.paths)
 	}
@@ -339,13 +340,19 @@ func TestRunHelperMode(t *testing.T) {
 	script, _ := os.ReadFile(filepath.Join(collectDir, dockerspec.RestoreScriptName))
 	for _, want := range []string{"docker network create --driver bridge --subnet 172.20.0.0/16 --gateway 172.20.0.1", "docker volume create --label com.docker.compose.project=app data",
 		"vol-data:/src:ro", "docker load -i \"$COLLECT/images/local_tools_dev.tar\"", "docker pull postgres@sha256:aaaa", "docker compose -p app -f /srv/app/docker-compose.yml up -d",
-		"docker run -d --name tools", "/srv/app/init"} {
+		"docker run -d --name tools", "/srv/app/init", "cp -a \"$RESTORE_DIR/host-srv-app/.\" /srv/app"} {
 		if !strings.Contains(string(script), want) {
 			t.Errorf("restore script lacks %q", want)
 		}
 	}
 	if m.Restore.Script != "collect/"+dockerspec.RestoreScriptName || len(m.Restore.Commands) == 0 {
 		t.Errorf("restore %+v", m.Restore)
+	}
+	// The runbook must at least parse as bash (when bash is around to check)
+	if bash, err := exec.LookPath("bash"); err == nil {
+		if out, err := exec.Command(bash, "-n", filepath.Join(collectDir, dockerspec.RestoreScriptName)).CombinedOutput(); err != nil {
+			t.Errorf("restore script does not parse: %v\n%s", err, out)
+		}
 	}
 }
 
@@ -362,8 +369,42 @@ func TestRunDirectMode(t *testing.T) {
 	// No pause label match: the paused container is still labeled, so "data" is staged;
 	// disable pausing by excluding the container from the pause set via IncludeStopped
 	// is not possible, so test staging here and plain direct reads with "orphan"
-	spec := &dockerspec.Spec{IncludeUnusedVolumes: boolPtr(true), ExcludeVolumes: []string{"toolcache"}}
-	call, m := runWith(t, f, spec, dockerspec.Config{VolumeAccess: dockerspec.VolumeAccessAuto}, t.TempDir())
+	hostDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(hostDir, "compose.yml"), []byte("services: {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	spec := &dockerspec.Spec{IncludeUnusedVolumes: boolPtr(true), ExcludeVolumes: []string{"toolcache"}, HostPaths: []string{hostDir, "/nonexistent/compose"}}
+	spool := t.TempDir()
+	call, m := runWith(t, f, spec, dockerspec.Config{VolumeAccess: dockerspec.VolumeAccessAuto}, spool)
+
+	// Host paths (sorted by the spec): the visible one is read in place, the invisible
+	// one is bind-mounted into a helper container and streamed out
+	hps := map[string]dockerspec.HostPath{}
+	for _, h := range m.HostPaths {
+		hps[h.Path] = h
+	}
+	if len(hps) != 2 {
+		t.Fatalf("host paths %+v", m.HostPaths)
+	}
+	if h := hps[hostDir]; h.Access != accessDirect || h.Entry != dockerspec.HostPathEntry(hostDir) || h.Skipped != "" {
+		t.Errorf("visible host path %+v", h)
+	}
+	if h := hps["/nonexistent/compose"]; h.Access != accessHelper || h.Entry != "host-nonexistent-compose" || h.Skipped != "" {
+		t.Errorf("invisible host path %+v", h)
+	}
+	if !strings.Contains(strings.Join(f.recorded(), "\n"), "create /nonexistent/compose:/vol:ro") {
+		t.Error("invisible host path was not read through a helper container")
+	}
+	found := map[string]string{}
+	for i, p := range call.paths {
+		found[p] = call.readPaths[i]
+	}
+	if found[logicalRoot+"/"+dockerspec.HostPathEntry(hostDir)] != hostDir {
+		t.Errorf("visible host path not read in place: %v", found)
+	}
+	if rp := found[logicalRoot+"/host-nonexistent-compose"]; !strings.HasPrefix(rp, spool) {
+		t.Errorf("helper-read host path must be staged in the spool: %q", rp)
+	}
 
 	vols := map[string]dockerspec.Volume{}
 	for _, v := range m.Volumes {

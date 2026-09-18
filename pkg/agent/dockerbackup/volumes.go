@@ -65,7 +65,18 @@ func volumeAccess(mode string, v *dockerspec.Volume) (string, error) {
 
 // extractVolume streams the volume through a helper container into dst
 func extractVolume(ctx context.Context, files *hostFiles, name, dst string) error {
-	id, err := files.createHelper(ctx, []string{name + ":/vol:ro"})
+	return extractViaHelper(ctx, files, name, dst)
+}
+
+// extractHostPath streams a host directory through a helper container into dst
+func extractHostPath(ctx context.Context, files *hostFiles, hostPath, dst string) error {
+	return extractViaHelper(ctx, files, hostPath, dst)
+}
+
+// extractViaHelper mounts source (a volume name or an absolute host directory) at
+// /vol in a helper container and extracts its archive stream into dst
+func extractViaHelper(ctx context.Context, files *hostFiles, source, dst string) error {
+	id, err := files.createHelper(ctx, []string{source + ":/vol:ro"})
 	if err != nil {
 		return err
 	}

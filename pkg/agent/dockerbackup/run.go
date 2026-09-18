@@ -177,6 +177,44 @@ func Run(ctx context.Context, o RunOptions) (*temporal.BackupExecutionResult, er
 		readPaths = append(readPaths, source)
 		entries = append(entries, dockerspec.ArchiveEntry{Name: entry, Source: source, Kind: "volume"})
 	}
+	// Additional host paths: read in place when visible, otherwise through a helper
+	// container (the agent running as a container without that directory mounted)
+	var hostPaths []dockerspec.HostPath
+	for _, hp := range spec.HostPaths {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		entry := dockerspec.HostPathEntry(hp)
+		h := dockerspec.HostPath{Path: hp, Entry: entry}
+		source := hp
+		if st, err := os.Stat(hp); err == nil && st.IsDir() {
+			h.Access = accessDirect
+		} else if mode == dockerspec.VolumeAccessDirect {
+			h.Entry, h.Skipped = "", fmt.Sprintf("not readable by the agent: %v", err)
+		} else {
+			progress("copying host path " + hp)
+			dst := filepath.Join(stageDir, safeName(entry))
+			if err := extractHostPath(ctx, files, hp, dst); err != nil {
+				_ = os.RemoveAll(dst)
+				if ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
+				h.Entry, h.Skipped = "", "copy failed: "+err.Error()
+			} else {
+				h.Access, source = accessHelper, dst
+			}
+		}
+		if h.Skipped != "" {
+			inv.Warnings = append(inv.Warnings, fmt.Sprintf("host path %s skipped: %s", hp, h.Skipped))
+			hostPaths = append(hostPaths, h)
+			continue
+		}
+		usedModes[h.Access] = true
+		hostPaths = append(hostPaths, h)
+		paths = append(paths, logicalRoot+"/"+entry)
+		readPaths = append(readPaths, source)
+		entries = append(entries, dockerspec.ArchiveEntry{Name: entry, Source: hp, Kind: "host"})
+	}
 	inv.Host.VolumeAccess = summarizeModes(usedModes)
 
 	// Manifest + restore runbook, both inside collect/ and the manifest as a blob
@@ -200,6 +238,7 @@ func Run(ctx context.Context, o RunOptions) (*temporal.BackupExecutionResult, er
 		Images:        nonNil(inv.Images),
 		Compose:       nonNil(inv.Compose),
 		Daemon:        inv.Daemon,
+		HostPaths:     hostPaths,
 		BindMounts:    inv.BindMounts,
 		Entries:       entries,
 		Excludes:      spec.ExcludePaths,
