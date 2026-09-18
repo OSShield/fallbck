@@ -13,6 +13,9 @@ import (
 // containersFlag makes the script run the generated docker run commands
 const containersFlag = "--containers"
 
+// hostPathsFlag makes the script copy the archived host paths back in place
+const hostPathsFlag = "--host-paths"
+
 // restoreSummary is the one-line description shown in the UI
 func restoreSummary(m *dockerspec.Manifest, at time.Time) string {
 	vols := 0
@@ -39,7 +42,7 @@ func restoreCommands(m *dockerspec.Manifest, namespace string) []string {
 		fmt.Sprintf("proxmox-backup-client restore %s %s.pxar /var/tmp/fallbck-docker-restore%s", snapshot, dockerspec.ArchiveName, ns),
 		"# 2. Review, then run the generated restore script (dry run first):",
 		fmt.Sprintf("bash /var/tmp/fallbck-docker-restore/%s/%s --dry-run", dockerspec.CollectEntry, dockerspec.RestoreScriptName),
-		fmt.Sprintf("bash /var/tmp/fallbck-docker-restore/%s/%s --yes            # add %s to also recreate standalone containers", dockerspec.CollectEntry, dockerspec.RestoreScriptName, containersFlag),
+		fmt.Sprintf("bash /var/tmp/fallbck-docker-restore/%s/%s --yes            # add %s to also recreate standalone containers, %s to copy the host paths back", dockerspec.CollectEntry, dockerspec.RestoreScriptName, containersFlag, hostPathsFlag),
 	}
 }
 
@@ -67,11 +70,12 @@ func restoreScript(m *dockerspec.Manifest, namespace, helperImage string) string
 	w("#")
 	w("# Options: --dry-run (print only), --yes (no confirmations), %s (also run the", containersFlag)
 	w("# generated docker run commands for containers that are not part of a compose")
-	w("# project; review them first), --restore-dir <dir> (default: the directory this")
-	w("# script sits in, minus /%s), --helper-image <image> (default %s).", dockerspec.CollectEntry, helperImage)
+	w("# project; review them first), %s (copy the archived host paths back to their", hostPathsFlag)
+	w("# original locations), --restore-dir <dir> (default: the directory this script sits")
+	w("# in, minus /%s), --helper-image <image> (default %s).", dockerspec.CollectEntry, helperImage)
 	w("set -euo pipefail")
 	w("")
-	w("DRY=0; YES=0; CONTAINERS=0")
+	w("DRY=0; YES=0; CONTAINERS=0; HOSTPATHS=0")
 	w("HELPER_IMAGE=%s", shellQuote(helperImage))
 	w("SCRIPT_DIR=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"")
 	w("RESTORE_DIR=\"$(dirname \"$SCRIPT_DIR\")\"")
@@ -80,6 +84,7 @@ func restoreScript(m *dockerspec.Manifest, namespace, helperImage string) string
 	w("    --dry-run) DRY=1 ;;")
 	w("    --yes) YES=1 ;;")
 	w("    %s) CONTAINERS=1 ;;", containersFlag)
+	w("    %s) HOSTPATHS=1 ;;", hostPathsFlag)
 	w("    --restore-dir) RESTORE_DIR=\"$2\"; shift ;;")
 	w("    --helper-image) HELPER_IMAGE=\"$2\"; shift ;;")
 	w("    *) echo \"unknown option $1\" >&2; exit 2 ;;")
@@ -227,6 +232,30 @@ func restoreScript(m *dockerspec.Manifest, namespace, helperImage string) string
 	}
 	if imgs == 0 {
 		w("echo '   no images recorded'")
+	}
+
+	// 4b. host paths (before compose, since project directories are often among them)
+	w("")
+	w("# ---- 4b. Host paths ---------------------------------------------------------")
+	w("say 'Host paths (archived directories outside the volumes)'")
+	hostPaths := 0
+	for _, h := range m.HostPaths {
+		if h.Entry == "" {
+			continue
+		}
+		hostPaths++
+		w("echo '   %s  <-  $RESTORE_DIR/%s'", h.Path, h.Entry)
+		w("if [ \"$HOSTPATHS\" = 1 ]; then")
+		w("  if [ -e %s ] && [ -n \"$(ls -A %s 2>/dev/null)\" ]; then", shellQuote(h.Path), shellQuote(h.Path))
+		w("    confirm '%s exists and is not empty; copy the archived files over it?' || { echo '   kept as is'; SKIP_HP_%d=1; }", h.Path, hostPaths)
+		w("  fi")
+		w("  if [ \"${SKIP_HP_%d:-0}\" != 1 ]; then run mkdir -p %s; run cp -a \"$RESTORE_DIR/%s/.\" %s; fi", hostPaths, shellQuote(h.Path), h.Entry, shellQuote(h.Path))
+		w("fi")
+	}
+	if hostPaths == 0 {
+		w("echo '   none'")
+	} else {
+		w("[ \"$HOSTPATHS\" = 1 ] || echo '   (listed only; re-run with %s to copy them back)'", hostPathsFlag)
 	}
 
 	// 5. compose projects

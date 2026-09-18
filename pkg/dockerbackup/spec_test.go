@@ -39,10 +39,29 @@ func TestSpecValidateNormalises(t *testing.T) {
 	}
 }
 
+func TestSpecHostPaths(t *testing.T) {
+	s := &Spec{HostPaths: []string{" /srv/app/ ", "/opt/compose", "/srv/app", ""}}
+	if err := s.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(s.HostPaths, ",") != "/opt/compose,/srv/app" {
+		t.Errorf("host paths %v", s.HostPaths)
+	}
+	if HostPathEntry("/srv/app/") != "host-srv-app" || HostPathEntry("/opt") != "host-opt" {
+		t.Error("entry names")
+	}
+	if !strings.Contains(s.Summary(), "+ /opt/compose, /srv/app") {
+		t.Errorf("summary %q", s.Summary())
+	}
+}
+
 func TestSpecValidateRejects(t *testing.T) {
 	cases := map[string]*Spec{
-		"bad glob":  {ExcludeContainers: []string{"[abc"}},
-		"bad image": {Images: "some"},
+		"bad glob":      {ExcludeContainers: []string{"[abc"}},
+		"bad image":     {Images: "some"},
+		"relative path": {HostPaths: []string{"srv/app"}},
+		"root path":     {HostPaths: []string{"/"}},
+		"nested paths":  {HostPaths: []string{"/srv", "/srv/app"}},
 	}
 	for name, s := range cases {
 		if err := s.Validate(); err == nil {

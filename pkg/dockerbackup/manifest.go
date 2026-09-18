@@ -25,8 +25,10 @@ type Manifest struct {
 	Images        []Image           `json:"images"`
 	Compose       []ComposeProject  `json:"compose_projects"`
 	Daemon        DaemonInfo        `json:"daemon"`
+	// HostPaths are the job's additional host directories and how they were archived
+	HostPaths []HostPath `json:"host_paths,omitempty"`
 	// BindMounts lists host directories mounted into containers; they are recorded
-	// for the operator but not archived (a filesystem job covers them)
+	// for the operator but not archived unless listed as a host path
 	BindMounts []BindMount `json:"bind_mounts,omitempty"`
 	// Entries maps archive top-level names to their source
 	Entries  []ArchiveEntry `json:"entries"`
@@ -196,6 +198,14 @@ type DaemonInfo struct {
 	Archived   bool   `json:"archived"`
 }
 
+// HostPath is one additional host directory of the job
+type HostPath struct {
+	Path    string `json:"path"`
+	Entry   string `json:"entry,omitempty"`  // archive entry (host-<path>)
+	Access  string `json:"access,omitempty"` // direct | helper
+	Skipped string `json:"skipped,omitempty"`
+}
+
 // BindMount is a host directory mounted into containers
 type BindMount struct {
 	Source     string   `json:"source"`
@@ -206,7 +216,7 @@ type BindMount struct {
 type ArchiveEntry struct {
 	Name   string `json:"name"`
 	Source string `json:"source"`
-	// Kind: collect | volume
+	// Kind: collect | volume | host
 	Kind string `json:"kind"`
 }
 

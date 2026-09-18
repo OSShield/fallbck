@@ -654,6 +654,7 @@ async function editJob(jobId) {
       form.elements['docker_exclude_volumes'].value = (dc.exclude_volumes || []).join('\n');
       form.elements['docker_pause_containers'].value = (dc.pause_containers || []).join('\n');
       form.elements['docker_exclude_paths'].value = (dc.exclude_paths || []).join('\n');
+      form.elements['docker_host_paths'].value = (dc.host_paths || []).join('\n');
       form.elements['docker_images'].value = dc.images || 'refs';
       form.elements['docker_include_unused_volumes'].checked = dc.include_unused_volumes !== false;
       form.elements['docker_include_stopped'].checked = dc.include_stopped !== false;
@@ -761,6 +762,7 @@ async function submitJobForm(e) {
       exclude_volumes: lines('docker_exclude_volumes'),
       pause_containers: lines('docker_pause_containers'),
       exclude_paths: lines('docker_exclude_paths'),
+      host_paths: lines('docker_host_paths'),
       images: formData.get('docker_images') || 'refs',
       include_unused_volumes: formData.get('docker_include_unused_volumes') === 'on',
       include_stopped: formData.get('docker_include_stopped') === 'on'
@@ -1295,8 +1297,9 @@ function renderDockerDetail(m) {
   html += rdCard('Images', rdTable(['Image', 'Digest', 'Size', 'In backup', 'Used by'], images));
   const entries = (m.entries || []).map(e => [rdMono(e.name), rdMono(e.source), rdEsc(e.kind)]);
   let layout = rdTable(['Archive entry', 'Source', 'Kind'], entries);
+  if (m.host_paths && m.host_paths.length) layout += `<div style="margin-top:12px;font-size:11px;color:var(--text-muted);text-transform:uppercase;">Host paths</div>` + rdTable(['Path', 'Archive entry', 'Access', 'Skipped'], m.host_paths.map(h => [rdMono(h.path), h.entry ? rdMono(h.entry) : '-', rdEsc(h.access || ''), rdEsc(h.skipped || '')]));
   if (m.excludes && m.excludes.length) layout += `<div style="margin-top:12px;font-size:11px;color:var(--text-muted);text-transform:uppercase;">Excludes</div>${rdChips(m.excludes)}`;
-  if (m.bind_mounts && m.bind_mounts.length) layout += `<div style="margin-top:12px;font-size:11px;color:var(--text-muted);text-transform:uppercase;">Bind mounts (not archived)</div>` + rdTable(['Host path', 'Containers'], m.bind_mounts.map(b => [rdMono(b.source), rdEsc((b.containers || []).join(', '))]));
+  if (m.bind_mounts && m.bind_mounts.length) layout += `<div style="margin-top:12px;font-size:11px;color:var(--text-muted);text-transform:uppercase;">Bind mounts (archived only when listed as a host path)</div>` + rdTable(['Host path', 'Containers'], m.bind_mounts.map(b => [rdMono(b.source), rdEsc((b.containers || []).join(', '))]));
   html += rdCard('Archive layout (' + rdEsc((m.snapshot || {}).archive || 'docker.pxar') + ')', layout);
   const failed = (m.collected || []).filter(c => c.error);
   if (failed.length || (m.warnings && m.warnings.length)) {

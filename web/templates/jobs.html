@@ -198,7 +198,11 @@
             </div>
           </div>
           <div class="form-group">
-            <label>Exclude patterns (optional, one per line, proxmox-backup-client syntax, matched against archive paths such as /vol-data/cache)</label>
+            <label>Additional host paths (optional, one per line; compose project directories, bind-mounted data; archived file by file as host-&lt;path&gt;)</label>
+            <textarea name="docker_host_paths" class="form-control" rows="2" placeholder="/opt/compose&#10;/srv/app/data"></textarea>
+          </div>
+          <div class="form-group">
+            <label>Exclude patterns (optional, one per line, proxmox-backup-client syntax, matched against archive paths such as /vol-data/cache or /host-srv-app/tmp)</label>
             <textarea name="docker_exclude_paths" class="form-control" rows="2" placeholder="/vol-*/cache&#10;*.tmp"></textarea>
           </div>
           <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px;">

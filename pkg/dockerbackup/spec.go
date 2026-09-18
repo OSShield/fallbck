@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/osshield/gopbs/scan"
@@ -27,6 +29,9 @@ const (
 	CollectEntry = "collect"
 	// VolumeEntryPrefix prefixes the archive entry of every named volume
 	VolumeEntryPrefix = "vol-"
+	// HostPathEntryPrefix prefixes the archive entry of every additional host path
+	// (/srv/app → host-srv-app)
+	HostPathEntryPrefix = "host-"
 )
 
 // Labels honoured on containers and volumes
@@ -64,8 +69,12 @@ type Spec struct {
 	// PauseContainers are name globs of containers paused while their volumes are
 	// read, in addition to those labeled fallbck.io/pause=true
 	PauseContainers []string `json:"pause_containers,omitempty"`
+	// HostPaths are additional host directories archived file by file next to the
+	// volumes (compose project directories, bind-mounted data, /etc/docker extras),
+	// each as its own entry host-<path>
+	HostPaths []string `json:"host_paths,omitempty"`
 	// ExcludePaths are proxmox-backup-client style patterns against archive paths
-	// (/vol-<name>/...)
+	// (/vol-<name>/..., /host-<path>/...)
 	ExcludePaths []string `json:"exclude_paths,omitempty"`
 }
 
@@ -96,6 +105,9 @@ func (s *Spec) Validate() error {
 		return specErr("images must be %s, %s or %s", ImagesRefs, ImagesLocal, ImagesAll)
 	}
 	s.Images = mode
+	if s.HostPaths, err = cleanHostPaths(s.HostPaths); err != nil {
+		return err
+	}
 	var patterns []string
 	for _, p := range s.ExcludePaths {
 		if p = strings.TrimSpace(p); p != "" {
@@ -123,6 +135,44 @@ func cleanGlobs(field string, globs []string) ([]string, error) {
 		out = append(out, g)
 	}
 	return out, nil
+}
+
+// cleanHostPaths normalises the host paths: absolute, cleaned, not the root, no
+// duplicates and none inside another
+func cleanHostPaths(paths []string) ([]string, error) {
+	seen := map[string]bool{}
+	var cleaned []string
+	for _, p := range paths {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if !strings.HasPrefix(p, "/") {
+			return nil, specErr("host path %q must be absolute", p)
+		}
+		p = filepath.ToSlash(filepath.Clean(p))
+		if p == "/" {
+			return nil, specErr("host path / is not allowed; this job backs up definitions and volumes, not the whole disk")
+		}
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		cleaned = append(cleaned, p)
+	}
+	sort.Strings(cleaned)
+	for i := 1; i < len(cleaned); i++ {
+		if strings.HasPrefix(cleaned[i], cleaned[i-1]+"/") {
+			return nil, specErr("host path %s is inside %s", cleaned[i], cleaned[i-1])
+		}
+	}
+	return cleaned, nil
+}
+
+// HostPathEntry is the archive entry name of a host path (/srv/app → host-srv-app)
+func HostPathEntry(p string) string {
+	trimmed := strings.Trim(filepath.ToSlash(filepath.Clean(p)), "/")
+	return HostPathEntryPrefix + strings.ReplaceAll(trimmed, "/", "-")
 }
 
 // NormalizeImages maps "" to refs and reports unknown modes
@@ -174,6 +224,7 @@ func (s *Spec) Clone() *Spec {
 	c.ExcludeContainers = append([]string(nil), s.ExcludeContainers...)
 	c.ExcludeVolumes = append([]string(nil), s.ExcludeVolumes...)
 	c.PauseContainers = append([]string(nil), s.PauseContainers...)
+	c.HostPaths = append([]string(nil), s.HostPaths...)
 	c.ExcludePaths = append([]string(nil), s.ExcludePaths...)
 	if s.IncludeUnusedVolumes != nil {
 		v := *s.IncludeUnusedVolumes
@@ -194,6 +245,9 @@ func (s *Spec) Summary() string {
 	}
 	if len(s.ExcludeVolumes) > 0 {
 		parts = append(parts, "except "+strings.Join(s.ExcludeVolumes, ", "))
+	}
+	if len(s.HostPaths) > 0 {
+		parts = append(parts, "+ "+strings.Join(s.HostPaths, ", "))
 	}
 	switch s.EffImages() {
 	case ImagesLocal:
