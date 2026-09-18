@@ -1,0 +1,26 @@
+{{/* Proxmox VE host job fields. */}}
+{{define "job-fields-pve"}}
+<fieldset id="job-pve-fields" style="border: 0; padding: 0; margin: 0;" hidden disabled>
+  <div style="background-color: var(--bg-subtle); padding: 14px; border-radius: var(--radius-sm); margin-bottom: 16px; font-size: 13px;">
+    Always included: <code>/etc</code> (with a consistent copy of <code>/etc/pve</code> and the cluster database), the installed and manually selected package lists, storage, network and disk definitions (partition tables), guest configurations, and a generated restore script for a fresh Proxmox VE install. Guest disks are not part of this backup; use vzdump to PBS for those.
+  </div>
+  <div class="form-group">
+    <label>Data paths (optional, one per line; mounted data storages, archived file by file)</label>
+    <textarea name="pve_data_paths" class="form-control" rows="2" placeholder="/var/lib/vz&#10;/mnt/pve/nfs-data"></textarea>
+  </div>
+  <div class="form-group">
+    <label>Exclude patterns (optional, one per line, proxmox-backup-client syntax, matched against archive paths)</label>
+    <textarea name="pve_exclude_paths" class="form-control" rows="2" placeholder="/vz/template/cache"></textarea>
+  </div>
+  <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px;">
+    <div style="display: flex; align-items: center; gap: 8px;">
+      <input type="checkbox" id="pve_include_root_home" name="pve_include_root_home" checked>
+      <label for="pve_include_root_home" style="font-size: 13px;">Include /root (dotfiles, scripts, SSH keys of the root account)</label>
+    </div>
+    <div style="display: flex; align-items: center; gap: 8px;">
+      <input type="checkbox" id="pve_include_guest_images" name="pve_include_guest_images">
+      <label for="pve_include_guest_images" style="font-size: 13px;">Keep guest disk images found under the data paths (images/, private/, subvol-*); off by default because vzdump covers them</label>
+    </div>
+  </div>
+</fieldset>
+{{end}}

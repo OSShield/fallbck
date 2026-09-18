@@ -147,6 +147,10 @@ type EnrollmentToken struct {
 	UsesCount int       `json:"uses_count" db:"uses_count"`
 	ExpiresAt time.Time `json:"expires_at" db:"expires_at"`
 	CreatedAt time.Time `json:"created_at" db:"created_at"`
+	// AgentID is the agent that last enrolled with this token (onboarding waits for it)
+	AgentID *uuid.UUID `json:"agent_id,omitempty" db:"agent_id"`
+	// AgentHostname is joined for display; empty when no agent used the token
+	AgentHostname string `json:"agent_hostname,omitempty" db:"-"`
 }
 
 // Status describes whether the token can still be used

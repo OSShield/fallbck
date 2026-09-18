@@ -138,6 +138,14 @@ type CreateTargetRequest struct {
 	PxarFormat  string `json:"pxar_format"`
 }
 
+// CloneTargetRequest creates a target from an existing one with another namespace
+// (POST /targets/{id}/clone); the API token is copied server-side
+type CloneTargetRequest struct {
+	Name       string `json:"name"`
+	Namespace  string `json:"namespace"`
+	PxarFormat string `json:"pxar_format,omitempty"`
+}
+
 // PBSCredentials are handed to an agent for a job configured with direct_pbs
 type PBSCredentials struct {
 	Endpoint    string `json:"endpoint"`

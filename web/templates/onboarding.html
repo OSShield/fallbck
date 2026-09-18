@@ -1,0 +1,254 @@
+{{define "content"}}
+<div id="onboarding" data-timezone="{{.Timezone}}">
+  <div style="margin-bottom: 14px;">
+    <p style="color: var(--text-muted); font-size: 14px;">Install an agent, wait for it to enroll, then set up its backups step by step. The address bar keeps track of where you are, so a reload continues the flow.</p>
+  </div>
+
+  <div class="wizard-progress ob-progress">
+    <div class="wizard-progress-group">
+      <span class="ob-group-label">Agent</span>
+      <div class="wizard-progress-steps">
+        <div class="wizard-progress-step" data-step="1"><span class="wizard-progress-num">1</span> Type</div>
+        <div class="wizard-progress-step" data-step="2"><span class="wizard-progress-num">2</span> Platform</div>
+        <div class="wizard-progress-step" data-step="3"><span class="wizard-progress-num">3</span> Install</div>
+        <div class="wizard-progress-step" data-step="4"><span class="wizard-progress-num">4</span> Enrolled</div>
+      </div>
+    </div>
+    <div class="wizard-progress-group">
+      <span class="ob-group-label">Backup</span>
+      <div class="wizard-progress-steps">
+        <div class="wizard-progress-step" data-step="5"><span class="wizard-progress-num">5</span> Type</div>
+        <div class="wizard-progress-step" data-step="6"><span class="wizard-progress-num">6</span> Target</div>
+        <div class="wizard-progress-step" data-step="7"><span class="wizard-progress-num">7</span> Contents</div>
+        <div class="wizard-progress-step" data-step="8"><span class="wizard-progress-num">8</span> Schedule</div>
+        <div class="wizard-progress-step" data-step="9"><span class="wizard-progress-num">9</span> Review</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-body ob-body" style="padding: 20px 24px;">
+
+      <!-- ---- Phase A: agent ---------------------------------------------- -->
+      <div class="wizard-page" data-step="1">
+        <p class="wizard-lead">What should this agent back up?</p>
+        <div id="ob-type-options" class="wizard-options">
+          <div class="wizard-option" role="button" tabindex="0" data-kind="type" data-value="files" onclick="obSelect(this)" onkeydown="obKey(event, this)">
+            <div class="wizard-option-title">Files</div>
+            <div class="wizard-option-desc">Filesystem agent for Linux and Windows hosts. Directories and volumes are archived to Proxmox Backup Server as pxar snapshots with metadata change detection.</div>
+          </div>
+          <div class="wizard-option" role="button" tabindex="0" data-kind="type" data-value="database" onclick="obSelect(this)" onkeydown="obKey(event, this)">
+            <div class="wizard-option-title">Database</div>
+            <div class="wizard-option-desc">Database agent: the same fallbck-agent with the vendor client tools installed. Dumps PostgreSQL, MySQL/MariaDB and MongoDB and records WAL, binlog and oplog positions for point-in-time restores.</div>
+          </div>
+          <div class="wizard-option" role="button" tabindex="0" data-kind="type" data-value="kubernetes" onclick="obSelect(this)" onkeydown="obKey(event, this)">
+            <div class="wizard-option-title">Kubernetes</div>
+            <div class="wizard-option-desc">In-cluster agent installed with Helm. Backs up all API resources, persistent volumes (CSI snapshots or live mounts) and databases running inside the cluster.</div>
+          </div>
+          <div class="wizard-option" role="button" tabindex="0" data-kind="type" data-value="proxmox" onclick="obSelect(this)" onkeydown="obKey(event, this)">
+            <div class="wizard-option-title">Proxmox VE host</div>
+            <div class="wizard-option-desc">Filesystem agent on a Proxmox VE node. Archives the node configuration (/etc/pve, packages, storage, network, disk layout) for disaster recovery. Guest disks stay with vzdump.</div>
+          </div>
+          <div class="wizard-option" role="button" tabindex="0" data-kind="type" data-value="docker" onclick="obSelect(this)" onkeydown="obKey(event, this)">
+            <div class="wizard-option-title">Docker host</div>
+            <div class="wizard-option-desc">Filesystem agent on a Docker host, as a package or as a container with the socket mounted. Archives container, network and volume definitions, compose files and every named volume.</div>
+          </div>
+        </div>
+        <p class="wizard-note" style="margin-top: 12px;">Already have an agent enrolled? <a href="#" onclick="obShowExisting(event)">Set up backups for an existing agent</a>.</p>
+        <div id="ob-existing" class="form-group" hidden style="margin-top: 10px; max-width: 480px;">
+          <label>Agent</label>
+          <select id="ob-existing-agent" class="form-control">
+            <option value="">-- Choose agent --</option>
+            {{range .Agents}}
+              <option value="{{.ID}}">{{.Hostname}} ({{.AgentType}}{{if .PVEHost}}, Proxmox VE{{end}}{{if .DockerHost}}, Docker{{end}}{{if .DBTools}}, DB tools{{end}})</option>
+            {{end}}
+          </select>
+          <button type="button" class="btn btn-secondary btn-sm" style="margin-top: 8px;" onclick="obUseExisting()">Continue with this agent</button>
+        </div>
+      </div>
+
+      <div class="wizard-page" data-step="2">
+        <p class="wizard-lead">Where will the <span id="ob-type-label">agent</span> run?</p>
+        <div id="ob-platform-options" class="wizard-options">
+          <div class="wizard-option" role="button" tabindex="0" data-kind="platform" data-value="debian" data-types="files,database,docker" onclick="obSelect(this)" onkeydown="obKey(event, this)">
+            <div class="wizard-option-title">Debian / Ubuntu</div>
+            <div class="wizard-option-desc">apt package from deb.pkg.lv, managed by systemd.</div>
+          </div>
+          <div class="wizard-option" role="button" tabindex="0" data-kind="platform" data-value="rhel" data-types="files,database,docker" onclick="obSelect(this)" onkeydown="obKey(event, this)">
+            <div class="wizard-option-title">RHEL / Rocky / Alma / Fedora</div>
+            <div class="wizard-option-desc">rpm package from rpm.pkg.lv, managed by systemd.</div>
+          </div>
+          <div class="wizard-option" role="button" tabindex="0" data-kind="platform" data-value="alpine" data-types="files,database,docker" onclick="obSelect(this)" onkeydown="obKey(event, this)">
+            <div class="wizard-option-title">Alpine Linux</div>
+            <div class="wizard-option-desc">apk package from alpine.pkg.lv, managed by OpenRC.</div>
+          </div>
+          <div class="wizard-option" role="button" tabindex="0" data-kind="platform" data-value="linux-other" data-types="files,database,docker" onclick="obSelect(this)" onkeydown="obKey(event, this)">
+            <div class="wizard-option-title">Other Linux</div>
+            <div class="wizard-option-desc">Static binary from the GitHub release with a hand-installed systemd or OpenRC service.</div>
+          </div>
+          <div class="wizard-option" role="button" tabindex="0" data-kind="platform" data-value="windows" data-types="files" onclick="obSelect(this)" onkeydown="obKey(event, this)">
+            <div class="wizard-option-title">Windows</div>
+            <div class="wizard-option-desc">MSI installer from the GitHub release, runs as a Windows service with Volume Shadow Copies.</div>
+          </div>
+          <div class="wizard-option" role="button" tabindex="0" data-kind="platform" data-value="kubernetes" data-types="kubernetes" onclick="obSelect(this)" onkeydown="obKey(event, this)">
+            <div class="wizard-option-title">Kubernetes cluster</div>
+            <div class="wizard-option-desc">Helm chart from oci.fi installed into the fallbck namespace of the target cluster.</div>
+          </div>
+          <div class="wizard-option" role="button" tabindex="0" data-kind="platform" data-value="docker-container" data-types="docker,database" onclick="obSelect(this)" onkeydown="obKey(event, this)">
+            <div class="wizard-option-title">Docker container</div>
+            <div class="wizard-option-desc">The agent container image (compose snippet): as root with the Docker socket mounted for Docker host backups, or the tools flavour for databases reachable over the network.</div>
+          </div>
+          <div class="wizard-option" role="button" tabindex="0" data-kind="platform" data-value="proxmox" data-types="proxmox" onclick="obSelect(this)" onkeydown="obKey(event, this)">
+            <div class="wizard-option-title">Proxmox VE node</div>
+            <div class="wizard-option-desc">Debian-based: the apt package from deb.pkg.lv installed as root on the node.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="wizard-page" data-step="3">
+        <div id="ob-instructions"></div>
+        <div style="background-color: var(--bg-subtle); padding: 14px; border-radius: var(--radius-sm); font-size: 13px; color: var(--text-muted);">
+          <strong>What happens during enrollment:</strong>
+          <ol style="margin-left: 18px; margin-top: 6px; display: flex; flex-direction: column; gap: 4px;">
+            <li>The agent contacts the server and validates the single-use token.</li>
+            <li>The server provisions a dedicated task queue and issues the agent's bearer token.</li>
+            <li>The agent starts its worker and reports its capabilities with the first heartbeat.</li>
+          </ol>
+        </div>
+      </div>
+
+      <div class="wizard-page" data-step="4">
+        <div id="ob-waiting">
+          <p class="wizard-lead"><span class="ob-spinner"></span>Waiting for the agent to enroll with the token from the previous step…</p>
+          <p class="wizard-note">This page checks every few seconds. Leave it open, or come back to this link later.</p>
+        </div>
+        <div id="ob-agent-card" class="ob-agent-card" hidden></div>
+        <p id="ob-wait-hint" class="wizard-note" hidden></p>
+        <p class="wizard-note" style="margin-top: 12px;"><a href="#" onclick="obRemint(event)">Lost the instructions? Mint a new token and show them again</a></p>
+      </div>
+
+      <!-- ---- Phase B: backups --------------------------------------------- -->
+      <div class="wizard-page" data-step="5">
+        <p class="wizard-lead">What should <strong id="ob-agent-name">the agent</strong> back up?</p>
+        <div id="ob-backup-options" class="wizard-options">
+          <div class="wizard-option" role="button" tabindex="0" data-kind="backup" data-value="filesystem" onclick="obSelect(this)" onkeydown="obKey(event, this)">
+            <div class="wizard-option-title">Files</div>
+            <div class="wizard-option-desc">Directories or whole volumes, archived file by file with change detection.</div>
+          </div>
+          <div class="wizard-option" role="button" tabindex="0" data-kind="backup" data-value="database" onclick="obSelect(this)" onkeydown="obKey(event, this)">
+            <div class="wizard-option-title">Database</div>
+            <div class="wizard-option-desc">PostgreSQL, MySQL/MariaDB or MongoDB dumps with WAL, binlog or oplog positions.</div>
+          </div>
+          <div class="wizard-option" role="button" tabindex="0" data-kind="backup" data-value="pve" onclick="obSelect(this)" onkeydown="obKey(event, this)">
+            <div class="wizard-option-title">Proxmox VE host</div>
+            <div class="wizard-option-desc">Node configuration, package lists, storage and network definitions, optional data paths.</div>
+          </div>
+          <div class="wizard-option" role="button" tabindex="0" data-kind="backup" data-value="docker" onclick="obSelect(this)" onkeydown="obKey(event, this)">
+            <div class="wizard-option-title">Docker host</div>
+            <div class="wizard-option-desc">Container, network and volume definitions, compose files, named volumes and extra host paths.</div>
+          </div>
+          <div class="wizard-option" role="button" tabindex="0" data-kind="backup" data-value="kubernetes" onclick="obSelect(this)" onkeydown="obKey(event, this)">
+            <div class="wizard-option-title">Kubernetes cluster</div>
+            <div class="wizard-option-desc">All API resources plus persistent volumes, one snapshot group per PVC.</div>
+          </div>
+        </div>
+        <p id="ob-backup-note" class="wizard-note" style="margin-top: 10px;" hidden></p>
+      </div>
+
+      <div class="wizard-page" data-step="6">
+        <p class="wizard-lead">Which Proxmox Backup Server target should the backups go to?</p>
+        <div id="ob-target-options" class="wizard-options">
+          {{range .Targets}}
+          <div class="wizard-option" role="button" tabindex="0" data-kind="target" data-value="{{.ID}}" data-name="{{.Name}}" data-namespace="{{.Namespace}}" data-datastore="{{.Datastore}}" data-endpoint="{{.Endpoint}}" onclick="obSelect(this)" onkeydown="obKey(event, this)">
+            <div class="wizard-option-title">{{.Name}}</div>
+            <div class="wizard-option-desc">{{.Endpoint}}<br>datastore <code>{{.Datastore}}</code>{{if .Namespace}}, namespace <code>{{.Namespace}}</code>{{else}}, root namespace{{end}}, pxar {{if .PxarFormat}}{{.PxarFormat}}{{else}}v1{{end}}</div>
+            <button type="button" class="btn btn-secondary btn-sm ob-card-action" onclick="event.stopPropagation(); obShowClone('{{.ID}}', '{{.Name}}', '{{.Namespace}}')">Clone with another namespace</button>
+          </div>
+          {{end}}
+          <div class="wizard-option" role="button" tabindex="0" data-kind="target" data-value="__new" onclick="obSelect(this)" onkeydown="obKey(event, this)">
+            <div class="wizard-option-title">New target</div>
+            <div class="wizard-option-desc">Register another Proxmox Backup Server, datastore or namespace.</div>
+          </div>
+        </div>
+
+        <div id="ob-target-clone" hidden style="margin-top: 16px; max-width: 560px;">
+          <h4 style="font-size: 14px; margin-bottom: 8px;">Clone <span id="ob-clone-source"></span> into another namespace</h4>
+          <p class="wizard-note" style="margin-bottom: 10px;">Same PBS, datastore, API token, fingerprint and TLS setting; the token is copied on the server and never shown.</p>
+          <form id="ob-clone-form" onsubmit="obCloneTarget(event)">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+              <div class="form-group"><label>Name</label><input type="text" name="name" class="form-control" required></div>
+              <div class="form-group"><label>Namespace (must exist on the datastore)</label><input type="text" name="namespace" class="form-control" required placeholder="hosts/web-01"></div>
+            </div>
+            <button type="submit" class="btn btn-primary btn-sm">Create clone</button>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="obHideTargetForms()">Cancel</button>
+          </form>
+        </div>
+
+        <div id="ob-target-new" hidden style="margin-top: 16px; max-width: 640px;">
+          <h4 style="font-size: 14px; margin-bottom: 8px;">New target</h4>
+          <form id="target-form" data-target-id="" onsubmit="obCreateTarget(event)">
+            {{template "target-fields" .}}
+            <div style="margin-top: 12px;">
+              <button type="submit" class="btn btn-primary btn-sm">Create target</button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="obHideTargetForms()">Cancel</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <form id="job-form" data-job-id="" data-agent-type="" data-job-type="" onsubmit="event.preventDefault(); obNext();">
+        <input type="hidden" name="agent_id">
+        <input type="hidden" name="target_id">
+        <div class="wizard-page" data-step="7">
+          <div class="form-group">
+            <label>Job name</label>
+            <input type="text" name="name" class="form-control" placeholder="e.g. Nightly files" required>
+          </div>
+          {{template "job-fields-filesystem" .}}
+          {{template "job-fields-pve" .}}
+          {{template "job-fields-docker" .}}
+          {{template "job-fields-database" .}}
+          <fieldset id="job-k8s-fields" style="border: 0; padding: 0; margin: 0;" hidden disabled>
+            {{template "job-fields-kubernetes" .}}
+          </fieldset>
+        </div>
+        <div class="wizard-page" data-step="8">
+          <p class="wizard-lead">When should it run?</p>
+          <div class="ob-presets">
+            <button type="button" class="btn btn-secondary btn-sm" onclick="obPreset('0 2 * * *')">Daily 02:00</button>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="obPreset('0 */6 * * *')">Every 6 hours</button>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="obPreset('0 * * * *')">Hourly</button>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="obPreset('0 3 * * 0')">Weekly, Sunday 03:00</button>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="obPreset('')">Manual only</button>
+          </div>
+          {{template "job-schedule" .}}
+        </div>
+      </form>
+
+      <div class="wizard-page" data-step="9">
+        <p class="wizard-lead">Review and create</p>
+        <dl class="ob-review" id="ob-review"></dl>
+        <p id="ob-review-error" class="wizard-note" style="color: var(--danger-text); margin-top: 10px;" hidden></p>
+      </div>
+
+      <div class="wizard-page" data-step="summary">
+        <p class="wizard-lead">Backups for <strong id="ob-summary-agent"></strong></p>
+        <div id="ob-summary-jobs" class="ob-jobs"></div>
+        <div style="display: flex; gap: 8px;">
+          <button type="button" class="btn btn-primary" onclick="obAddAnother()">Add another backup</button>
+          <a class="btn btn-secondary" href="/jobs">Finish</a>
+        </div>
+      </div>
+
+      <div class="ob-footer">
+        <div><button type="button" class="btn btn-secondary" id="ob-back" onclick="obBack()">Back</button></div>
+        <div class="ob-footer-right">
+          <a class="btn btn-secondary" href="/agents" id="ob-cancel">Cancel</a>
+          <button type="button" class="btn btn-primary" id="ob-next" onclick="obNext()">Next</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{{end}}
+{{define "scripts"}}<script src="/static/js/onboarding.js" defer></script>{{end}}

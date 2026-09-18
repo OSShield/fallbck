@@ -88,6 +88,7 @@ func (s *ServerAPI) RegisterRoutes(r chi.Router, admin, agent Middleware) {
 			// Enrollment tokens
 			r.Post("/tokens", s.HandleCreateToken)
 			r.Get("/tokens", s.HandleListTokens)
+			r.Get("/tokens/{id}", s.HandleGetToken)
 			r.Delete("/tokens/{id}", s.HandleDeleteToken)
 
 			// API keys
@@ -101,6 +102,7 @@ func (s *ServerAPI) RegisterRoutes(r chi.Router, admin, agent Middleware) {
 			r.Get("/targets/{id}", s.HandleGetTarget)
 			r.Get("/targets/{id}/credentials", s.HandleTargetCredentials)
 			r.Put("/targets/{id}", s.HandleUpdateTarget)
+			r.Post("/targets/{id}/clone", s.HandleCloneTarget)
 			r.Delete("/targets/{id}", s.HandleDeleteTarget)
 
 			// Jobs
@@ -192,6 +194,10 @@ func (s *ServerAPI) HandleAgentEnroll(w http.ResponseWriter, r *http.Request) {
 		slog.Error("Failed to store agent in database", "error", err)
 		s.writeError(w, http.StatusInternalServerError, "Failed to register agent record")
 		return
+	}
+	// Remember which agent the token produced: the onboarding page waits for it
+	if err := s.DB.BindTokenAgent(r.Context(), token.ID, agentID); err != nil {
+		slog.Warn("Failed to bind enrollment token to agent", "token", token.ID, "agent", agentID, "error", err)
 	}
 
 	const initialTokenVersion = 1
@@ -482,6 +488,73 @@ func (s *ServerAPI) HandleListTokens(w http.ResponseWriter, r *http.Request) {
 		tokens = []*db.EnrollmentToken{}
 	}
 	s.writeJSON(w, http.StatusOK, tokens)
+}
+
+// HandleGetToken returns one enrollment token (without its hash) including the agent
+// that used it, which the onboarding page polls while waiting for an enrollment
+func (s *ServerAPI) HandleGetToken(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "Invalid token ID")
+		return
+	}
+	token, err := s.DB.GetEnrollmentToken(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			s.writeError(w, http.StatusNotFound, "Token not found")
+			return
+		}
+		s.writeError(w, http.StatusInternalServerError, "Failed to load token")
+		return
+	}
+	s.writeJSON(w, http.StatusOK, token)
+}
+
+// HandleCloneTarget creates a target from an existing one with a different namespace.
+// The stored API token is copied on the server; it is never returned to a client.
+func (s *ServerAPI) HandleCloneTarget(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "Invalid target ID")
+		return
+	}
+	var req CloneTargetRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	req.Namespace = strings.Trim(strings.TrimSpace(req.Namespace), "/")
+	if req.Name == "" || req.Namespace == "" {
+		s.writeError(w, http.StatusBadRequest, "Name and namespace are required (the clone differs from its source by namespace)")
+		return
+	}
+	switch req.PxarFormat {
+	case "", db.PxarFormatV1, db.PxarFormatV2:
+	default:
+		s.writeError(w, http.StatusBadRequest, "pxar_format must be v1 or v2")
+		return
+	}
+	source, err := s.DB.GetTargetByID(r.Context(), id)
+	if err != nil {
+		s.writeError(w, http.StatusNotFound, "Target not found")
+		return
+	}
+	if req.Namespace == strings.Trim(source.Namespace, "/") {
+		s.writeError(w, http.StatusBadRequest, "The clone must use a different namespace than "+source.Name)
+		return
+	}
+	if !source.HasToken {
+		s.writeError(w, http.StatusConflict, "Target "+source.Name+" has no API token stored; add one before cloning it")
+		return
+	}
+	target, err := s.DB.CloneTarget(r.Context(), id, req.Name, req.Namespace, req.PxarFormat)
+	if err != nil {
+		slog.Error("Cloning target failed", "source", id, "error", err)
+		s.writeError(w, http.StatusInternalServerError, "Failed to clone target (is the name unique?)")
+		return
+	}
+	s.writeJSON(w, http.StatusCreated, target)
 }
 
 // HandleCreateTarget registers a new backup target

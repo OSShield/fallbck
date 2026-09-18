@@ -1,0 +1,14 @@
+{{/* Filesystem job fields (directories + excludes). Shared by the Jobs modal and the onboarding page. */}}
+{{define "job-fields-filesystem"}}
+<fieldset id="job-fs-fields" style="border: 0; padding: 0; margin: 0;">
+  <div class="form-group">
+    <label>Directories to Back Up (one per line)</label>
+    <textarea name="backup_paths" class="form-control" rows="3" placeholder="/etc&#10;/var/www&#10;/home/data" required></textarea>
+  </div>
+
+  <div class="form-group">
+    <label>Exclude Patterns (optional, one per line, proxmox-backup-client syntax)</label>
+    <textarea name="exclude_paths" class="form-control" rows="2" placeholder="*.tmp&#10;/var/cache&#10;node_modules"></textarea>
+  </div>
+</fieldset>
+{{end}}

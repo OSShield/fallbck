@@ -1,0 +1,50 @@
+{{/* Docker host job fields. */}}
+{{define "job-fields-docker"}}
+<fieldset id="job-docker-fields" style="border: 0; padding: 0; margin: 0;" hidden disabled>
+  <div style="background-color: var(--bg-subtle); padding: 14px; border-radius: var(--radius-sm); margin-bottom: 16px; font-size: 13px;">
+    Always included: <code>docker inspect</code> of every container, network and volume, the compose config files named in the container labels (plus <code>.env</code>), <code>/etc/docker/daemon.json</code>, image references with digests, and a generated restore script. Every named volume is archived file by file as <code>vol-&lt;name&gt;</code>. Bind mounts are listed in the manifest but not archived (use a filesystem job). Label a container or volume <code>fallbck.io/skip=true</code> to leave it out; label a container <code>fallbck.io/pause=true</code> to pause it while its volumes are copied.
+  </div>
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+    <div class="form-group">
+      <label>Exclude containers (optional, one name pattern per line)</label>
+      <textarea name="docker_exclude_containers" class="form-control" rows="2" placeholder="buildkit*&#10;test-*"></textarea>
+    </div>
+    <div class="form-group">
+      <label>Exclude volumes (optional, one name pattern per line)</label>
+      <textarea name="docker_exclude_volumes" class="form-control" rows="2" placeholder="*_cache&#10;buildx_*"></textarea>
+    </div>
+  </div>
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+    <div class="form-group">
+      <label>Pause containers while copying their volumes (optional, one name pattern per line)</label>
+      <textarea name="docker_pause_containers" class="form-control" rows="2" placeholder="postgres&#10;app-db-*"></textarea>
+    </div>
+    <div class="form-group">
+      <label>Images</label>
+      <select name="docker_images" class="form-control">
+        <option value="refs">References only (name, tag, digest; restore pulls them)</option>
+        <option value="local">Also save locally built images (no registry reference)</option>
+        <option value="all">Save every image in use (large)</option>
+      </select>
+    </div>
+  </div>
+  <div class="form-group">
+    <label>Additional host paths (optional, one per line; compose project directories, bind-mounted data; archived file by file as host-&lt;path&gt;)</label>
+    <textarea name="docker_host_paths" class="form-control" rows="2" placeholder="/opt/compose&#10;/srv/app/data"></textarea>
+  </div>
+  <div class="form-group">
+    <label>Exclude patterns (optional, one per line, proxmox-backup-client syntax, matched against archive paths such as /vol-data/cache or /host-srv-app/tmp)</label>
+    <textarea name="docker_exclude_paths" class="form-control" rows="2" placeholder="/vol-*/cache&#10;*.tmp"></textarea>
+  </div>
+  <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px;">
+    <div style="display: flex; align-items: center; gap: 8px;">
+      <input type="checkbox" id="docker_include_unused_volumes" name="docker_include_unused_volumes" checked>
+      <label for="docker_include_unused_volumes" style="font-size: 13px;">Include volumes no container mounts</label>
+    </div>
+    <div style="display: flex; align-items: center; gap: 8px;">
+      <input type="checkbox" id="docker_include_stopped" name="docker_include_stopped" checked>
+      <label for="docker_include_stopped" style="font-size: 13px;">Include the definitions of stopped containers</label>
+    </div>
+  </div>
+</fieldset>
+{{end}}

@@ -206,11 +206,11 @@ func (d *DB) ValidateAndConsumeToken(ctx context.Context, tokenHash string) (*En
 		UPDATE enrollment_tokens
 		SET uses_count = uses_count + 1
 		WHERE token_hash = $1 AND expires_at > NOW() AND (max_uses = 0 OR uses_count < max_uses)
-		RETURNING id, token_hash, name, max_uses, uses_count, expires_at, created_at
+		RETURNING id, token_hash, name, max_uses, uses_count, expires_at, created_at, agent_id
 	`
 	row := d.Pool.QueryRow(ctx, query, tokenHash)
 	var t EnrollmentToken
-	err := row.Scan(&t.ID, &t.TokenHash, &t.Name, &t.MaxUses, &t.UsesCount, &t.ExpiresAt, &t.CreatedAt)
+	err := row.Scan(&t.ID, &t.TokenHash, &t.Name, &t.MaxUses, &t.UsesCount, &t.ExpiresAt, &t.CreatedAt, &t.AgentID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("invalid or expired token")
@@ -233,9 +233,12 @@ func (d *DB) DeleteEnrollmentToken(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
+// tokenColumns joins the hostname of the agent that used the token
+const tokenColumns = `t.id, t.token_hash, t.name, t.max_uses, t.uses_count, t.expires_at, t.created_at, t.agent_id, COALESCE(a.hostname, '')
+		FROM enrollment_tokens t LEFT JOIN agents a ON a.id = t.agent_id`
+
 func (d *DB) ListEnrollmentTokens(ctx context.Context) ([]*EnrollmentToken, error) {
-	query := `SELECT id, token_hash, name, max_uses, uses_count, expires_at, created_at FROM enrollment_tokens ORDER BY created_at DESC`
-	rows, err := d.Pool.Query(ctx, query)
+	rows, err := d.Pool.Query(ctx, `SELECT `+tokenColumns+` ORDER BY t.created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -244,12 +247,32 @@ func (d *DB) ListEnrollmentTokens(ctx context.Context) ([]*EnrollmentToken, erro
 	var tokens []*EnrollmentToken
 	for rows.Next() {
 		var t EnrollmentToken
-		if err := rows.Scan(&t.ID, &t.TokenHash, &t.Name, &t.MaxUses, &t.UsesCount, &t.ExpiresAt, &t.CreatedAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.TokenHash, &t.Name, &t.MaxUses, &t.UsesCount, &t.ExpiresAt, &t.CreatedAt, &t.AgentID, &t.AgentHostname); err != nil {
 			return nil, err
 		}
 		tokens = append(tokens, &t)
 	}
 	return tokens, rows.Err()
+}
+
+// GetEnrollmentToken loads one token (with the hostname of the agent that used it)
+func (d *DB) GetEnrollmentToken(ctx context.Context, id uuid.UUID) (*EnrollmentToken, error) {
+	var t EnrollmentToken
+	err := d.Pool.QueryRow(ctx, `SELECT `+tokenColumns+` WHERE t.id = $1`, id).
+		Scan(&t.ID, &t.TokenHash, &t.Name, &t.MaxUses, &t.UsesCount, &t.ExpiresAt, &t.CreatedAt, &t.AgentID, &t.AgentHostname)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return &t, nil
+}
+
+// BindTokenAgent records the agent that enrolled with the token
+func (d *DB) BindTokenAgent(ctx context.Context, tokenID, agentID uuid.UUID) error {
+	_, err := d.Pool.Exec(ctx, `UPDATE enrollment_tokens SET agent_id = $2 WHERE id = $1`, tokenID, agentID)
+	return err
 }
 
 // ==========================================
@@ -277,6 +300,26 @@ func (d *DB) CreateTarget(ctx context.Context, target *BackupTarget) error {
 		target.Namespace, target.AuthTokenEncrypted, target.Fingerprint, target.TLSVerify, target.PxarFormat,
 		target.CreatedAt, target.UpdatedAt,
 	).Scan(&target.ID)
+}
+
+// CloneTarget creates a new target from an existing one: same PBS endpoint,
+// datastore, API token (copied encrypted, it never leaves the server), fingerprint,
+// TLS setting and (unless overridden) pxar format, with a new name and namespace.
+func (d *DB) CloneTarget(ctx context.Context, sourceID uuid.UUID, name, namespace, pxarFormat string) (*BackupTarget, error) {
+	id := uuid.New()
+	now := time.Now().UTC()
+	tag, err := d.Pool.Exec(ctx, `
+		INSERT INTO backup_targets (id, name, target_type, endpoint, datastore, namespace, auth_token_encrypted, fingerprint, tls_verify, pxar_format, created_at, updated_at)
+		SELECT $1, $2, target_type, endpoint, datastore, $3, auth_token_encrypted, fingerprint, tls_verify, COALESCE(NULLIF($4::text, ''), pxar_format), $5, $5
+		FROM backup_targets WHERE id = $6`,
+		id, name, namespace, pxarFormat, now, sourceID)
+	if err != nil {
+		return nil, err
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, ErrNotFound
+	}
+	return d.GetTargetByID(ctx, id)
 }
 
 // UpdateTarget replaces a target's editable fields (name, endpoint, datastore,
