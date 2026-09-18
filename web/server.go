@@ -91,6 +91,7 @@ func (u *UIHandler) RegisterRoutes(r chi.Router) {
 		})
 		r.Get("/dashboard", u.HandleDashboard)
 		r.Get("/agents", u.HandleAgents)
+		r.Get("/onboarding", u.HandleOnboarding)
 		r.Get("/targets", u.HandleTargets)
 		r.Get("/jobs", u.HandleJobs)
 		r.Get("/kubernetes", u.HandleKubernetes)
@@ -270,7 +271,7 @@ func (u *UIHandler) renderPage(w http.ResponseWriter, r *http.Request, pageTempl
 	tmpl, err := template.New("layout").Funcs(template.FuncMap{
 		"formatBytes": formatBytes,
 		"formatTime":  formatTime,
-	}).ParseFS(Content, "templates/layout.html", "templates/"+pageTemplate)
+	}).ParseFS(Content, "templates/layout.html", "templates/partials/*.html", "templates/"+pageTemplate)
 
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Template rendering error: %v", err), http.StatusInternalServerError)
@@ -347,6 +348,28 @@ func (u *UIHandler) HandleAgents(w http.ResponseWriter, r *http.Request) {
 		"Title":     "Agents",
 		"ActiveNav": "agents",
 		"Agents":    agents,
+	})
+}
+
+// HandleOnboarding renders the guided flow that installs an agent and creates its
+// first backup jobs (agent type → platform → install → wait for the enrollment →
+// backup type → target → contents → schedule → review, then a summary). The page
+// keeps its state in the URL; existing agents and targets are listed for the
+// "existing agent" shortcut and the target step.
+func (u *UIHandler) HandleOnboarding(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	var agents []*db.Agent
+	var targets []*db.BackupTarget
+	if u.DB != nil {
+		agents, _ = u.DB.ListAgents(ctx)
+		targets, _ = u.DB.ListTargets(ctx)
+	}
+	u.renderPage(w, r, "onboarding.html", map[string]interface{}{
+		"Title":     "Set up a new server",
+		"ActiveNav": "agents",
+		"Timezone":  u.timezone(),
+		"Agents":    agents,
+		"Targets":   targets,
 	})
 }
 

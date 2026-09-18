@@ -1,0 +1,86 @@
+{{/* Kubernetes cluster job fields (API resources and volumes). */}}
+{{define "job-fields-kubernetes"}}
+<div style="background-color: var(--bg-subtle); padding: 14px; border-radius: var(--radius-sm); margin-bottom: 16px;">
+  <label style="font-weight: 600; font-size: 13px; margin-bottom: 8px; display: block;">API resources</label>
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+    <div class="form-group">
+      <label style="font-size: 12px; color: var(--text-muted);">Namespaces to include (globs, one per line; blank = all)</label>
+      <textarea name="k8s_ns_include" class="form-control" rows="2" placeholder="app-*&#10;shared"></textarea>
+    </div>
+    <div class="form-group">
+      <label style="font-size: 12px; color: var(--text-muted);">Namespaces to exclude</label>
+      <textarea name="k8s_ns_exclude" class="form-control" rows="2"></textarea>
+    </div>
+  </div>
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+    <div class="form-group">
+      <label style="font-size: 12px; color: var(--text-muted);">Label selector (applies to every resource type)</label>
+      <input type="text" name="k8s_label_selector" class="form-control" placeholder="team=web,env in (prod)">
+    </div>
+    <div class="form-group">
+      <label style="font-size: 12px; color: var(--text-muted);">Extra resource excludes (group/resource, one per line)</label>
+      <textarea name="k8s_resources_exclude" class="form-control" rows="2" placeholder="cert-manager.io/*&#10;apps/replicasets"></textarea>
+    </div>
+  </div>
+  <div style="display: flex; align-items: center; gap: 8px;">
+    <input type="checkbox" id="k8s_include_secrets" name="k8s_include_secrets" checked>
+    <label for="k8s_include_secrets" style="font-size: 13px;">Include Secrets (recommended for disaster recovery — they land in PBS; untick to exclude them)</label>
+  </div>
+</div>
+
+<div style="background-color: var(--bg-subtle); padding: 14px; border-radius: var(--radius-sm); margin-bottom: 16px;">
+  <label style="font-weight: 600; font-size: 13px; margin-bottom: 8px; display: block;">Volumes (PVCs)</label>
+  <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
+    <div class="form-group">
+      <label style="font-size: 12px; color: var(--text-muted);">Mode</label>
+      <select name="k8s_volumes_mode" class="form-control">
+        <option value="all">All PVCs (passing the filters)</option>
+        <option value="labeled">Only labeled PVCs</option>
+        <option value="none">No volumes (resources only)</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label style="font-size: 12px; color: var(--text-muted);">PVC label selector</label>
+      <input type="text" name="k8s_volumes_selector" class="form-control" placeholder="backup=true">
+    </div>
+    <div class="form-group">
+      <label style="font-size: 12px; color: var(--text-muted);">Parallel volume uploads (1–8)</label>
+      <input type="number" name="k8s_parallelism" class="form-control" value="2" min="1" max="8">
+    </div>
+  </div>
+  <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
+    <div class="form-group">
+      <label style="font-size: 12px; color: var(--text-muted);">Storage classes to include (one per line; blank = all)</label>
+      <textarea name="k8s_storage_classes" class="form-control" rows="2"></textarea>
+    </div>
+    <div class="form-group">
+      <label style="font-size: 12px; color: var(--text-muted);">Storage classes to exclude</label>
+      <textarea name="k8s_exclude_storage_classes" class="form-control" rows="2"></textarea>
+    </div>
+    <div class="form-group">
+      <label style="font-size: 12px; color: var(--text-muted);">Snapshot class overrides (storageclass=snapshotclass)</label>
+      <textarea name="k8s_snapshot_overrides" class="form-control" rows="2" placeholder="ceph-rbd=ceph-rbd-snap"></textarea>
+    </div>
+  </div>
+  <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
+    <div class="form-group">
+      <label style="font-size: 12px; color: var(--text-muted);">Snapshot ready timeout</label>
+      <input type="text" name="k8s_snapshot_timeout" class="form-control" placeholder="10m">
+    </div>
+    <div class="form-group">
+      <label style="font-size: 12px; color: var(--text-muted);">Per-volume timeout</label>
+      <input type="text" name="k8s_volume_timeout" class="form-control" placeholder="2h">
+    </div>
+  </div>
+  <div style="display: flex; flex-direction: column; gap: 8px;">
+    <div style="display: flex; align-items: center; gap: 8px;">
+      <input type="checkbox" id="k8s_live_fallback" name="k8s_live_fallback" checked>
+      <label for="k8s_live_fallback" style="font-size: 13px;">Back up volumes without snapshot support via a live read-only mount (crash-consistent)</label>
+    </div>
+    <div style="display: flex; align-items: center; gap: 8px;">
+      <input type="checkbox" id="k8s_continue" name="k8s_continue" checked>
+      <label for="k8s_continue" style="font-size: 13px;">Continue the run when individual volumes fail (failures are listed on the run)</label>
+    </div>
+  </div>
+</div>
+{{end}}

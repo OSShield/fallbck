@@ -30,6 +30,8 @@ Caddy terminates TLS and forwards HTTP + gRPC to the server over h2c; dex is the
 
 ## Agents
 
+The **Agents** page's *Add New Agent* opens the guided onboarding at `/onboarding`: pick the agent type and platform, run the printed install and enrollment commands, and the page waits until that exact agent has enrolled (the enrollment token remembers which agent used it) and reported its capabilities. It then continues, with the agent pre-chosen, into a step-by-step backup setup — backup type, PBS target (pick, create, or clone an existing target into another namespace), contents, schedule, review — creates the job, offers *Run now* with the live phase, and loops for further backups. *Set up backups* on an existing agent starts at the backup steps; the flow's state lives in the URL, so a reload resumes it.
+
 ```bash
 fallbck-agent enroll --server https://backup.example.com --token <enrollment token>
 fallbck-agent run

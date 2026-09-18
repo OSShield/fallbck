@@ -1,0 +1,189 @@
+{{/* Database job fields, including the in-cluster target block for kubernetes agents and the per-engine options. */}}
+{{define "job-fields-database"}}
+<fieldset id="job-db-fields" style="border: 0; padding: 0; margin: 0;" hidden disabled>
+  <div style="display: grid; grid-template-columns: 1fr 2fr 1fr; gap: 16px;">
+    <div class="form-group">
+      <label>Engine</label>
+      <select name="db_engine" class="form-control" onchange="setDBEngine(this.value)">
+        <option value="postgres">PostgreSQL</option>
+        <option value="mysql">MySQL / MariaDB</option>
+        <option value="mongodb">MongoDB</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label id="db-host-label">Host (or unix socket path)</label>
+      <input type="text" name="db_host" class="form-control" placeholder="db01.internal">
+    </div>
+    <div class="form-group">
+      <label>Port</label>
+      <input type="number" name="db_port" class="form-control" placeholder="5432" min="1" max="65535">
+    </div>
+  </div>
+
+  <div id="db-k8s-fields" style="background-color: var(--bg-subtle); padding: 14px; border-radius: var(--radius-sm); margin-bottom: 16px;" hidden>
+    <label style="font-weight: 600; font-size: 13px; margin-bottom: 8px; display: block;">Kubernetes target (dumped from a pod in the namespace)</label>
+    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
+      <div>
+        <label style="font-size: 12px; color: var(--text-muted);">Namespace</label>
+        <input type="text" name="db_k8s_namespace" class="form-control" placeholder="clusterdb" pattern="[a-z0-9]([-a-z0-9]*[a-z0-9])?">
+      </div>
+      <div>
+        <label style="font-size: 12px; color: var(--text-muted);">Service (blank = use Host)</label>
+        <input type="text" name="db_k8s_service" class="form-control" placeholder="postgresql" pattern="[a-z0-9]([-a-z0-9]*[a-z0-9])?">
+      </div>
+      <div>
+        <label style="font-size: 12px; color: var(--text-muted);">Tools image override (optional)</label>
+        <input type="text" name="db_k8s_tools_image" class="form-control" placeholder="postgres:17">
+      </div>
+    </div>
+    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-top: 10px;">
+      <div>
+        <label style="font-size: 12px; color: var(--text-muted);">Credentials Secret (blank = job password)</label>
+        <input type="text" name="db_k8s_secret" class="form-control" placeholder="postgresql-credentials">
+      </div>
+      <div>
+        <label style="font-size: 12px; color: var(--text-muted);">Password key</label>
+        <input type="text" name="db_k8s_password_key" class="form-control" placeholder="password">
+      </div>
+      <div>
+        <label style="font-size: 12px; color: var(--text-muted);">User key (optional, overrides User)</label>
+        <input type="text" name="db_k8s_user_key" class="form-control" placeholder="username">
+      </div>
+    </div>
+    <div style="font-size: 12px; color: var(--text-muted); margin-top: 8px;">
+      The dump pod runs the engine's own image (tag from the detected server version) with the agent binary injected; the spool is an emptyDir sized by the chart. Credential profiles and TLS certificate files are not available here.
+    </div>
+  </div>
+
+  <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px;">
+    <div class="form-group">
+      <label>User</label>
+      <input type="text" name="db_user" class="form-control" placeholder="backup" autocomplete="off">
+    </div>
+    <div class="form-group">
+      <label>Password (blank = agent-side profile)</label>
+      <input type="password" name="db_password" class="form-control" autocomplete="new-password">
+      <div id="db-password-hint" style="font-size: 12px; color: var(--text-muted); margin-top: 4px;" hidden>
+        A password is stored. Leave blank to keep it or
+        <label style="display: inline;"><input type="checkbox" name="db_clear_password"> clear it</label>.
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Credential profile (agent-side)</label>
+      <input type="text" name="db_profile" class="form-control" placeholder="default: engine name" autocomplete="off">
+    </div>
+  </div>
+
+  <div class="form-group">
+    <label>Databases (one per line, blank = all)</label>
+    <textarea name="db_databases" class="form-control" rows="2" placeholder="app&#10;shop"></textarea>
+  </div>
+
+  <div style="display: grid; grid-template-columns: 1fr 2fr 1fr; gap: 16px;">
+    <div class="form-group">
+      <label>TLS</label>
+      <select name="db_tls_mode" class="form-control">
+        <option value="">Default (prefer)</option>
+        <option value="disable">Disable</option>
+        <option value="require">Require (no verification)</option>
+        <option value="verify-ca">Verify CA</option>
+        <option value="verify-full">Verify CA + hostname</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>CA file on the agent host (optional)</label>
+      <input type="text" name="db_tls_ca_file" class="form-control" placeholder="/etc/ssl/certs/corp-ca.pem">
+    </div>
+    <div class="form-group">
+      <label>Dump compression</label>
+      <select name="db_compression" class="form-control">
+        <option value="none">None (best PBS dedup)</option>
+        <option value="gzip">gzip (less spool disk)</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="db-engine-opts" data-engine="postgres" style="background-color: var(--bg-subtle); padding: 14px; border-radius: var(--radius-sm); margin-bottom: 16px;">
+    <label style="font-weight: 600; font-size: 13px; margin-bottom: 8px; display: block;">PostgreSQL options</label>
+    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
+      <div>
+        <label style="font-size: 12px; color: var(--text-muted);">Mode</label>
+        <select name="pg_mode" class="form-control">
+          <option value="dump">Logical dump (pg_dump per database)</option>
+          <option value="basebackup">Physical (pg_basebackup + WAL)</option>
+          <option value="both">Both</option>
+        </select>
+      </div>
+      <div>
+        <label style="font-size: 12px; color: var(--text-muted);">Dump format</label>
+        <select name="pg_format" class="form-control">
+          <option value="custom">custom (pg_restore)</option>
+          <option value="plain">plain SQL (psql)</option>
+        </select>
+      </div>
+      <div>
+        <label style="font-size: 12px; color: var(--text-muted);">Role passwords in globals</label>
+        <select name="pg_role_passwords" class="form-control">
+          <option value="auto">auto (when superuser)</option>
+          <option value="include">include</option>
+          <option value="omit">omit</option>
+        </select>
+      </div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 8px; margin-top: 10px;">
+      <input type="checkbox" id="pg_globals" name="pg_globals" checked>
+      <label for="pg_globals" style="font-size: 13px;">Include globals (roles, tablespaces) via pg_dumpall</label>
+    </div>
+  </div>
+
+  <div class="db-engine-opts" data-engine="mysql" style="background-color: var(--bg-subtle); padding: 14px; border-radius: var(--radius-sm); margin-bottom: 16px;" hidden>
+    <label style="font-weight: 600; font-size: 13px; margin-bottom: 8px; display: block;">MySQL / MariaDB options</label>
+    <div style="display: flex; flex-direction: column; gap: 8px;">
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <input type="checkbox" id="my_single_tx" name="my_single_transaction" checked>
+        <label for="my_single_tx" style="font-size: 13px;">Consistent snapshot (--single-transaction, InnoDB)</label>
+      </div>
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <input type="checkbox" id="my_binlogs" name="my_include_binlogs">
+        <label for="my_binlogs" style="font-size: 13px;">Include binary logs written since the previous run (needs log_bin, REPLICATION SLAVE; rotates the binlog per run)</label>
+      </div>
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <input type="checkbox" id="my_per_database" name="my_per_database">
+        <label for="my_per_database" style="font-size: 13px;">Dump each database to its own file (restore databases individually; dumps are taken one after another and are not mutually consistent)</label>
+      </div>
+    </div>
+  </div>
+
+  <div class="db-engine-opts" data-engine="mongodb" style="background-color: var(--bg-subtle); padding: 14px; border-radius: var(--radius-sm); margin-bottom: 16px;" hidden>
+    <label style="font-weight: 600; font-size: 13px; margin-bottom: 8px; display: block;">MongoDB options</label>
+    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
+      <div>
+        <label style="font-size: 12px; color: var(--text-muted);">Read preference</label>
+        <select name="mongo_read_preference" class="form-control">
+          <option value="">default (primary)</option>
+          <option value="secondaryPreferred">secondaryPreferred</option>
+          <option value="secondary">secondary</option>
+          <option value="nearest">nearest</option>
+        </select>
+      </div>
+      <div>
+        <label style="font-size: 12px; color: var(--text-muted);">Auth source</label>
+        <input type="text" name="mongo_auth_source" class="form-control" placeholder="admin">
+      </div>
+      <div>
+        <label style="font-size: 12px; color: var(--text-muted);">Replica set</label>
+        <input type="text" name="mongo_replica_set" class="form-control" placeholder="rs0">
+      </div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 8px; margin-top: 10px;">
+      <input type="checkbox" id="mongo_oplog" name="mongo_oplog" checked>
+      <label for="mongo_oplog" style="font-size: 13px;">Capture the oplog for a point-in-time dump (replica sets, all databases; restore with --oplogReplay)</label>
+    </div>
+  </div>
+
+  <div class="form-group">
+    <label>PBS backup group id (optional, default db-&lt;engine&gt;-&lt;host&gt;)</label>
+    <input type="text" name="db_backup_id" class="form-control" placeholder="db-postgres-db01" pattern="[A-Za-z0-9_][A-Za-z0-9._-]*">
+  </div>
+</fieldset>
+{{end}}

@@ -213,6 +213,30 @@ func TestFreshBackupTimeNeverGoesBackwards(t *testing.T) {
 	}
 }
 
+// Token lookup and target clone validate ids and bodies before touching the database
+func TestTokenAndCloneValidation(t *testing.T) {
+	r := newTestRouter()
+	cases := []struct {
+		name, method, path, body string
+		want                     int
+	}{
+		{"token bad id", http.MethodGet, "/api/v1/tokens/nope", "", http.StatusBadRequest},
+		{"clone bad id", http.MethodPost, "/api/v1/targets/nope/clone", `{"name":"x","namespace":"y"}`, http.StatusBadRequest},
+		{"clone missing namespace", http.MethodPost, "/api/v1/targets/" + uuid.New().String() + "/clone", `{"name":"x"}`, http.StatusBadRequest},
+		{"clone bad format", http.MethodPost, "/api/v1/targets/" + uuid.New().String() + "/clone", `{"name":"x","namespace":"y","pxar_format":"v9"}`, http.StatusBadRequest},
+		{"clone bad body", http.MethodPost, "/api/v1/targets/" + uuid.New().String() + "/clone", `nope`, http.StatusBadRequest},
+	}
+	for _, c := range cases {
+		req := httptest.NewRequest(c.method, c.path, strings.NewReader(c.body))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		r.ServeHTTP(rr, req)
+		if rr.Code != c.want {
+			t.Errorf("%s: status %d, want %d (%s)", c.name, rr.Code, c.want, rr.Body.String())
+		}
+	}
+}
+
 // The merge endpoint validates its input before touching the database (the test
 // router has none): bad ids, a missing target and self-merges are rejected.
 func TestMergeAgentValidation(t *testing.T) {

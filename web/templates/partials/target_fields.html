@@ -1,0 +1,47 @@
+{{/* PBS target form fields. Shared by the Targets modal and the onboarding page. */}}
+{{define "target-fields"}}
+<div class="form-group">
+  <label>Target Display Name</label>
+  <input type="text" name="name" class="form-control" placeholder="e.g. Primary PBS Cluster" required>
+</div>
+
+<div class="form-group">
+  <label>PBS Endpoint URL</label>
+  <input type="url" name="endpoint" class="form-control" placeholder="https://pbs.yourdomain.com:8007" required>
+</div>
+
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+  <div class="form-group">
+    <label>Datastore Name</label>
+    <input type="text" name="datastore" class="form-control" placeholder="backup-store1" required>
+  </div>
+  <div class="form-group">
+    <label>PBS Namespace (Optional)</label>
+    <input type="text" name="namespace" class="form-control" placeholder="e.g. production">
+    <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Blank = root. Every backup to this target lands here; agents cannot change it.</div>
+  </div>
+</div>
+<div class="form-group">
+  <label>Archive format</label>
+  <select name="pxar_format" class="form-control">
+    <option value="v1" selected>pxar v1 + catalog (browsable everywhere)</option>
+    <option value="v2">pxar v2 split metadata/payload (PBS 3.2+, better dedup)</option>
+  </select>
+</div>
+
+<div class="form-group">
+  <label>PBS API Token (user@realm!tokenid:secret — needs Datastore.Backup on the datastore)</label>
+  <input type="password" id="target-token" name="auth_token" class="form-control" placeholder="user@pbs!fallbck:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
+  <span class="form-text" id="target-token-hint">Encrypted on the server. Agents never receive this token directly.</span>
+</div>
+
+<div class="form-group">
+  <label>TLS Cert Fingerprint (Optional for self-signed PBS)</label>
+  <input type="text" name="fingerprint" class="form-control" placeholder="SHA256:xx:xx:xx...">
+</div>
+
+<div style="display: flex; align-items: center; gap: 8px;">
+  <input type="checkbox" id="tls_verify" name="tls_verify" checked>
+  <label for="tls_verify" style="font-size: 13px; font-weight: 500;">Verify TLS Certificates</label>
+</div>
+{{end}}

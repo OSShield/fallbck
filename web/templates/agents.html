@@ -3,10 +3,10 @@
   <div>
     <p style="color: var(--text-muted); font-size: 14px;">Manage host backup agents enrolled across your infrastructure.</p>
   </div>
-  <button class="btn btn-primary" onclick="openAddAgentModal()">
+  <a class="btn btn-primary" href="/onboarding">
     <svg style="width: 16px; height: 16px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
     Add New Agent
-  </button>
+  </a>
 </div>
 
 <div class="card">
@@ -57,6 +57,7 @@
               {{else}}
                 <button class="btn btn-secondary btn-sm" title="Raise this agent's log level to debug from here — applied on its next heartbeat (~30s), no restart." onclick="toggleAgentDebug('{{.ID}}', true)">Debug: off</button>
               {{end}}
+              <a class="btn btn-secondary btn-sm" href="/onboarding?agent={{.ID}}" title="Guided setup of backup jobs for this agent">Set up backups</a>
               <button class="btn btn-secondary btn-sm" style="color: var(--danger-text);" onclick="deleteResource('agents', '{{.ID}}')">Delete</button>
             </td>
           </tr>
@@ -67,7 +68,7 @@
               <div class="empty-state">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"/></svg>
                 <p>No agents registered yet.</p>
-                <button class="btn btn-primary btn-sm" onclick="openAddAgentModal()">Add your first Agent</button>
+                <a class="btn btn-primary btn-sm" href="/onboarding">Add your first Agent</a>
               </div>
             </td>
           </tr>
@@ -77,103 +78,4 @@
   </div>
 </div>
 
-<!-- Add Agent Guided Installation Wizard Modal: 1 agent type, 2 platform, 3 instructions -->
-<div id="modal-add-agent" class="modal-backdrop">
-  <div class="modal-content" style="max-width: 780px;">
-    <div class="modal-header">
-      <h3>Guided Agent Installation</h3>
-      <button class="close-btn" onclick="closeModal('modal-add-agent')">&times;</button>
-    </div>
-    <div class="modal-body">
-      <div class="wizard-progress">
-        <div class="wizard-progress-step" data-step="1"><span class="wizard-progress-num">1</span> Agent type</div>
-        <div class="wizard-progress-step" data-step="2"><span class="wizard-progress-num">2</span> Platform</div>
-        <div class="wizard-progress-step" data-step="3"><span class="wizard-progress-num">3</span> Install &amp; enroll</div>
-      </div>
-
-      <div class="wizard-page" data-step="1">
-        <p class="wizard-lead">What should this agent back up?</p>
-        <div id="wizard-type-options" class="wizard-options">
-          <div class="wizard-option" role="button" tabindex="0" data-kind="type" data-value="files" onclick="agentWizardSelect(this)" onkeydown="agentWizardKey(event, this)">
-            <div class="wizard-option-title">Files</div>
-            <div class="wizard-option-desc">Filesystem agent for Linux and Windows hosts. Directories and volumes are archived to Proxmox Backup Server as pxar snapshots with metadata change detection.</div>
-          </div>
-          <div class="wizard-option" role="button" tabindex="0" data-kind="type" data-value="database" onclick="agentWizardSelect(this)" onkeydown="agentWizardKey(event, this)">
-            <div class="wizard-option-title">Database</div>
-            <div class="wizard-option-desc">Database agent: the same fallbck-agent with the vendor client tools installed. Dumps PostgreSQL, MySQL/MariaDB and MongoDB and records WAL, binlog and oplog positions for point-in-time restores.</div>
-          </div>
-          <div class="wizard-option" role="button" tabindex="0" data-kind="type" data-value="kubernetes" onclick="agentWizardSelect(this)" onkeydown="agentWizardKey(event, this)">
-            <div class="wizard-option-title">Kubernetes</div>
-            <div class="wizard-option-desc">In-cluster agent installed with Helm. Backs up all API resources, persistent volumes (CSI snapshots or live mounts) and databases running inside the cluster.</div>
-          </div>
-          <div class="wizard-option" role="button" tabindex="0" data-kind="type" data-value="proxmox" onclick="agentWizardSelect(this)" onkeydown="agentWizardKey(event, this)">
-            <div class="wizard-option-title">Proxmox VE host</div>
-            <div class="wizard-option-desc">Filesystem agent on a Proxmox VE node. Archives the node configuration (/etc/pve, packages, storage, network, disk layout) for disaster recovery. Guest disks stay with vzdump.</div>
-          </div>
-          <div class="wizard-option" role="button" tabindex="0" data-kind="type" data-value="docker" onclick="agentWizardSelect(this)" onkeydown="agentWizardKey(event, this)">
-            <div class="wizard-option-title">Docker host</div>
-            <div class="wizard-option-desc">Filesystem agent on a Docker host, as a package or as a container with the socket mounted. Archives container, network and volume definitions, compose files and every named volume.</div>
-          </div>
-        </div>
-      </div>
-
-      <div class="wizard-page" data-step="2">
-        <p class="wizard-lead">Where will the <span id="wizard-type-label">agent</span> run?</p>
-        <div id="wizard-target-options" class="wizard-options">
-          <div class="wizard-option" role="button" tabindex="0" data-kind="target" data-value="debian" data-types="files,database,docker" onclick="agentWizardSelect(this)" onkeydown="agentWizardKey(event, this)">
-            <div class="wizard-option-title">Debian / Ubuntu</div>
-            <div class="wizard-option-desc">apt package from deb.pkg.lv, managed by systemd.</div>
-          </div>
-          <div class="wizard-option" role="button" tabindex="0" data-kind="target" data-value="rhel" data-types="files,database,docker" onclick="agentWizardSelect(this)" onkeydown="agentWizardKey(event, this)">
-            <div class="wizard-option-title">RHEL / Rocky / Alma / Fedora</div>
-            <div class="wizard-option-desc">rpm package from rpm.pkg.lv, managed by systemd.</div>
-          </div>
-          <div class="wizard-option" role="button" tabindex="0" data-kind="target" data-value="alpine" data-types="files,database,docker" onclick="agentWizardSelect(this)" onkeydown="agentWizardKey(event, this)">
-            <div class="wizard-option-title">Alpine Linux</div>
-            <div class="wizard-option-desc">apk package from alpine.pkg.lv, managed by OpenRC.</div>
-          </div>
-          <div class="wizard-option" role="button" tabindex="0" data-kind="target" data-value="linux-other" data-types="files,database,docker" onclick="agentWizardSelect(this)" onkeydown="agentWizardKey(event, this)">
-            <div class="wizard-option-title">Other Linux</div>
-            <div class="wizard-option-desc">Static binary from the GitHub release with a hand-installed systemd or OpenRC service.</div>
-          </div>
-          <div class="wizard-option" role="button" tabindex="0" data-kind="target" data-value="windows" data-types="files" onclick="agentWizardSelect(this)" onkeydown="agentWizardKey(event, this)">
-            <div class="wizard-option-title">Windows</div>
-            <div class="wizard-option-desc">MSI installer from the GitHub release, runs as a Windows service with Volume Shadow Copies.</div>
-          </div>
-          <div class="wizard-option" role="button" tabindex="0" data-kind="target" data-value="kubernetes" data-types="kubernetes" onclick="agentWizardSelect(this)" onkeydown="agentWizardKey(event, this)">
-            <div class="wizard-option-title">Kubernetes cluster</div>
-            <div class="wizard-option-desc">Helm chart from oci.fi installed into the fallbck namespace of the target cluster.</div>
-          </div>
-          <div class="wizard-option" role="button" tabindex="0" data-kind="target" data-value="docker-container" data-types="docker,database" onclick="agentWizardSelect(this)" onkeydown="agentWizardKey(event, this)">
-            <div class="wizard-option-title">Docker container</div>
-            <div class="wizard-option-desc">The agent container image (compose snippet): as root with the Docker socket mounted for Docker host backups, or the tools flavour for databases reachable over the network.</div>
-          </div>
-          <div class="wizard-option" role="button" tabindex="0" data-kind="target" data-value="proxmox" data-types="proxmox" onclick="agentWizardSelect(this)" onkeydown="agentWizardKey(event, this)">
-            <div class="wizard-option-title">Proxmox VE node</div>
-            <div class="wizard-option-desc">Debian-based: the apt package from deb.pkg.lv installed as root on the node.</div>
-          </div>
-        </div>
-      </div>
-
-      <div class="wizard-page" data-step="3">
-        <div id="wizard-instructions"></div>
-
-        <div style="background-color: var(--bg-subtle); padding: 14px; border-radius: var(--radius-sm); font-size: 13px; color: var(--text-muted);">
-          <strong>What happens during enrollment:</strong>
-          <ol style="margin-left: 18px; margin-top: 6px; display: flex; flex-direction: column; gap: 4px;">
-            <li>Agent contacts the server and validates the single-use token.</li>
-            <li>Server provisions a dedicated Temporal task queue and issues the agent's bearer token.</li>
-            <li>Agent starts its background Temporal activity worker to receive backup jobs.</li>
-          </ol>
-        </div>
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-secondary" id="wizard-back" onclick="agentWizardBack()">Back</button>
-      <button class="btn btn-secondary" onclick="closeModal('modal-add-agent')">Close</button>
-      <button class="btn btn-primary" id="wizard-next" onclick="agentWizardNext()">Next</button>
-      <button class="btn btn-primary" id="wizard-done" onclick="window.location.reload()">I Have Enrolled the Agent</button>
-    </div>
-  </div>
-</div>
 {{end}}

@@ -48,6 +48,7 @@
             </td>
             <td style="text-align: right; display: flex; justify-content: flex-end; gap: 8px;">
               <button class="btn btn-secondary btn-sm" onclick="editTarget('{{.ID}}')">Edit</button>
+              <button class="btn btn-secondary btn-sm" title="Create a target on the same PBS and datastore with another namespace (the API token is copied on the server)" onclick="openCloneTarget('{{.ID}}', '{{.Name}}', '{{.Namespace}}')">Clone</button>
               <button class="btn btn-secondary btn-sm" style="color: var(--danger-text);" onclick="deleteResource('targets', '{{.ID}}')">Delete</button>
             </td>
           </tr>
@@ -77,54 +78,37 @@
     </div>
     <form id="target-form" data-target-id="" onsubmit="submitTargetForm(event)">
       <div class="modal-body">
-        <div class="form-group">
-          <label>Target Display Name</label>
-          <input type="text" name="name" class="form-control" placeholder="e.g. Primary PBS Cluster" required>
-        </div>
-
-        <div class="form-group">
-          <label>PBS Endpoint URL</label>
-          <input type="url" name="endpoint" class="form-control" placeholder="https://pbs.yourdomain.com:8007" required>
-        </div>
-
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
-          <div class="form-group">
-            <label>Datastore Name</label>
-            <input type="text" name="datastore" class="form-control" placeholder="backup-store1" required>
-          </div>
-          <div class="form-group">
-            <label>PBS Namespace (Optional)</label>
-            <input type="text" name="namespace" class="form-control" placeholder="e.g. production">
-            <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Blank = root. Every backup to this target lands here; agents cannot change it.</div>
-          </div>
-        </div>
-        <div class="form-group">
-          <label>Archive format</label>
-          <select name="pxar_format" class="form-control">
-            <option value="v1" selected>pxar v1 + catalog (browsable everywhere)</option>
-            <option value="v2">pxar v2 split metadata/payload (PBS 3.2+, better dedup)</option>
-          </select>
-        </div>
-
-        <div class="form-group">
-          <label>PBS API Token (user@realm!tokenid:secret — needs Datastore.Backup on the datastore)</label>
-          <input type="password" id="target-token" name="auth_token" class="form-control" placeholder="user@pbs!fallbck:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
-          <span class="form-text" id="target-token-hint">Encrypted on the server. Agents never receive this token directly.</span>
-        </div>
-
-        <div class="form-group">
-          <label>TLS Cert Fingerprint (Optional for self-signed PBS)</label>
-          <input type="text" name="fingerprint" class="form-control" placeholder="SHA256:xx:xx:xx...">
-        </div>
-
-        <div style="display: flex; align-items: center; gap: 8px;">
-          <input type="checkbox" id="tls_verify" name="tls_verify" checked>
-          <label for="tls_verify" style="font-size: 13px; font-weight: 500;">Verify TLS Certificates</label>
-        </div>
+        {{template "target-fields" .}}
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" onclick="closeModal('modal-add-target')">Cancel</button>
         <button type="submit" id="target-submit" class="btn btn-primary">Save Target</button>
+      </div>
+    </form>
+  </div>
+</div>
+<!-- Clone a target into another namespace: same PBS, datastore, token, fingerprint and TLS -->
+<div id="modal-clone-target" class="modal-backdrop">
+  <div class="modal-content" style="max-width: 480px;">
+    <div class="modal-header">
+      <h3>Clone Target into Another Namespace</h3>
+      <button class="close-btn" onclick="closeModal('modal-clone-target')">&times;</button>
+    </div>
+    <form id="clone-target-form" data-target-id="" onsubmit="submitCloneTargetForm(event)">
+      <div class="modal-body">
+        <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 14px;">Copies the endpoint, datastore, API token, fingerprint, TLS setting and format of <strong id="clone-target-source"></strong>. Only the name and the namespace differ; the token is copied on the server and never shown.</p>
+        <div class="form-group">
+          <label>Name</label>
+          <input type="text" name="name" class="form-control" required>
+        </div>
+        <div class="form-group">
+          <label>Namespace (must exist on the PBS datastore)</label>
+          <input type="text" name="namespace" class="form-control" required placeholder="hosts/web-01">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('modal-clone-target')">Cancel</button>
+        <button type="submit" class="btn btn-primary">Clone Target</button>
       </div>
     </form>
   </div>
