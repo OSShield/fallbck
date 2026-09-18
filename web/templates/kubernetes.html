@@ -178,10 +178,6 @@
               <label style="font-size: 12px; color: var(--text-muted);">Per-volume timeout</label>
               <input type="text" name="k8s_volume_timeout" class="form-control" placeholder="2h">
             </div>
-            <div class="form-group">
-              <label style="font-size: 12px; color: var(--text-muted);">Forget orphaned PVC groups after (days, 0 = never)</label>
-              <input type="number" name="k8s_forget_days" class="form-control" value="0" min="0">
-            </div>
           </div>
           <div style="display: flex; flex-direction: column; gap: 8px;">
             <div style="display: flex; align-items: center; gap: 8px;">
@@ -205,27 +201,7 @@
           <input type="text" name="schedule_cron" class="form-control" placeholder="0 2 * * *">
         </div>
 
-        <div style="background-color: var(--bg-subtle); padding: 14px; border-radius: var(--radius-sm);">
-          <label style="font-weight: 600; font-size: 13px; margin-bottom: 8px; display: block;">Retention (applied per PBS group: resources and each PVC)</label>
-          <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 12px;">
-            <div>
-              <label style="font-size: 12px; color: var(--text-muted);">Keep Last</label>
-              <input type="number" name="keep_last" class="form-control" value="7" min="1">
-            </div>
-            <div>
-              <label style="font-size: 12px; color: var(--text-muted);">Keep Daily</label>
-              <input type="number" name="keep_daily" class="form-control" value="7" min="0">
-            </div>
-            <div>
-              <label style="font-size: 12px; color: var(--text-muted);">Keep Weekly</label>
-              <input type="number" name="keep_weekly" class="form-control" value="4" min="0">
-            </div>
-            <div>
-              <label style="font-size: 12px; color: var(--text-muted);">Keep Monthly</label>
-              <input type="number" name="keep_monthly" class="form-control" value="12" min="0">
-            </div>
-          </div>
-        </div>
+        <p style="font-size: 12px; color: var(--text-muted); margin: 0;">Retention is configured on the Proxmox Backup Server as a datastore prune job (it covers the resources group and every PVC group); groups of PVCs that no longer exist are forgotten there by hand. FallBCK never prunes or deletes snapshots.</p>
 
         <div style="display: flex; align-items: center; gap: 8px; margin-top: 12px;">
           <input type="checkbox" id="k8s_job_enabled" name="enabled" checked>

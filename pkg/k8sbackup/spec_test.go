@@ -30,7 +30,6 @@ func TestSpecValidateRejects(t *testing.T) {
 		"snapshot too long":  {Volumes: VolumeOptions{SnapshotTimeout: "2h"}},
 		"volume bad":         {Volumes: VolumeOptions{VolumeTimeout: "soon"}},
 		"empty override":     {Volumes: VolumeOptions{SnapshotClassOverrides: map[string]string{"sc": ""}}},
-		"negative forget":    {Volumes: VolumeOptions{ForgetOrphansAfterDays: -1}},
 		"bad vol ns pattern": {Volumes: VolumeOptions{Namespaces: &NamespaceFilter{Exclude: []string{"bad ns"}}}},
 	}
 	for name, s := range cases {

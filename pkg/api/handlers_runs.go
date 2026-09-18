@@ -79,7 +79,7 @@ func (s *ServerAPI) HandleCancelRun(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleUpdateJob replaces a job's configuration (name, agent, target, paths, schedule,
-// retention, enabled, direct_pbs). The job ID in the path wins over any in the body.
+// enabled, direct_pbs). The job ID in the path wins over any in the body.
 func (s *ServerAPI) HandleUpdateJob(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {

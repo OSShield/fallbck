@@ -78,10 +78,6 @@ func (d *DB) UpdateJob(ctx context.Context, job *BackupJob) error {
 	if err != nil {
 		return fmt.Errorf("failed to serialize exclude paths: %w", err)
 	}
-	retentionJSON, err := json.Marshal(job.RetentionPolicy)
-	if err != nil {
-		return fmt.Errorf("failed to serialize retention policy: %w", err)
-	}
 	jobType, dbConfigJSON, k8sConfigJSON, pveConfigJSON, dockerConfigJSON, err := jobTypeColumns(job)
 	if err != nil {
 		return err
@@ -90,11 +86,11 @@ func (d *DB) UpdateJob(ctx context.Context, job *BackupJob) error {
 	tag, err := d.Pool.Exec(ctx, `
 		UPDATE backup_jobs
 		SET name = $2, agent_id = $3, target_id = $4, schedule_cron = $5, backup_paths = $6,
-		    exclude_paths = $7, retention_policy = $8, enabled = $9, direct_pbs = $10, updated_at = $11,
-		    job_type = $12, db_config = $13, k8s_config = $14, pve_config = $15, docker_config = $16
+		    exclude_paths = $7, enabled = $8, direct_pbs = $9, updated_at = $10,
+		    job_type = $11, db_config = $12, k8s_config = $13, pve_config = $14, docker_config = $15
 		WHERE id = $1`,
 		job.ID, job.Name, job.AgentID, job.TargetID, job.ScheduleCron, backupPathsJSON,
-		excludePathsJSON, retentionJSON, job.Enabled, job.DirectPBS, job.UpdatedAt, jobType, dbConfigJSON, k8sConfigJSON, pveConfigJSON, dockerConfigJSON)
+		excludePathsJSON, job.Enabled, job.DirectPBS, job.UpdatedAt, jobType, dbConfigJSON, k8sConfigJSON, pveConfigJSON, dockerConfigJSON)
 	if err != nil {
 		return err
 	}
