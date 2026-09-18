@@ -105,14 +105,8 @@ func getSampleJobs(agents []*db.Agent, targets []*db.BackupTarget) []*db.BackupJ
 			ScheduleCron: "0 2 * * *",
 			BackupPaths:  []string{"/var/www/html", "/etc/nginx", "/etc/ssl"},
 			ExcludePaths: []string{"*.log", "/var/www/html/cache/*"},
-			RetentionPolicy: db.RetentionPolicy{
-				KeepLast:    7,
-				KeepDaily:   7,
-				KeepWeekly:  4,
-				KeepMonthly: 12,
-			},
-			Enabled:   true,
-			CreatedAt: now.Add(-5 * 24 * time.Hour),
+			Enabled:      true,
+			CreatedAt:    now.Add(-5 * 24 * time.Hour),
 		},
 		{
 			ID:           sampleJobID2,
@@ -123,14 +117,8 @@ func getSampleJobs(agents []*db.Agent, targets []*db.BackupTarget) []*db.BackupJ
 			TargetName:   "Primary Proxmox Backup Server",
 			ScheduleCron: "0 * * * *",
 			BackupPaths:  []string{"/var/lib/postgresql/data", "/etc/postgresql"},
-			RetentionPolicy: db.RetentionPolicy{
-				KeepLast:    24,
-				KeepDaily:   14,
-				KeepWeekly:  8,
-				KeepMonthly: 6,
-			},
-			Enabled:   true,
-			CreatedAt: now.Add(-3 * 24 * time.Hour),
+			Enabled:      true,
+			CreatedAt:    now.Add(-3 * 24 * time.Hour),
 		},
 	}
 }

@@ -369,23 +369,19 @@ func (d *DB) CreateJob(ctx context.Context, job *BackupJob) error {
 	if err != nil {
 		return fmt.Errorf("failed to serialize exclude paths: %w", err)
 	}
-	retentionJSON, err := json.Marshal(job.RetentionPolicy)
-	if err != nil {
-		return fmt.Errorf("failed to serialize retention policy: %w", err)
-	}
 	jobType, dbConfigJSON, k8sConfigJSON, pveConfigJSON, dockerConfigJSON, err := jobTypeColumns(job)
 	if err != nil {
 		return err
 	}
 
 	query := `
-		INSERT INTO backup_jobs (id, name, agent_id, target_id, schedule_cron, backup_paths, exclude_paths, retention_policy, enabled, direct_pbs, created_at, updated_at, job_type, db_config, k8s_config, pve_config, docker_config)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+		INSERT INTO backup_jobs (id, name, agent_id, target_id, schedule_cron, backup_paths, exclude_paths, enabled, direct_pbs, created_at, updated_at, job_type, db_config, k8s_config, pve_config, docker_config)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 		RETURNING id
 	`
 	return d.Pool.QueryRow(ctx, query,
 		job.ID, job.Name, job.AgentID, job.TargetID, job.ScheduleCron,
-		backupPathsJSON, excludePathsJSON, retentionJSON, job.Enabled, job.DirectPBS,
+		backupPathsJSON, excludePathsJSON, job.Enabled, job.DirectPBS,
 		job.CreatedAt, job.UpdatedAt, jobType, dbConfigJSON, k8sConfigJSON, pveConfigJSON, dockerConfigJSON,
 	).Scan(&job.ID)
 }
@@ -393,7 +389,7 @@ func (d *DB) CreateJob(ctx context.Context, job *BackupJob) error {
 func (d *DB) GetJobByID(ctx context.Context, id uuid.UUID) (*BackupJob, error) {
 	query := `
 		SELECT j.id, j.name, j.agent_id, j.target_id, j.schedule_cron, j.backup_paths, j.exclude_paths,
-		       j.retention_policy, j.enabled, j.direct_pbs, j.created_at, j.updated_at,
+		       j.enabled, j.direct_pbs, j.created_at, j.updated_at,
 		       j.job_type, j.db_config, j.k8s_config, j.pve_config, j.docker_config,
 		       a.hostname as agent_name, t.name as target_name
 		FROM backup_jobs j
@@ -403,10 +399,10 @@ func (d *DB) GetJobByID(ctx context.Context, id uuid.UUID) (*BackupJob, error) {
 	`
 	row := d.Pool.QueryRow(ctx, query, id)
 	var j BackupJob
-	var backupPathsRaw, excludePathsRaw, retentionRaw, dbConfigRaw, k8sConfigRaw, pveConfigRaw, dockerConfigRaw []byte
+	var backupPathsRaw, excludePathsRaw, dbConfigRaw, k8sConfigRaw, pveConfigRaw, dockerConfigRaw []byte
 	err := row.Scan(
 		&j.ID, &j.Name, &j.AgentID, &j.TargetID, &j.ScheduleCron,
-		&backupPathsRaw, &excludePathsRaw, &retentionRaw,
+		&backupPathsRaw, &excludePathsRaw,
 		&j.Enabled, &j.DirectPBS, &j.CreatedAt, &j.UpdatedAt,
 		&j.JobType, &dbConfigRaw, &k8sConfigRaw, &pveConfigRaw, &dockerConfigRaw,
 		&j.AgentName, &j.TargetName,
@@ -420,7 +416,6 @@ func (d *DB) GetJobByID(ctx context.Context, id uuid.UUID) (*BackupJob, error) {
 
 	_ = json.Unmarshal(backupPathsRaw, &j.BackupPaths)
 	_ = json.Unmarshal(excludePathsRaw, &j.ExcludePaths)
-	_ = json.Unmarshal(retentionRaw, &j.RetentionPolicy)
 	j.DBConfig = parseDBConfig(dbConfigRaw)
 	j.K8sConfig = parseK8sConfig(j.JobType, k8sConfigRaw)
 	j.PVEConfig = parsePVEConfig(j.JobType, pveConfigRaw)
@@ -432,7 +427,7 @@ func (d *DB) GetJobByID(ctx context.Context, id uuid.UUID) (*BackupJob, error) {
 func (d *DB) ListJobs(ctx context.Context) ([]*BackupJob, error) {
 	query := `
 		SELECT j.id, j.name, j.agent_id, j.target_id, j.schedule_cron, j.backup_paths, j.exclude_paths,
-		       j.retention_policy, j.enabled, j.direct_pbs, j.created_at, j.updated_at,
+		       j.enabled, j.direct_pbs, j.created_at, j.updated_at,
 		       j.job_type, j.db_config, j.k8s_config, j.pve_config, j.docker_config,
 		       a.hostname as agent_name, t.name as target_name
 		FROM backup_jobs j
@@ -449,10 +444,10 @@ func (d *DB) ListJobs(ctx context.Context) ([]*BackupJob, error) {
 	var jobs []*BackupJob
 	for rows.Next() {
 		var j BackupJob
-		var backupPathsRaw, excludePathsRaw, retentionRaw, dbConfigRaw, k8sConfigRaw, pveConfigRaw, dockerConfigRaw []byte
+		var backupPathsRaw, excludePathsRaw, dbConfigRaw, k8sConfigRaw, pveConfigRaw, dockerConfigRaw []byte
 		if err := rows.Scan(
 			&j.ID, &j.Name, &j.AgentID, &j.TargetID, &j.ScheduleCron,
-			&backupPathsRaw, &excludePathsRaw, &retentionRaw,
+			&backupPathsRaw, &excludePathsRaw,
 			&j.Enabled, &j.DirectPBS, &j.CreatedAt, &j.UpdatedAt,
 			&j.JobType, &dbConfigRaw, &k8sConfigRaw, &pveConfigRaw, &dockerConfigRaw,
 			&j.AgentName, &j.TargetName,
@@ -461,7 +456,6 @@ func (d *DB) ListJobs(ctx context.Context) ([]*BackupJob, error) {
 		}
 		_ = json.Unmarshal(backupPathsRaw, &j.BackupPaths)
 		_ = json.Unmarshal(excludePathsRaw, &j.ExcludePaths)
-		_ = json.Unmarshal(retentionRaw, &j.RetentionPolicy)
 		j.DBConfig = parseDBConfig(dbConfigRaw)
 		j.K8sConfig = parseK8sConfig(j.JobType, k8sConfigRaw)
 		j.PVEConfig = parsePVEConfig(j.JobType, pveConfigRaw)

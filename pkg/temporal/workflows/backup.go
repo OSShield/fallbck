@@ -68,11 +68,10 @@ func BackupJobWorkflow(ctx workflow.Context, jobID uuid.UUID) (*fbtemporal.Backu
 	var execResult fbtemporal.BackupExecutionResult
 
 	var execErr error
-	var k8sGroups []string
 	switch session.JobType {
 	case db.JobTypeKubernetes:
 		outcome := runKubernetesBackup(ctx, &session)
-		execResult, execErr, k8sGroups = outcome.result, outcome.err, outcome.activeGroups
+		execResult, execErr = outcome.result, outcome.err
 	case db.JobTypePVE:
 		execErr = workflow.ExecuteActivity(agentCtx, agentActs.ExecutePVEBackup, &session).Get(agentCtx, &execResult)
 	case db.JobTypeDocker:
@@ -134,14 +133,8 @@ func BackupJobWorkflow(ctx workflow.Context, jobID uuid.UUID) (*fbtemporal.Backu
 		logger.Warn("Failed to finalize backup run in database", "error", finalizeErr)
 	}
 
-	// 4. Execute Prune Retention Policy on PBS if backup succeeded
-	if execErr == nil && execResult.Status == db.RunStatusCompleted {
-		if session.JobType == db.JobTypeKubernetes {
-			_ = workflow.ExecuteActivity(serverCtx, serverActs.PruneKubernetesJob, &session, k8sGroups).Get(serverCtx, nil)
-		} else {
-			_ = workflow.ExecuteActivity(serverCtx, serverActs.PruneJob, &session).Get(serverCtx, nil)
-		}
-	}
+	// Retention and pruning are PBS's job (datastore prune jobs); FallBCK never
+	// deletes or prunes on PBS, so the run ends here.
 
 	if execErr != nil {
 		return &execResult, execErr

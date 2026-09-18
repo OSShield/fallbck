@@ -53,13 +53,12 @@ type BackupSessionInfo struct {
 	// DockerConfig is the Docker host job specification (job_type docker)
 	DockerConfig *dockerbackup.Spec `json:"docker_config,omitempty"`
 	// JobName is informational (manifest)
-	JobName         string             `json:"job_name,omitempty"`
-	BackupPaths     []string           `json:"backup_paths"`
-	ExcludePaths    []string           `json:"exclude_paths"`
-	RetentionPolicy db.RetentionPolicy `json:"retention_policy"`
-	WorkflowID      string             `json:"workflow_id"`
-	RunID           string             `json:"run_id"`
-	BackupRunID     uuid.UUID          `json:"backup_run_id"`
+	JobName      string    `json:"job_name,omitempty"`
+	BackupPaths  []string  `json:"backup_paths"`
+	ExcludePaths []string  `json:"exclude_paths"`
+	WorkflowID   string    `json:"workflow_id"`
+	RunID        string    `json:"run_id"`
+	BackupRunID  uuid.UUID `json:"backup_run_id"`
 }
 
 // BackupExecutionResult contains the outcome and metrics of a backup run

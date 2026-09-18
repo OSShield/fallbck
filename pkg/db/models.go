@@ -191,26 +191,16 @@ func (t *BackupTarget) Sanitize() *BackupTarget {
 	return t
 }
 
-// RetentionPolicy defines backup retention counts
-type RetentionPolicy struct {
-	KeepLast    int `json:"keep_last"`
-	KeepDaily   int `json:"keep_daily"`
-	KeepWeekly  int `json:"keep_weekly"`
-	KeepMonthly int `json:"keep_monthly"`
-	KeepYearly  int `json:"keep_yearly"`
-}
-
 // BackupJob defines what, when, and where an agent backs up
 type BackupJob struct {
-	ID              uuid.UUID       `json:"id" db:"id"`
-	Name            string          `json:"name" db:"name"`
-	AgentID         uuid.UUID       `json:"agent_id" db:"agent_id"`
-	TargetID        uuid.UUID       `json:"target_id" db:"target_id"`
-	ScheduleCron    string          `json:"schedule_cron" db:"schedule_cron"`
-	BackupPaths     []string        `json:"backup_paths" db:"backup_paths"`
-	ExcludePaths    []string        `json:"exclude_paths" db:"exclude_paths"`
-	RetentionPolicy RetentionPolicy `json:"retention_policy" db:"retention_policy"`
-	Enabled         bool            `json:"enabled" db:"enabled"`
+	ID           uuid.UUID `json:"id" db:"id"`
+	Name         string    `json:"name" db:"name"`
+	AgentID      uuid.UUID `json:"agent_id" db:"agent_id"`
+	TargetID     uuid.UUID `json:"target_id" db:"target_id"`
+	ScheduleCron string    `json:"schedule_cron" db:"schedule_cron"`
+	BackupPaths  []string  `json:"backup_paths" db:"backup_paths"`
+	ExcludePaths []string  `json:"exclude_paths" db:"exclude_paths"`
+	Enabled      bool      `json:"enabled" db:"enabled"`
 	// DirectPBS makes the agent talk to PBS itself (credentials handed out per run)
 	// instead of through the server-side tunnel. Server-side setting only.
 	DirectPBS bool `json:"direct_pbs" db:"direct_pbs"`
@@ -281,12 +271,6 @@ type BackupRun struct {
 	// Joined fields
 	JobName   string `json:"job_name,omitempty"`
 	AgentName string `json:"agent_name,omitempty"`
-}
-
-// Helper to serialize RetentionPolicy to JSON bytes
-func (r RetentionPolicy) ToJSON() []byte {
-	bytes, _ := json.Marshal(r)
-	return bytes
 }
 
 // DurationString renders how long the run took (or has been running); "-" before start

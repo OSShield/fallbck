@@ -1,3 +1,8 @@
+// Package pbs is the server-side Proxmox Backup Server REST client. It is
+// deliberately limited to reading (ping, credentials for the backup protocol):
+// FallBCK never prunes, forgets or deletes anything on PBS, and the API tokens it is
+// given should not carry the privileges to (Datastore.Backup only). Retention is a
+// PBS datastore prune job. Do not add mutating calls here.
 package pbs
 
 import (
@@ -7,7 +12,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 )
@@ -61,53 +65,6 @@ func (c *Client) Ping(ctx context.Context) error {
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("PBS ping returned status %d: %s", resp.StatusCode, string(body))
-	}
-	return nil
-}
-
-// PruneDatastore executes a prune job on the PBS datastore according to retention policy
-func (c *Client) PruneDatastore(ctx context.Context, datastore, namespace, backupType, backupID string, keepLast, keepDaily, keepWeekly, keepMonthly int) error {
-	reqURL := fmt.Sprintf("%s/api2/json/admin/datastore/%s/prune", c.Endpoint, url.PathEscape(datastore))
-
-	params := url.Values{}
-	if namespace != "" {
-		params.Set("ns", namespace)
-	}
-	if backupType != "" {
-		params.Set("backup-type", backupType)
-	}
-	if backupID != "" {
-		params.Set("backup-id", backupID)
-	}
-	if keepLast > 0 {
-		params.Set("keep-last", fmt.Sprintf("%d", keepLast))
-	}
-	if keepDaily > 0 {
-		params.Set("keep-daily", fmt.Sprintf("%d", keepDaily))
-	}
-	if keepWeekly > 0 {
-		params.Set("keep-weekly", fmt.Sprintf("%d", keepWeekly))
-	}
-	if keepMonthly > 0 {
-		params.Set("keep-monthly", fmt.Sprintf("%d", keepMonthly))
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, strings.NewReader(params.Encode()))
-	if err != nil {
-		return err
-	}
-	c.setAuth(req)
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to execute PBS prune: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("PBS prune failed with status %d: %s", resp.StatusCode, string(body))
 	}
 	return nil
 }

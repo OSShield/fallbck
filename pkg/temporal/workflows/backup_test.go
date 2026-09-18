@@ -52,7 +52,6 @@ func TestBackupJobWorkflowSuccess(t *testing.T) {
 	// Mock Server Activities
 	env.OnActivity(serverActs.PrepareBackupSession, mock.Anything, jobID).Return(session, nil)
 	env.OnActivity(serverActs.FinalizeBackupRun, mock.Anything, session, execResult).Return(nil)
-	env.OnActivity(serverActs.PruneJob, mock.Anything, session).Return(nil)
 
 	// Mock Agent Activity
 	env.OnActivity(agentActs.ExecuteFilesystemBackup, mock.Anything, session).Return(execResult, nil)
@@ -116,7 +115,6 @@ func TestBackupJobWorkflowCancelled(t *testing.T) {
 	if finalized.Status != db.RunStatusCancelled {
 		t.Errorf("finalised status = %s, want cancelled", finalized.Status)
 	}
-	env.AssertNotCalled(t, "PruneJob", mock.Anything, mock.Anything)
 }
 
 func TestBackupJobWorkflowDatabase(t *testing.T) {
@@ -138,7 +136,6 @@ func TestBackupJobWorkflowDatabase(t *testing.T) {
 	env.OnActivity(dbActs.ExecuteDatabaseBackup, mock.Anything, session).Return(execResult, nil)
 	env.OnActivity(agentActs.ExecuteFilesystemBackup, mock.Anything, mock.Anything).Return(nil, nil)
 	env.OnActivity(serverActs.FinalizeBackupRun, mock.Anything, session, execResult).Return(nil)
-	env.OnActivity(serverActs.PruneJob, mock.Anything, session).Return(nil)
 
 	env.ExecuteWorkflow(BackupJobWorkflow, jobID)
 	if !env.IsWorkflowCompleted() {
@@ -152,7 +149,6 @@ func TestBackupJobWorkflowDatabase(t *testing.T) {
 		t.Errorf("result %+v", result)
 	}
 	env.AssertNotCalled(t, "ExecuteFilesystemBackup", mock.Anything, mock.Anything)
-	env.AssertCalled(t, "PruneJob", mock.Anything, session)
 }
 
 func TestBackupJobWorkflowFailureCarriesDetails(t *testing.T) {
@@ -254,9 +250,6 @@ func TestBackupJobWorkflowKubernetes(t *testing.T) {
 	var finalized *temporal.BackupExecutionResult
 	env.OnActivity(serverActs.FinalizeBackupRun, mock.Anything, session, mock.Anything).
 		Run(func(args mock.Arguments) { finalized = args.Get(2).(*temporal.BackupExecutionResult) }).Return(nil)
-	var prunedGroups []string
-	env.OnActivity(serverActs.PruneKubernetesJob, mock.Anything, session, mock.Anything).
-		Run(func(args mock.Arguments) { prunedGroups = args.Get(2).([]string) }).Return(nil)
 
 	env.ExecuteWorkflow(BackupJobWorkflow, jobID)
 	if !env.IsWorkflowCompleted() {
@@ -277,10 +270,6 @@ func TestBackupJobWorkflowKubernetes(t *testing.T) {
 	if !strings.Contains(finalized.ErrorMessage, "app/bad") || !strings.Contains(finalized.ErrorMessage, "1 failed volume") {
 		t.Errorf("error message: %q", finalized.ErrorMessage)
 	}
-	if len(prunedGroups) != 2 || prunedGroups[0] != "k8s-prod-pvc-app-good" {
-		t.Errorf("pruned groups: %v", prunedGroups)
-	}
-	env.AssertNotCalled(t, "PruneJob", mock.Anything, mock.Anything)
 }
 
 func TestBackupJobWorkflowKubernetesAllVolumesFail(t *testing.T) {
@@ -310,5 +299,4 @@ func TestBackupJobWorkflowKubernetesAllVolumesFail(t *testing.T) {
 	if finalized == nil || finalized.Status != db.RunStatusFailed {
 		t.Errorf("finalized: %+v", finalized)
 	}
-	env.AssertNotCalled(t, "PruneKubernetesJob", mock.Anything, mock.Anything, mock.Anything)
 }

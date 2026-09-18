@@ -1,6 +1,6 @@
 // Package k8sbackup holds the Kubernetes backup job specification (backup_jobs.k8s_config),
 // the discovery plan exchanged between server and agent, and the run manifest. It is
-// shared by the server (validation, prune), the workflow and the agent, so it stays
+// shared by the server (validation), the workflow and the agent, so it stays
 // free of client-go machinery beyond label-selector parsing.
 package k8sbackup
 
@@ -97,9 +97,6 @@ type VolumeOptions struct {
 	SnapshotTimeout string `json:"snapshot_timeout,omitempty"`
 	// VolumeTimeout bounds one volume's snapshot+upload (default 2h, max 5h)
 	VolumeTimeout string `json:"volume_timeout,omitempty"`
-	// ForgetOrphansAfterDays deletes PBS groups of PVCs that no longer exist once
-	// their newest snapshot is this old (0 = keep forever, pruned by retention only)
-	ForgetOrphansAfterDays int `json:"forget_orphans_after_days,omitempty"`
 }
 
 // Spec is the Kubernetes job configuration (backup_jobs.k8s_config)
@@ -195,9 +192,6 @@ func (s *Spec) Validate() error {
 	}
 	if _, err := parseBoundedDuration(v.VolumeTimeout, DefaultVolTimeout, MaxVolumeTimeout); err != nil {
 		return specErr("volumes.volume_timeout: %v", err)
-	}
-	if v.ForgetOrphansAfterDays < 0 {
-		return specErr("volumes.forget_orphans_after_days must not be negative")
 	}
 	return nil
 }

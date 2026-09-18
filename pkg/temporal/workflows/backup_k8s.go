@@ -34,11 +34,10 @@ func joinFailures(failed []string) string {
 	return msg
 }
 
-// kubernetesOutcome aggregates a kubernetes run for finalize/prune
+// kubernetesOutcome aggregates a kubernetes run for finalize
 type kubernetesOutcome struct {
-	result       fbtemporal.BackupExecutionResult
-	activeGroups []string
-	err          error
+	result fbtemporal.BackupExecutionResult
+	err    error
 }
 
 // runKubernetesBackup orchestrates one kubernetes run: discover the volume plan, fan
@@ -76,10 +75,6 @@ func runKubernetesBackup(ctx workflow.Context, session *fbtemporal.BackupSession
 		return out
 	}
 	logger.Info("Kubernetes backup plan", "volumes", len(plan.Volumes), "snapshot_crd", plan.SnapshotCRD)
-	for _, v := range plan.Volumes {
-		out.activeGroups = append(out.activeGroups, v.GroupID)
-	}
-
 	// 2. Volume fan-out, bounded by a token pool
 	volOpts := baseOpts
 	volOpts.StartToCloseTimeout = spec.Volumes.EffVolumeTimeout() + 15*time.Minute
