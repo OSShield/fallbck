@@ -16,3 +16,28 @@ token_expires_at: 2027-08-25T00:00:00Z
 #   volume_access: auto              # auto | direct (read /var/lib/docker/volumes) | helper (throwaway containers)
 #   helper_image: alpine:3.20        # image of the helper containers
 #   socket: /var/run/docker.sock     # default: DOCKER_HOST (unix://) or /var/run/docker.sock
+
+# Database jobs (the agent runs them when the vendor client tools are installed; it
+# reports them as db_tools). This section is yours to edit and survives re-enrollment.
+# db_backup:
+#   spool_dir: /var/lib/fallbck/agent/spool        # dumps are staged here before upload
+#   state_dir: /var/lib/fallbck/agent/state/db     # last binlog / WAL position per job
+#   min_free_bytes: 1073741824                     # refuse to start a run below this free space
+#   keep_failed_spool: false                       # keep the spool of failed runs for inspection
+#   tools:
+#     postgres_bindir: /usr/lib/postgresql/17/bin  # pin a pg_dump at least as new as the server
+#     mysql_bindir: /usr/bin
+#     mongo_bindir: /usr/local/bin
+#   # Credential profiles used by jobs whose password is left blank in the UI. A job
+#   # names its profile (default: the engine name); the profile may also supply user,
+#   # host, port and TLS settings the job leaves blank. Readable by root only.
+#   profiles:
+#     postgres:
+#       engine: postgres
+#       user: backup
+#       password_file: /etc/fallbck/pg-backup.pass   # or password: "..."
+#       tls: { mode: verify-full, ca_file: /etc/ssl/certs/corp-ca.pem }
+#     mysql:
+#       engine: mysql
+#       user: backup
+#       password: "s3cret"

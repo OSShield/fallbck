@@ -5,17 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
-	"time"
 
 	"github.com/osshield/fallbck/pkg/agent/backup"
 	dbrun "github.com/osshield/fallbck/pkg/agent/dbbackup"
 	"github.com/osshield/fallbck/pkg/db"
 	"github.com/osshield/fallbck/pkg/dbbackup"
-	"github.com/osshield/fallbck/pkg/proxy"
 	"github.com/osshield/fallbck/pkg/temporal"
 	"github.com/osshield/gopbs"
-	"github.com/osshield/gopbs/pbs"
 	"go.temporal.io/sdk/activity"
 	sdktemporal "go.temporal.io/sdk/temporal"
 	"google.golang.org/grpc"
@@ -25,7 +21,9 @@ import (
 // the workflow does not retry them.
 const ErrTypeDBPrecheckFailed = "db_precheck_failed"
 
-// DBAgentActivities are the activities of fallbck-db-agent
+// DBAgentActivities are the database backup activities, registered by fallbck-agent
+// next to its filesystem activities (agents of the retired type "database" that are
+// still running their old binary poll the same activity name on their own queue)
 type DBAgentActivities struct {
 	// Tunnel is the agent's gRPC connection to the FallBCK server (PBS sessions)
 	Tunnel grpc.ClientConnInterface
@@ -73,12 +71,9 @@ func (a *DBAgentActivities) ExecuteDatabaseBackup(ctx context.Context, session *
 		"direct_pbs", session.DirectPBS,
 	)
 
-	pt := newPhaseTracker()
-	stopHeartbeats := startHeartbeats(ctx, pt)
-	defer stopHeartbeats()
-	reportPh := func() { reportPhase(a.ReportProgress, ctx, session.Ticket, session.BackupRunID, pt.Current()) }
-	stopProgress := startProgress(ctx, pt, 5*time.Second, func(string) { reportPh() })
-	defer stopProgress()
+	rt := startRunTracking(ctx, session.Ticket, session.BackupRunID, a.ReportProgress)
+	defer rt.stop()
+	pt, reportPh := rt.pt, rt.report
 
 	failed := func(err error) (*temporal.BackupExecutionResult, error) {
 		return &temporal.BackupExecutionResult{Status: db.RunStatusFailed, ErrorMessage: err.Error()},
@@ -98,26 +93,15 @@ func (a *DBAgentActivities) ExecuteDatabaseBackup(ctx context.Context, session *
 		password = pw
 	}
 
-	var dial func(ctx context.Context, ref pbs.SnapshotRef) (net.Conn, error)
-	var direct *backup.DirectOptions
-	if session.DirectPBS {
-		if a.Credentials == nil {
-			return failed(errors.New("job requires direct PBS access but the agent has no credentials fetcher"))
-		}
-		d, err := a.Credentials(ctx, session.Ticket)
-		if err != nil {
+	// No phase for the credentials fetch here (nil tracker), as before
+	tr, err := openTransport(ctx, session, a.Tunnel, a.Credentials, nil)
+	if err != nil {
+		if !isTransportConfigErr(err) {
 			slog.Error("Failed to fetch PBS credentials for direct backup", "error", err)
-			return failed(err)
 		}
-		direct = d
-	} else {
-		if a.Tunnel == nil {
-			return failed(errors.New("agent tunnel connection is not configured"))
-		}
-		dial = func(ctx context.Context, _ pbs.SnapshotRef) (net.Conn, error) {
-			return proxy.Dial(ctx, a.Tunnel, session.Ticket)
-		}
+		return failed(err)
 	}
+	dial, direct := tr.dial, tr.direct
 
 	upload := func(ctx context.Context, spoolDir string, blobs []gopbs.Blob) (*temporal.BackupExecutionResult, error) {
 		s := *session
@@ -148,16 +132,8 @@ func (a *DBAgentActivities) ExecuteDatabaseBackup(ctx context.Context, session *
 		},
 	})
 	if err != nil {
-		var pe *dbrun.PrecheckError
-		if errors.As(err, &pe) {
-			slog.Error("Database backup precheck failed", "error", err)
-			tail := ""
-			if a.LogTail != nil {
-				tail = a.LogTail()
-			}
-			return &temporal.BackupExecutionResult{Status: db.RunStatusFailed, ErrorMessage: err.Error()},
-				sdktemporal.NewNonRetryableApplicationError(err.Error(), ErrTypeDBPrecheckFailed, err,
-					temporal.BackupFailureDetails{Phase: pt.Current(), LogTail: tail})
+		if dbrun.IsPrecheck(err) {
+			return precheckFailed("Database backup", err, pt, a.LogTail)
 		}
 		if ctx.Err() != nil {
 			return nil, err

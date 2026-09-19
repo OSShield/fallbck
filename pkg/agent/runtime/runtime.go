@@ -47,7 +47,7 @@ const (
 
 // Agent identifies the binary using the runtime
 type Agent struct {
-	// Name is the binary name (fallbck-agent, fallbck-db-agent); used for identities and messages
+	// Name is the binary name (fallbck-agent, fallbck-k8s-agent); used for identities and messages
 	Name string
 	// Type is config.AgentTypeFilesystem or config.AgentTypeDatabase
 	Type    string

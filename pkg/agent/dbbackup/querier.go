@@ -79,7 +79,7 @@ var pgConnect = func(ctx context.Context, creds dbspec.Credentials) (querier, er
 		"user=" + pgQuoteDSN(creds.User),
 		"dbname=postgres",
 		"connect_timeout=15",
-		"application_name=fallbck-db-agent",
+		"application_name=fallbck-agent",
 	}
 	if creds.TLS.Mode != "" {
 		parts = append(parts, "sslmode="+creds.TLS.Mode)

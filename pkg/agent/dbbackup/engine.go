@@ -1,4 +1,5 @@
-// Package dbbackup executes database backups on fallbck-db-agent: it detects the
+// Package dbbackup executes database backups on fallbck-agent (and, through the
+// db-worker mode, inside kubernetes dump pods): it detects the
 // client tools, checks the server, dumps into a spool directory, writes the manifest
 // and hands the spool to the pxar upload engine.
 package dbbackup
@@ -180,7 +181,7 @@ func Lookup(name string) (Engine, bool) {
 	return e, ok
 }
 
-// DetectResult is one line of `fallbck-db-agent tools`
+// DetectResult is one line of `fallbck-agent tools`
 type DetectResult struct {
 	Engine string
 	Tools  ToolInfo

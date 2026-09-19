@@ -67,9 +67,9 @@ apt install fallbck-agent postgresql-client mariadb-client   # or the tools for 
 fallbck-agent tools      # shows the detected client tools (pg_dump, mariadb-dump, mongodump, ...)
 ```
 
-The standalone `fallbck-db-agent` (agent type `database`, running as the unprivileged user `fallbck`) is **deprecated** but keeps working: the server still accepts it and its package is still built. To retire one, install the client tools next to `fallbck-agent` on the host, wait for its heartbeat, then run `fallbck-agent migrate-db-agent` (copies the WAL/binlog chain state and the credential profiles from `/var/lib/fallbck/db-agent` into the agent's data directory) and `fallbck-ctl agents merge <db-agent> --into <agent>` (moves the jobs and run history, deletes the old agent record); finally stop and remove the `fallbck-db-agent` package. Dumps then run as root; PostgreSQL profiles that relied on unix-socket peer authentication as `fallbck` need a password or a peer mapping for root. Because the agent runs as root, credential profiles in `agent.yaml` are readable by root only.
+The standalone `fallbck-db-agent` binary, package and image were **removed**; `fallbck-agent` is the database agent. Hosts still running the old package keep working (the server still accepts agents of type `database`) but receive no updates. To move one over, install the client tools next to `fallbck-agent` on the host, wait for its heartbeat, then run `fallbck-agent migrate-db-agent` (copies the WAL/binlog chain state and the credential profiles from `/var/lib/fallbck/db-agent` into the agent's data directory) and `fallbck-ctl agents merge <db-agent> --into <agent>` (moves the jobs and run history, deletes the old agent record); finally stop and remove the old package. Dumps then run as root; PostgreSQL profiles that relied on unix-socket peer authentication as `fallbck` need a password or a peer mapping for root. Credential profiles in `agent.yaml` are readable by root only.
 
-Database jobs are created in the Web UI (job type *Database*: engine, host, user, databases, TLS and engine options) and can be assigned to any agent that reports the client tools, or to a Kubernetes agent. The password is either stored on the server — handed to the agent per run over the agent's authenticated API, never through Temporal — or left blank, in which case the agent resolves it from a named **credential profile** in `db_backup.profiles` of its `agent.yaml` (`deploy/db-agent.yaml.example`; in containers `FALLBCK_AGENT_DB_PROFILE_<NAME>_PASSWORD`). Each run dumps into `<data_dir>/spool/<run>/` (the spool needs room for the largest dump; runs refuse to start below `db_backup.min_free_bytes`), uploads the directory as `db.pxar` together with a `fallbck-db.json.blob` manifest (tool and server versions, files and checksums, WAL range / binlog position and files / oplog, ready-to-run restore commands) and deletes the spool. Snapshots use the PBS group `host/db-<engine>-<host>` (override per job with *backup group id*), so they are pruned independently of the host's filesystem backups.
+Database jobs are created in the Web UI (job type *Database*: engine, host, user, databases, TLS and engine options) and can be assigned to any agent that reports the client tools, or to a Kubernetes agent. The password is either stored on the server — handed to the agent per run over the agent's authenticated API, never through Temporal — or left blank, in which case the agent resolves it from a named **credential profile** in `db_backup.profiles` of its `agent.yaml` (`deploy/agent.yaml.example`; in containers `FALLBCK_AGENT_DB_PROFILE_<NAME>_PASSWORD`). Each run dumps into `<data_dir>/spool/<run>/` (the spool needs room for the largest dump; runs refuse to start below `db_backup.min_free_bytes`), uploads the directory as `db.pxar` together with a `fallbck-db.json.blob` manifest (tool and server versions, files and checksums, WAL range / binlog position and files / oplog, ready-to-run restore commands) and deletes the spool. Snapshots use the PBS group `host/db-<engine>-<host>` (override per job with *backup group id*), so they are pruned independently of the host's filesystem backups.
 
 Restore: `proxmox-backup-client restore <snapshot> db.pxar <dir>` (or download the manifest blob first) and follow `restore.commands` in `fallbck-db.json`. The `oci.fi/fallbck/agent:tools` image (target `tools` of `Dockerfile.agent`) ships the client tools; the Linux packages rely on the distribution's `postgresql-client`, `mariadb-client`/`mysql-client` (binary-log fetching additionally needs `mysqlbinlog`/`mariadb-binlog`, which Alpine only ships in the `mariadb` package) and `mongodb-database-tools`. `pg_dump` must be at least as new as the server; the agent looks in the usual per-version directories (`/usr/lib/postgresql/*/bin`, `/usr/pgsql-*/bin`, `/usr/libexec/postgresql*`) or `db_backup.tools.postgres_bindir`.
 
@@ -148,13 +148,12 @@ PBS API tokens must be entered as `user@realm!tokenid:secret` (the `=` spelling 
 
 ## Linux packages
 
-Releases ship `.deb`, `.rpm` and `.apk` packages for `fallbck-server`, `fallbck-agent` and `fallbck-db-agent` (built by [GoReleaser](.goreleaser.yml) from the `Release` GitHub Action on `v*` tags; every push to `main` and every PR produces a snapshot build as a workflow artifact).
+Releases ship `.deb`, `.rpm` and `.apk` packages for `fallbck-server` and `fallbck-agent` (built by [GoReleaser](.goreleaser.yml) from the `Release` GitHub Action on `v*` tags; every push to `main` and every PR produces a snapshot build as a workflow artifact).
 
 | Package | Service | Config |
 |---|---|---|
 | `fallbck-server` | systemd `fallbck-server` (deb/rpm) / OpenRC `fallbck-server` (apk), runs as user `fallbck` | `/etc/fallbck/server.yaml`, secrets in `/etc/fallbck/server.env` |
-| `fallbck-agent` | systemd `fallbck-agent` / OpenRC `fallbck-agent`, runs as root | `/etc/fallbck/agent.env` (optional self-enrollment), state in `/var/lib/fallbck/agent` |
-| `fallbck-db-agent` | systemd `fallbck-db-agent` / OpenRC `fallbck-db-agent`, runs as user `fallbck` | `/etc/fallbck/db-agent.env`, credential profiles + spool in `/var/lib/fallbck/db-agent` (client tools from the distribution) |
+| `fallbck-agent` | systemd `fallbck-agent` / OpenRC `fallbck-agent`, runs as root | `/etc/fallbck/agent.env` (optional self-enrollment, database credential profiles), state, spool and `agent.yaml` in `/var/lib/fallbck/agent`; example config in `/usr/share/doc/fallbck-agent/` |
 
 ```bash
 # server
@@ -167,10 +166,9 @@ apt install ./fallbck_agent_Linux_amd64.deb
 fallbck-agent enroll --server https://backup.example.com --token <enrollment token>
 systemctl enable --now fallbck-agent
 
-# database agent
-apt install ./fallbck_db_agent_Linux_amd64.deb postgresql-client mariadb-client
-sudo -u fallbck fallbck-db-agent enroll --server https://backup.example.com --token <enrollment token> --data-dir /var/lib/fallbck/db-agent
-systemctl enable --now fallbck-db-agent
+# database backups: the same agent plus the vendor client tools
+apt install postgresql-client mariadb-client      # whichever engines you back up
+fallbck-agent tools                               # reported to the server as db_tools
 ```
 
 Upgrading a package (`apt install ./…deb`, `rpm -U`, `apk add`) restarts the service if it is running, so the new binary takes effect immediately; a service that is stopped or not yet enrolled is left alone and the post-install hint is printed instead. Data, enrollment and configuration files are never touched by an upgrade. A running backup on that host is interrupted by the restart and retried by the server on its normal schedule.

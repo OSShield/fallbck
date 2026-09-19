@@ -2,11 +2,8 @@ package activities
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
-	"net"
-	"time"
 
 	"github.com/osshield/fallbck/pkg/agent/backup"
 	dbrun "github.com/osshield/fallbck/pkg/agent/dbbackup"
@@ -15,11 +12,9 @@ import (
 	"github.com/osshield/fallbck/pkg/agent/vss"
 	"github.com/osshield/fallbck/pkg/db"
 	dockerspec "github.com/osshield/fallbck/pkg/dockerbackup"
-	"github.com/osshield/fallbck/pkg/proxy"
 	pvespec "github.com/osshield/fallbck/pkg/pvebackup"
 	"github.com/osshield/fallbck/pkg/temporal"
 	"github.com/osshield/gopbs"
-	"github.com/osshield/gopbs/pbs"
 	"go.temporal.io/sdk/activity"
 	sdktemporal "go.temporal.io/sdk/temporal"
 	"google.golang.org/grpc"
@@ -85,12 +80,9 @@ func (a *AgentActivities) ExecuteFilesystemBackup(ctx context.Context, session *
 	)
 	// Heartbeat on a timer for the whole activity: scanning and session setup produce
 	// no upload progress, and must not trip the 60s heartbeat timeout.
-	pt := newPhaseTracker()
-	stopHeartbeats := startHeartbeats(ctx, pt)
-	defer stopHeartbeats()
-	reportPh := func() { reportPhase(a.ReportProgress, ctx, session.Ticket, session.BackupRunID, pt.Current()) }
-	stopProgress := startProgress(ctx, pt, 5*time.Second, func(string) { reportPh() })
-	defer stopProgress()
+	rt := startRunTracking(ctx, session.Ticket, session.BackupRunID, a.ReportProgress)
+	defer rt.stop()
+	pt, reportPh := rt.pt, rt.report
 
 	opts := backup.Options{Session: session, Workers: a.Workers, CacheDir: a.groupCacheDir(session), OnPhase: func(p string) { pt.Set(p); reportPh() }}
 	if a.VSSDir != "" && vss.Supported() {
@@ -113,26 +105,17 @@ func (a *AgentActivities) ExecuteFilesystemBackup(ctx context.Context, session *
 		opts.Session = &s
 		opts.ReadPaths = mapped
 	}
-	if session.DirectPBS {
-		if a.Credentials == nil {
-			return nil, errors.New("job requires direct PBS access but the agent has no credentials fetcher")
+	tr, err := openTransport(ctx, session, a.Tunnel, a.Credentials, pt)
+	if err != nil {
+		if isTransportConfigErr(err) {
+			// A misconfigured agent: plain error, as before (no phase or log tail to add)
+			return nil, err
 		}
-		pt.Set("fetching PBS credentials")
-		direct, err := a.Credentials(ctx, session.Ticket)
-		if err != nil {
-			slog.Error("Failed to fetch PBS credentials for direct backup", "error", err)
-			return &temporal.BackupExecutionResult{Status: db.RunStatusFailed, ErrorMessage: err.Error()},
-				backupFailure(ctx, err, pt, a.LogTail)
-		}
-		opts.Direct = direct
-	} else {
-		if a.Tunnel == nil {
-			return nil, errors.New("agent tunnel connection is not configured")
-		}
-		opts.Dial = func(ctx context.Context, _ pbs.SnapshotRef) (net.Conn, error) {
-			return proxy.Dial(ctx, a.Tunnel, session.Ticket)
-		}
+		slog.Error("Failed to fetch PBS credentials for direct backup", "error", err)
+		return &temporal.BackupExecutionResult{Status: db.RunStatusFailed, ErrorMessage: err.Error()},
+			backupFailure(ctx, err, pt, a.LogTail)
 	}
+	opts.Dial, opts.Direct = tr.dial, tr.direct
 
 	result, err := backup.Run(ctx, opts)
 	if err != nil {
@@ -158,12 +141,9 @@ func (a *AgentActivities) ExecutePVEBackup(ctx context.Context, session *tempora
 	slog.Info("Agent activity started: ExecutePVEBackup", "activity_id", info.ActivityID, "attempt", info.Attempt,
 		"job_id", session.JobID, "datastore", session.Datastore, "direct_pbs", session.DirectPBS)
 
-	pt := newPhaseTracker()
-	stopHeartbeats := startHeartbeats(ctx, pt)
-	defer stopHeartbeats()
-	reportPh := func() { reportPhase(a.ReportProgress, ctx, session.Ticket, session.BackupRunID, pt.Current()) }
-	stopProgress := startProgress(ctx, pt, 5*time.Second, func(string) { reportPh() })
-	defer stopProgress()
+	rt := startRunTracking(ctx, session.Ticket, session.BackupRunID, a.ReportProgress)
+	defer rt.stop()
+	pt, reportPh := rt.pt, rt.report
 
 	failed := func(err error) (*temporal.BackupExecutionResult, error) {
 		slog.Error("Proxmox VE backup failed", "error", err, "phase", pt.Current())
@@ -171,26 +151,11 @@ func (a *AgentActivities) ExecutePVEBackup(ctx context.Context, session *tempora
 			backupFailure(ctx, err, pt, a.LogTail)
 	}
 
-	var dial func(ctx context.Context, ref pbs.SnapshotRef) (net.Conn, error)
-	var direct *backup.DirectOptions
-	if session.DirectPBS {
-		if a.Credentials == nil {
-			return failed(errors.New("job requires direct PBS access but the agent has no credentials fetcher"))
-		}
-		pt.Set("fetching PBS credentials")
-		d, err := a.Credentials(ctx, session.Ticket)
-		if err != nil {
-			return failed(err)
-		}
-		direct = d
-	} else {
-		if a.Tunnel == nil {
-			return failed(errors.New("agent tunnel connection is not configured"))
-		}
-		dial = func(ctx context.Context, _ pbs.SnapshotRef) (net.Conn, error) {
-			return proxy.Dial(ctx, a.Tunnel, session.Ticket)
-		}
+	tr, err := openTransport(ctx, session, a.Tunnel, a.Credentials, pt)
+	if err != nil {
+		return failed(err)
 	}
+	dial, direct := tr.dial, tr.direct
 
 	upload := func(ctx context.Context, paths, excludes []string, blobs []gopbs.Blob) (*temporal.BackupExecutionResult, error) {
 		s := *session
@@ -209,14 +174,7 @@ func (a *AgentActivities) ExecutePVEBackup(ctx context.Context, session *tempora
 	})
 	if err != nil {
 		if dbrun.IsPrecheck(err) {
-			slog.Error("Proxmox VE backup precheck failed", "error", err)
-			tail := ""
-			if a.LogTail != nil {
-				tail = a.LogTail()
-			}
-			return &temporal.BackupExecutionResult{Status: db.RunStatusFailed, ErrorMessage: err.Error()},
-				sdktemporal.NewNonRetryableApplicationError(err.Error(), ErrTypeDBPrecheckFailed, err,
-					temporal.BackupFailureDetails{Phase: pt.Current(), LogTail: tail})
+			return precheckFailed("Proxmox VE backup", err, pt, a.LogTail)
 		}
 		if ctx.Err() != nil {
 			return nil, err
@@ -238,12 +196,9 @@ func (a *AgentActivities) ExecuteDockerBackup(ctx context.Context, session *temp
 	slog.Info("Agent activity started: ExecuteDockerBackup", "activity_id", info.ActivityID, "attempt", info.Attempt,
 		"job_id", session.JobID, "datastore", session.Datastore, "direct_pbs", session.DirectPBS)
 
-	pt := newPhaseTracker()
-	stopHeartbeats := startHeartbeats(ctx, pt)
-	defer stopHeartbeats()
-	reportPh := func() { reportPhase(a.ReportProgress, ctx, session.Ticket, session.BackupRunID, pt.Current()) }
-	stopProgress := startProgress(ctx, pt, 5*time.Second, func(string) { reportPh() })
-	defer stopProgress()
+	rt := startRunTracking(ctx, session.Ticket, session.BackupRunID, a.ReportProgress)
+	defer rt.stop()
+	pt, reportPh := rt.pt, rt.report
 
 	failed := func(err error) (*temporal.BackupExecutionResult, error) {
 		slog.Error("Docker host backup failed", "error", err, "phase", pt.Current())
@@ -251,26 +206,11 @@ func (a *AgentActivities) ExecuteDockerBackup(ctx context.Context, session *temp
 			backupFailure(ctx, err, pt, a.LogTail)
 	}
 
-	var dial func(ctx context.Context, ref pbs.SnapshotRef) (net.Conn, error)
-	var direct *backup.DirectOptions
-	if session.DirectPBS {
-		if a.Credentials == nil {
-			return failed(errors.New("job requires direct PBS access but the agent has no credentials fetcher"))
-		}
-		pt.Set("fetching PBS credentials")
-		d, err := a.Credentials(ctx, session.Ticket)
-		if err != nil {
-			return failed(err)
-		}
-		direct = d
-	} else {
-		if a.Tunnel == nil {
-			return failed(errors.New("agent tunnel connection is not configured"))
-		}
-		dial = func(ctx context.Context, _ pbs.SnapshotRef) (net.Conn, error) {
-			return proxy.Dial(ctx, a.Tunnel, session.Ticket)
-		}
+	tr, err := openTransport(ctx, session, a.Tunnel, a.Credentials, pt)
+	if err != nil {
+		return failed(err)
 	}
+	dial, direct := tr.dial, tr.direct
 
 	upload := func(ctx context.Context, paths, readPaths, excludes []string, blobs []gopbs.Blob) (*temporal.BackupExecutionResult, error) {
 		s := *session
@@ -289,14 +229,7 @@ func (a *AgentActivities) ExecuteDockerBackup(ctx context.Context, session *temp
 	})
 	if err != nil {
 		if dbrun.IsPrecheck(err) {
-			slog.Error("Docker host backup precheck failed", "error", err)
-			tail := ""
-			if a.LogTail != nil {
-				tail = a.LogTail()
-			}
-			return &temporal.BackupExecutionResult{Status: db.RunStatusFailed, ErrorMessage: err.Error()},
-				sdktemporal.NewNonRetryableApplicationError(err.Error(), ErrTypeDBPrecheckFailed, err,
-					temporal.BackupFailureDetails{Phase: pt.Current(), LogTail: tail})
+			return precheckFailed("Docker host backup", err, pt, a.LogTail)
 		}
 		return failed(err)
 	}
