@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +16,7 @@ import (
 	"github.com/osshield/fallbck/pkg/config"
 	"github.com/osshield/fallbck/pkg/db"
 	"github.com/osshield/fallbck/pkg/pbs"
+	"github.com/osshield/fallbck/pkg/temporal/scheduler"
 	"go.temporal.io/sdk/client"
 )
 
@@ -28,14 +28,10 @@ type ServerAPI struct {
 	TokenManager *auth.TokenManager
 	// Verifier is used to invalidate cached agent state on revocation (may be nil)
 	Verifier *auth.AgentVerifier
-	// Scheduler keeps Temporal Schedules aligned with jobs (may be nil)
-	Scheduler JobScheduler
-}
-
-// JobScheduler mirrors scheduler.Scheduler (interface here to keep tests light)
-type JobScheduler interface {
-	Sync(ctx context.Context, job *db.BackupJob) error
-	Remove(ctx context.Context, jobID uuid.UUID) error
+	// Scheduler keeps Temporal Schedules aligned with jobs (may be nil: tests, and a
+	// server started without Temporal). A concrete pointer on purpose: a nil
+	// *scheduler.Scheduler stored in an interface field would not compare equal to nil.
+	Scheduler *scheduler.Scheduler
 }
 
 // NewServerAPI initializes the API service
