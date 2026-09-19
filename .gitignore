@@ -36,3 +36,6 @@ dist/
 *.local.md
 # .local/
 fallbck-k8s-agent*.tgz
+
+bin/
+.bin/
