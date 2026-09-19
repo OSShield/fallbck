@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -374,12 +375,16 @@ func (c *collector) compose() {
 		p.services[ct.Service] = true
 		for _, f := range strings.Split(ci.Config.Labels[labelConfigFiles], ",") {
 			if f = strings.TrimSpace(f); f != "" {
-				p.files = appendUnique(p.files, absIn(p.workingDir, f))
+				if abs := absIn(p.workingDir, f); !slices.Contains(p.files, abs) {
+					p.files = append(p.files, abs)
+				}
 			}
 		}
 		for _, f := range strings.Split(ci.Config.Labels[labelEnvFiles], ",") {
 			if f = strings.TrimSpace(f); f != "" {
-				p.files = appendUnique(p.files, absIn(p.workingDir, f))
+				if abs := absIn(p.workingDir, f); !slices.Contains(p.files, abs) {
+					p.files = append(p.files, abs)
+				}
 			}
 		}
 	}
@@ -496,15 +501,6 @@ func dropNone(list []string) []string {
 		}
 	}
 	return out
-}
-
-func appendUnique(list []string, s string) []string {
-	for _, e := range list {
-		if e == s {
-			return list
-		}
-	}
-	return append(list, s)
 }
 
 // absIn resolves a compose-relative file name against the project's working directory

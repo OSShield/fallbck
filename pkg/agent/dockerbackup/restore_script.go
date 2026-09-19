@@ -1,9 +1,11 @@
 package dockerbackup
 
 import (
+	"cmp"
 	"fmt"
+	"maps"
 	"path"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -25,7 +27,7 @@ func restoreSummary(m *dockerspec.Manifest, at time.Time) string {
 		}
 	}
 	return fmt.Sprintf("Docker %s host %s (%d containers, %d volumes archived, %d compose projects) taken %s; restore onto a host with Docker and compose installed using the generated script",
-		orDash(m.Host.DockerVersion), m.Generator.Hostname, len(m.Containers), vols, len(m.Compose), at.Format(time.RFC3339))
+		cmp.Or(m.Host.DockerVersion, "-"), m.Generator.Hostname, len(m.Containers), vols, len(m.Compose), at.Format(time.RFC3339))
 }
 
 // restoreCommands is the short runbook shown in the UI
@@ -152,10 +154,10 @@ func restoreScript(m *dockerspec.Manifest, namespace, helperImage string) string
 				args = append(args, "--ip-range", s.IPRange)
 			}
 		}
-		for _, k := range sortedKeys(n.Options) {
+		for _, k := range slices.Sorted(maps.Keys(n.Options)) {
 			args = append(args, "-o", k+"="+n.Options[k])
 		}
-		for _, k := range sortedKeys(n.Labels) {
+		for _, k := range slices.Sorted(maps.Keys(n.Labels)) {
 			args = append(args, "--label", k+"="+n.Labels[k])
 		}
 		args = append(args, n.Name)
@@ -179,10 +181,10 @@ func restoreScript(m *dockerspec.Manifest, namespace, helperImage string) string
 		if v.Driver != "" && v.Driver != "local" {
 			args = append(args, "--driver", v.Driver)
 		}
-		for _, k := range sortedKeys(v.Options) {
+		for _, k := range slices.Sorted(maps.Keys(v.Options)) {
 			args = append(args, "-o", k+"="+v.Options[k])
 		}
-		for _, k := range sortedKeys(v.Labels) {
+		for _, k := range slices.Sorted(maps.Keys(v.Labels)) {
 			args = append(args, "--label", k+"="+v.Labels[k])
 		}
 		args = append(args, v.Name)
@@ -367,7 +369,7 @@ func dockerRunCommand(c dockerspec.Container) string {
 			args = append(args, "--network", n)
 		}
 	}
-	for _, k := range sortedKeys(c.Labels) {
+	for _, k := range slices.Sorted(maps.Keys(c.Labels)) {
 		if strings.HasPrefix(k, "com.docker.compose.") {
 			continue
 		}
@@ -384,15 +386,6 @@ func nsFlag(namespace string) string {
 	return " --ns " + namespace
 }
 
-func sortedKeys(m map[string]string) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
 // shellQuote single-quotes a value for bash
 func shellQuote(s string) string {
 	if s != "" && !strings.ContainsAny(s, " \t\n'\"\\$`&|;<>()*?[]#~!{}") {
@@ -407,11 +400,4 @@ func quoteAll(args []string) string {
 		out[i] = shellQuote(a)
 	}
 	return strings.Join(out, " ")
-}
-
-func orDash(s string) string {
-	if s == "" {
-		return "-"
-	}
-	return s
 }

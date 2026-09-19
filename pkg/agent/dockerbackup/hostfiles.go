@@ -91,7 +91,7 @@ func (h *hostFiles) createHelper(ctx context.Context, binds []string) (string, e
 
 // removeHelper deletes a helper with a fresh context so cancellation never leaks it
 func (h *hostFiles) removeHelper(id string) {
-	ctx, cancel := withTimeout(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
 	defer cancel()
 	_ = h.client.RemoveContainer(ctx, id)
 }

@@ -1,6 +1,7 @@
 package pvebackup
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -159,7 +160,7 @@ func Run(ctx context.Context, o RunOptions) (*temporal.BackupExecutionResult, er
 	}
 	manifest.Restore = pvespec.Restore{
 		Summary: fmt.Sprintf("Proxmox VE %s host %s (%d guests, %d storages, %d packages) taken %s; restore onto a fresh PVE %s install with the generated script",
-			orDash(manifest.Host.PVEVersion), manifest.Host.Hostname, len(manifest.Guests), len(manifest.Storages), manifest.Packages.Installed, snapshotTime.Format(time.RFC3339), pveMajorString(manifest)),
+			cmp.Or(manifest.Host.PVEVersion, "-"), manifest.Host.Hostname, len(manifest.Guests), len(manifest.Storages), manifest.Packages.Installed, snapshotTime.Format(time.RFC3339), pveMajorString(manifest)),
 		Commands: restoreCommands(manifest, o.Session.Namespace),
 		Script:   pvespec.CollectEntry + "/" + pvespec.RestoreScriptName,
 	}
