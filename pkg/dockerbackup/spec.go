@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/osshield/fallbck/pkg/fsutil"
 	"github.com/osshield/gopbs/scan"
 )
 
@@ -171,8 +172,7 @@ func cleanHostPaths(paths []string) ([]string, error) {
 
 // HostPathEntry is the archive entry name of a host path (/srv/app → host-srv-app)
 func HostPathEntry(p string) string {
-	trimmed := strings.Trim(filepath.ToSlash(filepath.Clean(p)), "/")
-	return HostPathEntryPrefix + strings.ReplaceAll(trimmed, "/", "-")
+	return HostPathEntryPrefix + fsutil.FlattenPath(p)
 }
 
 // NormalizeImages maps "" to refs and reports unknown modes

@@ -26,15 +26,14 @@ const (
 
 // TemporalConfig is a Temporal *client* configuration (used for an external cluster)
 type TemporalConfig struct {
-	HostPort           string        `yaml:"host_port" json:"host_port"`
-	Namespace          string        `yaml:"namespace" json:"namespace"`
-	EnableTLS          bool          `yaml:"enable_tls" json:"enable_tls"`
-	CACertPath         string        `yaml:"ca_cert_path" json:"ca_cert_path"`
-	ClientCertPath     string        `yaml:"client_cert_path" json:"client_cert_path"`
-	ClientKeyPath      string        `yaml:"client_key_path" json:"client_key_path"`
-	ServerName         string        `yaml:"server_name" json:"server_name"`
-	InsecureSkipVerify bool          `yaml:"insecure_skip_verify" json:"insecure_skip_verify"`
-	ConnectTimeout     time.Duration `yaml:"connect_timeout" json:"connect_timeout"`
+	HostPort           string `yaml:"host_port" json:"host_port"`
+	Namespace          string `yaml:"namespace" json:"namespace"`
+	EnableTLS          bool   `yaml:"enable_tls" json:"enable_tls"`
+	CACertPath         string `yaml:"ca_cert_path" json:"ca_cert_path"`
+	ClientCertPath     string `yaml:"client_cert_path" json:"client_cert_path"`
+	ClientKeyPath      string `yaml:"client_key_path" json:"client_key_path"`
+	ServerName         string `yaml:"server_name" json:"server_name"`
+	InsecureSkipVerify bool   `yaml:"insecure_skip_verify" json:"insecure_skip_verify"`
 }
 
 // EmbeddedTemporalConfig configures the in-process Temporal server
@@ -229,8 +228,7 @@ func DefaultServerConfig() *ServerConfig {
 				ClusterName:   "fallbck",
 			},
 			External: TemporalConfig{
-				HostPort:       "localhost:7233",
-				ConnectTimeout: 10 * time.Second,
+				HostPort: "localhost:7233",
 			},
 			UI: TemporalUIConfig{
 				Enabled: true,

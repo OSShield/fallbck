@@ -3,6 +3,8 @@ package backup
 import (
 	"reflect"
 	"testing"
+
+	"github.com/osshield/fallbck/pkg/fsutil"
 )
 
 func TestArchiveEntryNames(t *testing.T) {
@@ -39,7 +41,7 @@ func TestEntryNamesWindows(t *testing.T) {
 			t.Errorf("entryBase(%q) = %q, want %q", in, got, want)
 		}
 	}
-	if pathEntryName(`D:\data\x`) != "D-data-x" {
-		t.Errorf("pathEntryName windows: %q", pathEntryName(`D:\data\x`))
+	if fsutil.FlattenPath(`D:\data\x`) != "D-data-x" {
+		t.Errorf("FlattenPath windows: %q", fsutil.FlattenPath(`D:\data\x`))
 	}
 }
