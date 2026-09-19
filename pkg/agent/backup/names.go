@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"path"
 	"strings"
+
+	"github.com/osshield/fallbck/pkg/fsutil"
 )
 
 // ArchiveEntryNames decides how each backup path is named at the top of the archive
@@ -24,7 +26,7 @@ func ArchiveEntryNames(paths []string) (map[string]string, error) {
 			continue
 		}
 		for _, p := range group {
-			names[p] = pathEntryName(p)
+			names[p] = fsutil.FlattenPath(p)
 		}
 	}
 
@@ -39,18 +41,6 @@ func ArchiveEntryNames(paths []string) (map[string]string, error) {
 		used[name] = p
 	}
 	return names, nil
-}
-
-// pathEntryName flattens an absolute path into a single archive entry name
-// (`/var/lib/mydir` → `var-lib-mydir`, `D:\data\x` → `D-data-x`). Both path
-// styles are handled on every platform, so the slash-only path package is used.
-func pathEntryName(p string) string {
-	trimmed := strings.Trim(path.Clean(strings.ReplaceAll(p, `\`, "/")), "/")
-	trimmed = strings.ReplaceAll(trimmed, ":", "")
-	if trimmed == "" {
-		return "root"
-	}
-	return strings.ReplaceAll(trimmed, "/", "-")
 }
 
 // entryBase is the basename used for an archive entry: the last path element, or

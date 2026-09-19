@@ -12,6 +12,7 @@ import (
 
 	dbrun "github.com/osshield/fallbck/pkg/agent/dbbackup"
 	dockerspec "github.com/osshield/fallbck/pkg/dockerbackup"
+	"github.com/osshield/fallbck/pkg/fsutil"
 	"github.com/osshield/fallbck/pkg/rundetail"
 	"github.com/osshield/fallbck/pkg/temporal"
 	"github.com/osshield/gopbs"
@@ -291,7 +292,7 @@ func stageVolume(ctx context.Context, access string, files *hostFiles, v *docker
 		return err
 	}
 	if access == accessDirect {
-		return copyTree(v.Mountpoint, dst)
+		return fsutil.CopyTree(v.Mountpoint, dst)
 	}
 	return extractViaHelper(ctx, files, v.Name, dst)
 }

@@ -3,12 +3,12 @@ package runtime
 import (
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 
 	"github.com/osshield/fallbck/pkg/agent/enrollment"
 	"github.com/osshield/fallbck/pkg/config"
+	"github.com/osshield/fallbck/pkg/fsutil"
 )
 
 // MigrateDBAgent takes over a fallbck-db-agent installation for the combined agent:
@@ -44,7 +44,7 @@ func MigrateDBAgent(fromDir, cfgPath string) error {
 	if newState == "" {
 		newState = filepath.Join(cfg.DataDir, "state", "db")
 	}
-	copied, err := copyMissing(oldState, newState)
+	copied, err := copyStateIfPresent(oldState, newState)
 	if err != nil {
 		return fmt.Errorf("copying chain state: %w", err)
 	}
@@ -79,45 +79,11 @@ func MigrateDBAgent(fromDir, cfgPath string) error {
 	return nil
 }
 
-// copyMissing copies the files below src into dst that do not exist there yet
-func copyMissing(src, dst string) (int, error) {
-	if _, err := os.Stat(src); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return 0, nil
-		}
-		return 0, err
+// copyStateIfPresent copies the chain-state files that do not exist yet; a database
+// agent that never ran a continuation backup has no state directory, which is fine
+func copyStateIfPresent(src, dst string) (int, error) {
+	if _, err := os.Stat(src); errors.Is(err, os.ErrNotExist) {
+		return 0, nil
 	}
-	n := 0
-	err := filepath.Walk(src, func(p string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, _ := filepath.Rel(src, p)
-		target := filepath.Join(dst, rel)
-		if info.IsDir() {
-			return os.MkdirAll(target, 0o700)
-		}
-		if !info.Mode().IsRegular() {
-			return nil
-		}
-		if _, err := os.Stat(target); err == nil {
-			return nil
-		}
-		in, err := os.Open(p)
-		if err != nil {
-			return err
-		}
-		defer in.Close()
-		out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600)
-		if err != nil {
-			return err
-		}
-		if _, err := io.Copy(out, in); err != nil {
-			_ = out.Close()
-			return err
-		}
-		n++
-		return out.Close()
-	})
-	return n, err
+	return fsutil.CopyMissing(src, dst)
 }

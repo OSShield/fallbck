@@ -15,6 +15,7 @@ import (
 	"time"
 
 	dbrun "github.com/osshield/fallbck/pkg/agent/dbbackup"
+	"github.com/osshield/fallbck/pkg/fsutil"
 	pvespec "github.com/osshield/fallbck/pkg/pvebackup"
 )
 
@@ -189,7 +190,7 @@ func collect(ctx context.Context, runner dbrun.Runner, dir string) *collected {
 	// /etc/pve: the cluster filesystem is a FUSE mount with unusual semantics, so it is
 	// copied file by file into collect/pve rather than archived in place
 	pveCopy := filepath.Join(dir, "pve", "etc-pve")
-	if err := copyTree(pveConfigDir, pveCopy); err != nil {
+	if err := fsutil.CopyTree(pveConfigDir, pveCopy); err != nil {
 		c.record("etc-pve", "", "", fmt.Errorf("copying %s: %w", pveConfigDir, err))
 	} else {
 		c.record("etc-pve", "", "pve/etc-pve", nil)
@@ -209,7 +210,7 @@ func collect(ctx context.Context, runner dbrun.Runner, dir string) *collected {
 			_, err := runner.Run(cctx, dbrun.Command{Name: "sqlite3", Path: sqlite, Args: []string{pveClusterDB, ".backup " + target}, Env: toolEnv(), Stdout: io.Discard})
 			cancel()
 			c.record("config-db", "sqlite3 .backup", "pve/config.db", err)
-		} else if err := copyFile(pveClusterDB, target); err != nil {
+		} else if err := fsutil.CopyFile(pveClusterDB, target); err != nil {
 			c.record("config-db", "", "", err)
 		} else {
 			c.record("config-db", "cp (sqlite3 not installed; copy taken without a lock)", "pve/config.db", nil)
@@ -217,60 +218,4 @@ func collect(ctx context.Context, runner dbrun.Runner, dir string) *collected {
 		}
 	}
 	return out
-}
-
-// copyTree copies a directory recursively, keeping modes, mtimes and symlinks
-func copyTree(src, dst string) error {
-	return filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, _ := filepath.Rel(src, path)
-		target := filepath.Join(dst, rel)
-		info, err := d.Info()
-		if err != nil {
-			return err
-		}
-		switch {
-		case d.IsDir():
-			if err := os.MkdirAll(target, 0o700); err != nil {
-				return err
-			}
-			return nil
-		case info.Mode()&os.ModeSymlink != 0:
-			link, err := os.Readlink(path)
-			if err != nil {
-				return err
-			}
-			return os.Symlink(link, target)
-		case info.Mode().IsRegular():
-			if err := copyFile(path, target); err != nil {
-				return err
-			}
-			_ = os.Chmod(target, info.Mode().Perm())
-			_ = os.Chtimes(target, info.ModTime(), info.ModTime())
-			return nil
-		}
-		return nil
-	})
-}
-
-func copyFile(src, dst string) error {
-	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
-		return err
-	}
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
-		return err
-	}
-	return out.Close()
 }
