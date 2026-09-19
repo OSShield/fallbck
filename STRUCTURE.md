@@ -57,7 +57,7 @@ Database jobs (`job_type: database`, `db_config`) follow the same path with `fal
 | `pkg/temporal/ui` | embedded Temporal Web UI (loopback ui-server, proxied under `/temporal/`) |
 | `pkg/temporal` | SDK client helpers, server worker, workflows and activities |
 | `pkg/temporal/scheduler` | Temporal Schedules for cron jobs (sync on job changes, reconcile at startup) |
-| `pkg/api`, `web` | REST API and server-rendered Web UI (`/onboarding` guided agent + backup setup; form fieldsets shared as `templates/partials/`) |
+| `pkg/api`, `web` | REST API and server-rendered Web UI (`/onboarding` guided agent + backup setup, the only place jobs are created; `/jobs` lists every job type with client-side filters and edits them; form fieldsets shared as `templates/partials/`) |
 | `pkg/proxy` | PBS backup-session tunnel (gRPC byte stream, server-side protocol upgrade, TLS pinning); `pbstest` fake PBS for tests |
 | `pkg/agent/runtime` | shared agent daemon skeleton (config + self-enrollment, gateway connections, worker, heartbeat/token rotation) |
 | `pkg/agent/backup` | agent backup engine on top of gopbs (pxar upload, blobs) |

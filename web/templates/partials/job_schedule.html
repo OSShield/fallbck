@@ -1,19 +1,22 @@
-{{/* Schedule and run options shared by every job form (cron, direct PBS, enabled); retention lives on PBS. */}}
+{{/* Schedule and run options shared by every job form (cron, direct PBS, enabled); retention lives on PBS.
+     The checkboxes sit inside their labels and carry no ids: the Jobs page holds two forms using this partial. */}}
 {{define "job-schedule"}}
 <div class="form-group">
   <label>Schedule (cron, runs in {{.Timezone}}; blank = manual — e.g. <code>0 2 * * *</code>, <code>@daily</code>, <code>@every 6h</code>)</label>
   <input type="text" name="schedule_cron" class="form-control" placeholder="0 2 * * * (every night at 02:00)">
 </div>
 
-<div class="form-group" style="display: flex; align-items: center; gap: 8px;">
-  <input type="checkbox" id="direct_pbs" name="direct_pbs">
-  <label for="direct_pbs" style="font-size: 13px; font-weight: 500;">Agent connects directly to PBS (bypass the server tunnel; the agent receives the target's API token per run)</label>
+<div class="form-group">
+  <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500;">
+    <input type="checkbox" name="direct_pbs">
+    Agent connects directly to PBS (bypass the server tunnel; the agent, and for cluster jobs its workers, receives the target's API token per run)
+  </label>
 </div>
 
-<p style="font-size: 12px; color: var(--text-muted); margin: 0;">Retention is configured on the Proxmox Backup Server as a datastore prune job; FallBCK never prunes or deletes snapshots.</p>
+<p style="font-size: 12px; color: var(--text-muted); margin: 0 0 12px;">Retention is configured on the Proxmox Backup Server as a datastore prune job; FallBCK never prunes or deletes snapshots.</p>
 
-<div style="display: flex; align-items: center; gap: 8px;">
-  <input type="checkbox" id="job_enabled" name="enabled" checked>
-  <label for="job_enabled" style="font-size: 13px; font-weight: 500;">Enable automated schedule</label>
-</div>
+<label style="display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500;">
+  <input type="checkbox" name="enabled" checked>
+  Enable automated schedule
+</label>
 {{end}}

@@ -515,18 +515,6 @@ async function saveJob(payload, jobId) {
   return resp.json();
 }
 
-function newJob() {
-  const form = jobForm();
-  form.reset();
-  form.dataset.jobId = '';
-  const hint = form.querySelector('#db-password-hint');
-  if (hint) hint.hidden = true;
-  setJobTypeIn(form, 'filesystem');
-  document.getElementById('job-modal-title').innerText = 'Create Backup Job';
-  document.getElementById('job-submit').innerText = 'Create Job';
-  openModal('modal-add-job');
-}
-
 async function editJob(jobId) {
   try {
     const resp = await apiFetch(`/api/v1/jobs/${jobId}`);
@@ -575,17 +563,65 @@ async function triggerJobRun(jobId) {
   }
 }
 
+// ---- Backup Jobs page filters ---------------------------------------------------
+// Client-side over the rendered rows; the state lives in the URL, so links such as
+// /jobs?type=kubernetes (the old Kubernetes page redirects there) open filtered.
+
+const JOB_FILTERS = ['type', 'enabled', 'lastrun', 'agent', 'target', 'schedule'];
+
+function initJobFilters() {
+  const bar = document.getElementById('job-filters');
+  if (!bar) return;
+  const q = new URLSearchParams(window.location.search);
+  JOB_FILTERS.forEach(k => {
+    const el = bar.querySelector(`[name="f_${k}"]`);
+    if (!el) return;
+    if (q.get(k)) el.value = q.get(k);
+    el.addEventListener('change', applyJobFilters);
+  });
+  applyJobFilters();
+}
+
+function applyJobFilters() {
+  const bar = document.getElementById('job-filters');
+  if (!bar) return;
+  const want = {};
+  JOB_FILTERS.forEach(k => { want[k] = (bar.querySelector(`[name="f_${k}"]`) || {}).value || ''; });
+  let shown = 0;
+  document.querySelectorAll('tr.job-row').forEach(row => {
+    const d = row.dataset;
+    // "running" covers every state of a run that has not ended yet
+    const lastrun = RUN_ACTIVE.includes(d.lastrun) ? 'running' : d.lastrun;
+    const ok = (!want.type || d.type === want.type) && (!want.enabled || d.enabled === want.enabled) &&
+      (!want.lastrun || lastrun === want.lastrun) && (!want.agent || d.agent === want.agent) &&
+      (!want.target || d.target === want.target) && (!want.schedule || d.schedule === want.schedule);
+    row.hidden = !ok;
+    if (ok) shown++;
+  });
+  const count = document.getElementById('job-count');
+  if (count) count.innerText = shown;
+  const none = document.getElementById('job-no-match');
+  if (none) none.hidden = shown !== 0;
+  const q = new URLSearchParams();
+  JOB_FILTERS.forEach(k => { if (want[k]) q.set(k, want[k]); });
+  const qs = q.toString();
+  history.replaceState(null, '', window.location.pathname + (qs ? '?' + qs : ''));
+}
+
+function clearJobFilters() {
+  const bar = document.getElementById('job-filters');
+  if (!bar) return;
+  JOB_FILTERS.forEach(k => { const el = bar.querySelector(`[name="f_${k}"]`); if (el) el.value = ''; });
+  applyJobFilters();
+}
+
+document.addEventListener('DOMContentLoaded', initJobFilters);
+
 // ---- Kubernetes cluster job form ------------------------------------------------
 
 function k8sJobForm() { return document.getElementById('k8s-job-form'); }
 
 const K8S_DEFAULT_NS_EXCLUDES = ['kube-system', 'kube-node-lease', 'kube-public'];
-
-function resetK8sJobForm(form) {
-  form.reset();
-  form.dataset.jobId = '';
-  form.elements['k8s_ns_exclude'].value = K8S_DEFAULT_NS_EXCLUDES.join('\n');
-}
 
 function loadK8sJobIntoForm(form, job) {
   form.reset();
@@ -655,13 +691,6 @@ function buildK8sPayload(form) {
       },
     },
   };
-}
-
-function newK8sJob() {
-  resetK8sJobForm(k8sJobForm());
-  document.getElementById('k8s-job-modal-title').innerText = 'Create Cluster Backup Job';
-  document.getElementById('k8s-job-submit').innerText = 'Create Job';
-  openModal('modal-add-k8s-job');
 }
 
 async function editK8sJob(jobId) {

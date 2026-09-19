@@ -225,6 +225,15 @@ type BackupJob struct {
 	// Joined fields for display
 	AgentName  string `json:"agent_name,omitempty"`
 	TargetName string `json:"target_name,omitempty"`
+	// LastRun is the job's newest run (filled by the Jobs page; nil = never ran)
+	LastRun *JobLastRun `json:"last_run,omitempty" db:"-"`
+}
+
+// JobLastRun is the newest run of a job, for list views
+type JobLastRun struct {
+	RunID  uuid.UUID `json:"run_id"`
+	Status RunStatus `json:"status"`
+	At     time.Time `json:"at"`
 }
 
 // RunStatus represents the state of a backup run

@@ -752,6 +752,28 @@ tbody tr:hover {
   color: var(--text-dim);
 }
 
+/* Backup Jobs filter bar */
+.job-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 24px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.job-filters .form-control {
+  width: auto;
+  min-width: 140px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+  font-size: 13px;
+}
+
+tr.job-row[hidden] {
+  display: none;
+}
+
 /* Onboarding page (agent + backups) */
 .ob-progress {
   flex-wrap: wrap;

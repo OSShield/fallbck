@@ -650,6 +650,27 @@ func (d *DB) UpdateRun(ctx context.Context, run *BackupRun) error {
 	return err
 }
 
+// LatestRunByJob returns the newest run of every job that has one
+func (d *DB) LatestRunByJob(ctx context.Context) (map[uuid.UUID]*JobLastRun, error) {
+	rows, err := d.Pool.Query(ctx, `
+		SELECT DISTINCT ON (job_id) job_id, id, status, COALESCE(end_time, start_time, created_at)
+		FROM backup_runs ORDER BY job_id, created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[uuid.UUID]*JobLastRun{}
+	for rows.Next() {
+		var jobID uuid.UUID
+		var lr JobLastRun
+		if err := rows.Scan(&jobID, &lr.RunID, &lr.Status, &lr.At); err != nil {
+			return nil, err
+		}
+		out[jobID] = &lr
+	}
+	return out, rows.Err()
+}
+
 func (d *DB) ListRuns(ctx context.Context, limit int) ([]*BackupRun, error) {
 	if limit <= 0 {
 		limit = 50
