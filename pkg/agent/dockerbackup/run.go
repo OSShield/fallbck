@@ -71,7 +71,7 @@ func Run(ctx context.Context, o RunOptions) (*temporal.BackupExecutionResult, er
 	if client == nil {
 		client = NewClient(o.Settings.EffSocket())
 	}
-	pctx, cancel := withTimeout(ctx)
+	pctx, cancel := context.WithTimeout(ctx, callTimeout)
 	err := dockerspec.Ping(pctx, client.Socket())
 	cancel()
 	if err != nil {
@@ -194,7 +194,7 @@ func Run(ctx context.Context, o RunOptions) (*temporal.BackupExecutionResult, er
 		} else {
 			progress("copying host path " + hp)
 			dst := filepath.Join(stageDir, safeName(entry))
-			if err := extractHostPath(ctx, files, hp, dst); err != nil {
+			if err := extractViaHelper(ctx, files, hp, dst); err != nil {
 				_ = os.RemoveAll(dst)
 				if ctx.Err() != nil {
 					return nil, ctx.Err()
@@ -293,7 +293,7 @@ func stageVolume(ctx context.Context, access string, files *hostFiles, v *docker
 	if access == accessDirect {
 		return copyTree(v.Mountpoint, dst)
 	}
-	return extractVolume(ctx, files, v.Name, dst)
+	return extractViaHelper(ctx, files, v.Name, dst)
 }
 
 func summarizeModes(used map[string]bool) string {

@@ -525,8 +525,3 @@ func (c *Client) Archive(ctx context.Context, id, path string) (io.ReadCloser, e
 
 // callTimeout bounds one plain API call (lists, inspects, pause)
 const callTimeout = 2 * time.Minute
-
-// withTimeout derives a bounded context for a plain call
-func withTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(ctx, callTimeout)
-}

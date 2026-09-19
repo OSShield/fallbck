@@ -1,6 +1,7 @@
 package pvebackup
 
 import (
+	"cmp"
 	"fmt"
 	"strings"
 
@@ -63,7 +64,7 @@ func restoreScript(m *pvespec.Manifest, namespace string) string {
 
 	w("#!/usr/bin/env bash")
 	w("# fallbck Proxmox VE host restore runbook")
-	w("# Generated %s for %s (pve-manager %s, kernel %s)", m.FinishedAt.UTC().Format("2006-01-02 15:04 UTC"), m.Host.Hostname, orDash(m.Host.PVEVersion), orDash(m.Host.Kernel))
+	w("# Generated %s for %s (pve-manager %s, kernel %s)", m.FinishedAt.UTC().Format("2006-01-02 15:04 UTC"), m.Host.Hostname, cmp.Or(m.Host.PVEVersion, "-"), cmp.Or(m.Host.Kernel, "-"))
 	w("# Snapshot: %s   Archive: %s.pxar", snapshot, pvespec.ArchiveName)
 	w("#")
 	w("# Run on a FRESH Proxmox VE %s install as root. Steps:", pveMajorString(m))
@@ -181,11 +182,4 @@ func restoreScript(m *pvespec.Manifest, namespace string) string {
 	w("echo '    Review /etc/pve/storage.cfg (storages must exist before guests start), reboot to pick up kernel/network changes,'")
 	w("echo '    then start the guests. Guest disks are restored separately (vzdump backups on PBS).'")
 	return b.String()
-}
-
-func orDash(s string) string {
-	if s == "" {
-		return "-"
-	}
-	return s
 }

@@ -82,7 +82,7 @@ function agentWizardRepo(target, pkg) {
 
 // Manual install from the GitHub release for distributions without a package:
 // binary, state directories, environment template and a service unit.
-function agentWizardManualLinux(type, pkg, svc) {
+function agentWizardManualLinux(pkg, svc) {
   const asset = 'fallbck_agent_Linux_${ARCH}.tar.gz';
   const dataDir = '/var/lib/fallbck/agent';
   const env = 'agent.env';
@@ -181,7 +181,7 @@ function agentWizardSections(type, target, serverUrl, token) {
   const sudo = target === 'proxmox' || target === 'alpine' ? '' : 'sudo ';
 
   if (target === 'linux-other') {
-    const m = agentWizardManualLinux(type, pkg, svc);
+    const m = agentWizardManualLinux(pkg, svc);
     sections.push({
       title: 'Download the binary and the configuration template',
       text: `Releases are published at ${AGENT_WIZARD_RELEASES}. The archive holds the static ${pkg} binary; the environment template and service units come from the repository.`,
