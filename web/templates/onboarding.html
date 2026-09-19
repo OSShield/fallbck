@@ -8,26 +8,55 @@
     <div class="wizard-progress-group">
       <span class="ob-group-label">Agent</span>
       <div class="wizard-progress-steps">
-        <div class="wizard-progress-step" data-step="1"><span class="wizard-progress-num">1</span> Type</div>
-        <div class="wizard-progress-step" data-step="2"><span class="wizard-progress-num">2</span> Platform</div>
-        <div class="wizard-progress-step" data-step="3"><span class="wizard-progress-num">3</span> Install</div>
-        <div class="wizard-progress-step" data-step="4"><span class="wizard-progress-num">4</span> Enrolled</div>
+        <div class="wizard-progress-step" data-step="0"><span class="wizard-progress-num">1</span> Start</div>
+        <div class="wizard-progress-step" data-step="1"><span class="wizard-progress-num">2</span> Type</div>
+        <div class="wizard-progress-step" data-step="2"><span class="wizard-progress-num">3</span> Platform</div>
+        <div class="wizard-progress-step" data-step="3"><span class="wizard-progress-num">4</span> Install</div>
+        <div class="wizard-progress-step" data-step="4"><span class="wizard-progress-num">5</span> Enrolled</div>
       </div>
     </div>
     <div class="wizard-progress-group">
       <span class="ob-group-label">Backup</span>
       <div class="wizard-progress-steps">
-        <div class="wizard-progress-step" data-step="5"><span class="wizard-progress-num">5</span> Type</div>
-        <div class="wizard-progress-step" data-step="6"><span class="wizard-progress-num">6</span> Target</div>
-        <div class="wizard-progress-step" data-step="7"><span class="wizard-progress-num">7</span> Contents</div>
-        <div class="wizard-progress-step" data-step="8"><span class="wizard-progress-num">8</span> Schedule</div>
-        <div class="wizard-progress-step" data-step="9"><span class="wizard-progress-num">9</span> Review</div>
+        <div class="wizard-progress-step" data-step="5"><span class="wizard-progress-num">6</span> Type</div>
+        <div class="wizard-progress-step" data-step="6"><span class="wizard-progress-num">7</span> Target</div>
+        <div class="wizard-progress-step" data-step="7"><span class="wizard-progress-num">8</span> Contents</div>
+        <div class="wizard-progress-step" data-step="8"><span class="wizard-progress-num">9</span> Schedule</div>
+        <div class="wizard-progress-step" data-step="9"><span class="wizard-progress-num">10</span> Review</div>
       </div>
     </div>
   </div>
 
   <div class="card">
     <div class="card-body ob-body" style="padding: 20px 24px;">
+
+      <!-- ---- Start: a new agent, or backups for one that is already enrolled -->
+      <div class="wizard-page" data-step="0">
+        <p class="wizard-lead">What do you want to set up?</p>
+        <div id="ob-start-options" class="wizard-options">
+          <div class="wizard-option" role="button" tabindex="0" data-kind="start" data-value="new" onclick="obSelect(this)" onkeydown="obKey(event, this)">
+            <div class="wizard-option-title">New agent</div>
+            <div class="wizard-option-desc">Install and enroll an agent on a new host or cluster, then set up its backups.</div>
+          </div>
+          <div class="wizard-option" role="button" tabindex="0" data-kind="start" data-value="existing" onclick="obSelect(this)" onkeydown="obKey(event, this)">
+            <div class="wizard-option-title">Existing agent</div>
+            <div class="wizard-option-desc">Add backups for an agent that is already enrolled.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="wizard-page" data-step="existing">
+        <p class="wizard-lead">Which agent should get new backups?</p>
+        <div id="ob-agent-options" class="wizard-options">
+          {{range .Agents}}
+          <div class="wizard-option" role="button" tabindex="0" data-kind="agent" data-value="{{.ID}}" onclick="obSelect(this)" onkeydown="obKey(event, this)">
+            <div class="wizard-option-title">{{.Hostname}}</div>
+            <div class="wizard-option-desc">{{.AgentType}} agent, {{.OS}}/{{.Arch}}, {{.Status}}{{if .PVEHost}} · Proxmox VE{{end}}{{if .DockerHost}} · Docker{{end}}{{if .DBTools}} · DB tools{{end}}</div>
+          </div>
+          {{end}}
+        </div>
+        {{if not .Agents}}<p class="wizard-note">No agents are enrolled yet. Go back and choose <em>New agent</em>.</p>{{end}}
+      </div>
 
       <!-- ---- Phase A: agent ---------------------------------------------- -->
       <div class="wizard-page" data-step="1">
@@ -53,17 +82,6 @@
             <div class="wizard-option-title">Docker host</div>
             <div class="wizard-option-desc">Filesystem agent on a Docker host, as a package or as a container with the socket mounted. Archives container, network and volume definitions, compose files and every named volume.</div>
           </div>
-        </div>
-        <p class="wizard-note" style="margin-top: 12px;">Already have an agent enrolled? <a href="#" onclick="obShowExisting(event)">Set up backups for an existing agent</a>.</p>
-        <div id="ob-existing" class="form-group" hidden style="margin-top: 10px; max-width: 480px;">
-          <label>Agent</label>
-          <select id="ob-existing-agent" class="form-control">
-            <option value="">-- Choose agent --</option>
-            {{range .Agents}}
-              <option value="{{.ID}}">{{.Hostname}} ({{.AgentType}}{{if .PVEHost}}, Proxmox VE{{end}}{{if .DockerHost}}, Docker{{end}}{{if .DBTools}}, DB tools{{end}})</option>
-            {{end}}
-          </select>
-          <button type="button" class="btn btn-secondary btn-sm" style="margin-top: 8px;" onclick="obUseExisting()">Continue with this agent</button>
         </div>
       </div>
 

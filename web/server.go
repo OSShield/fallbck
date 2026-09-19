@@ -366,7 +366,7 @@ func (u *UIHandler) HandleOnboarding(w http.ResponseWriter, r *http.Request) {
 	}
 	u.renderPage(w, r, "onboarding.html", map[string]interface{}{
 		"Title":     "Set up a new server",
-		"ActiveNav": "agents",
+		"ActiveNav": "onboarding",
 		"Timezone":  u.timezone(),
 		"Agents":    agents,
 		"Targets":   targets,
@@ -398,9 +398,15 @@ func (u *UIHandler) HandleJobs(w http.ResponseWriter, r *http.Request) {
 		agents, _ = u.DB.ListAgents(ctx)
 		targets, _ = u.DB.ListTargets(ctx)
 	}
-	// Kubernetes cluster jobs live on their own page; kubernetes agents stay listed here
-	// because database jobs may be assigned to them (dumped from a pod in the cluster)
-	jobs = filterJobs(jobs, func(j *db.BackupJob) bool { return !j.IsKubernetes() })
+	// Every job type is listed here (filtered client-side); the newest run per job feeds
+	// the last-run column and filter
+	if u.DB != nil {
+		if last, err := u.DB.LatestRunByJob(ctx); err == nil {
+			for _, j := range jobs {
+				j.LastRun = last[j.ID]
+			}
+		}
+	}
 
 	u.renderPage(w, r, "jobs.html", map[string]interface{}{
 		"Title":     "Backup Jobs",
@@ -412,29 +418,10 @@ func (u *UIHandler) HandleJobs(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// HandleKubernetes renders the Kubernetes backup section (cluster jobs + agents)
+// HandleKubernetes keeps old links working: cluster jobs are listed on the Backup Jobs
+// page (filter type=kubernetes) and cluster agents on the Agents page
 func (u *UIHandler) HandleKubernetes(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	var jobs []*db.BackupJob
-	var agents []*db.Agent
-	var targets []*db.BackupTarget
-
-	if u.DB != nil {
-		jobs, _ = u.DB.ListJobs(ctx)
-		agents, _ = u.DB.ListAgents(ctx)
-		targets, _ = u.DB.ListTargets(ctx)
-	}
-	jobs = filterJobs(jobs, func(j *db.BackupJob) bool { return j.IsKubernetes() })
-	agents = filterAgents(agents, func(a *db.Agent) bool { return a.AgentType == db.AgentTypeKubernetes })
-
-	u.renderPage(w, r, "kubernetes.html", map[string]interface{}{
-		"Title":     "Kubernetes",
-		"ActiveNav": "kubernetes",
-		"Timezone":  u.timezone(),
-		"Jobs":      jobs,
-		"Agents":    agents,
-		"Targets":   targets,
-	})
+	http.Redirect(w, r, "/jobs?type=kubernetes", http.StatusFound)
 }
 
 func (u *UIHandler) timezone() string {
@@ -442,26 +429,6 @@ func (u *UIHandler) timezone() string {
 		return u.Config.Timezone
 	}
 	return "UTC"
-}
-
-func filterJobs(in []*db.BackupJob, keep func(*db.BackupJob) bool) []*db.BackupJob {
-	out := in[:0]
-	for _, j := range in {
-		if keep(j) {
-			out = append(out, j)
-		}
-	}
-	return out
-}
-
-func filterAgents(in []*db.Agent, keep func(*db.Agent) bool) []*db.Agent {
-	out := in[:0]
-	for _, a := range in {
-		if keep(a) {
-			out = append(out, a)
-		}
-	}
-	return out
 }
 
 func (u *UIHandler) HandleRuns(w http.ResponseWriter, r *http.Request) {
@@ -494,11 +461,27 @@ func (u *UIHandler) HandleTokens(w http.ResponseWriter, r *http.Request) {
 	if u.DB != nil {
 		tokens, _ = u.DB.ListEnrollmentTokens(ctx)
 	}
+	// Used-up and expired tokens are hidden unless asked for (?all=1)
+	showAll := r.URL.Query().Get("all") == "1"
+	hidden := 0
+	if !showAll {
+		active := tokens[:0:0]
+		for _, t := range tokens {
+			if t.Status() == "active" {
+				active = append(active, t)
+			} else {
+				hidden++
+			}
+		}
+		tokens = active
+	}
 
 	u.renderPage(w, r, "tokens.html", map[string]interface{}{
 		"Title":     "Enrollment Tokens",
 		"ActiveNav": "tokens",
 		"Tokens":    tokens,
+		"ShowAll":   showAll,
+		"Hidden":    hidden,
 	})
 }
 

@@ -1,41 +1,92 @@
 {{define "content"}}
 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
   <div>
-    <p style="color: var(--text-muted); font-size: 14px;">Define backup plans — filesystem paths, databases, Proxmox VE and Docker hosts — with schedules. Retention is a Proxmox Backup Server prune job.</p>
+    <p style="color: var(--text-muted); font-size: 14px;">Every backup job — files, databases, Proxmox VE and Docker hosts, Kubernetes clusters — with its schedule and last run. New jobs are set up through the onboarding flow; retention is a Proxmox Backup Server prune job.</p>
   </div>
-  <button class="btn btn-primary" onclick="newJob()">
+  <a class="btn btn-primary" href="/onboarding">
     <svg style="width: 16px; height: 16px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-    Create Backup Job
-  </button>
+    Set Up Backups
+  </a>
 </div>
 
 <div class="card">
   <div class="card-header">
-    <h3 class="card-title">Configured Backup Jobs ({{len .Jobs}})</h3>
+    <h3 class="card-title">Backup Jobs (<span id="job-count">{{len .Jobs}}</span> of {{len .Jobs}})</h3>
   </div>
+  {{if .Jobs}}
+  <div class="job-filters" id="job-filters">
+    <select name="f_type" class="form-control" aria-label="Filter by type">
+      <option value="">All types</option>
+      <option value="filesystem">Files</option>
+      <option value="database">Database</option>
+      <option value="pve">Proxmox VE host</option>
+      <option value="docker">Docker host</option>
+      <option value="kubernetes">Kubernetes</option>
+    </select>
+    <select name="f_enabled" class="form-control" aria-label="Filter by state">
+      <option value="">Any state</option>
+      <option value="yes">Active</option>
+      <option value="no">Disabled</option>
+    </select>
+    <select name="f_lastrun" class="form-control" aria-label="Filter by last run">
+      <option value="">Any last run</option>
+      <option value="completed">Completed</option>
+      <option value="failed">Failed</option>
+      <option value="running">Running</option>
+      <option value="cancelled">Cancelled</option>
+      <option value="never">Never ran</option>
+    </select>
+    <select name="f_agent" class="form-control" aria-label="Filter by agent">
+      <option value="">All agents</option>
+      {{range .Agents}}<option value="{{.Hostname}}">{{.Hostname}}</option>{{end}}
+    </select>
+    <select name="f_target" class="form-control" aria-label="Filter by target">
+      <option value="">All targets</option>
+      {{range .Targets}}<option value="{{.Name}}">{{.Name}}</option>{{end}}
+    </select>
+    <select name="f_schedule" class="form-control" aria-label="Filter by schedule">
+      <option value="">Any schedule</option>
+      <option value="scheduled">Scheduled</option>
+      <option value="manual">Manual only</option>
+    </select>
+    <button type="button" class="btn btn-secondary btn-sm" onclick="clearJobFilters()">Clear</button>
+  </div>
+  {{end}}
   <div class="table-container">
     <table>
       <thead>
         <tr>
           <th>Name</th>
+          <th>Type</th>
           <th>Agent</th>
           <th>PBS Target</th>
           <th>Source</th>
           <th>Schedule</th>
           <th>Status</th>
+          <th>Last Run</th>
           <th style="text-align: right;">Actions</th>
         </tr>
       </thead>
       <tbody>
         {{if .Jobs}}
           {{range .Jobs}}
-          <tr>
+          <tr class="job-row" data-type="{{if .JobType}}{{.JobType}}{{else}}filesystem{{end}}" data-enabled="{{if .Enabled}}yes{{else}}no{{end}}" data-lastrun="{{if .LastRun}}{{.LastRun.Status}}{{else}}never{{end}}" data-agent="{{.AgentName}}" data-target="{{.TargetName}}" data-schedule="{{if .ScheduleCron}}scheduled{{else}}manual{{end}}">
             <td><strong>{{.Name}}</strong></td>
+            <td>
+              {{if .IsKubernetes}}<span class="badge badge-info">Kubernetes</span>
+              {{else if .IsDocker}}<span class="badge badge-info">Docker host</span>
+              {{else if .IsPVE}}<span class="badge badge-info">Proxmox VE</span>
+              {{else if .IsDatabase}}<span class="badge badge-info">Database</span>
+              {{else}}<span class="badge badge-neutral">Files</span>{{end}}
+            </td>
             <td><span class="badge badge-neutral">{{.AgentName}}</span></td>
             <td>{{.TargetName}}{{if .DirectPBS}} <span class="badge badge-warning" title="Agent connects to PBS directly">direct</span>{{end}}</td>
             <td>
-              {{if .IsPVE}}
-                <span class="badge badge-info">Proxmox VE</span>
+              {{if .IsKubernetes}}
+                <span style="font-size: 12px; color: var(--text-muted);">{{if .K8sConfig}}{{.K8sConfig.Summary}}{{end}}</span>
+              {{else if .IsDocker}}
+                <span style="font-size: 12px; color: var(--text-muted);">{{with .DockerConfig}}{{.Summary}}{{end}}</span>
+              {{else if .IsPVE}}
                 <code style="display: inline-block; margin-right: 4px; font-size: 12px;">/etc</code>
                 {{with .PVEConfig}}{{range .DataPaths}}<code style="display: inline-block; margin-right: 4px; font-size: 12px;">{{.}}</code>{{end}}{{end}}
               {{else if .IsDatabase}}
@@ -65,21 +116,36 @@
                 <span class="badge badge-neutral">Disabled</span>
               {{end}}
             </td>
+            <td>
+              {{if .LastRun}}
+                <a href="/runs/{{.LastRun.RunID}}" style="text-decoration: none;">
+                  {{if eq (printf "%s" .LastRun.Status) "completed"}}<span class="badge badge-success">Completed</span>
+                  {{else if eq (printf "%s" .LastRun.Status) "failed"}}<span class="badge badge-danger">Failed</span>
+                  {{else if eq (printf "%s" .LastRun.Status) "cancelled"}}<span class="badge badge-neutral">Cancelled</span>
+                  {{else}}<span class="badge badge-warning">{{.LastRun.Status}}</span>{{end}}
+                </a>
+                <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">{{formatTime .LastRun.At}}</div>
+              {{else}}
+                <span style="color: var(--text-dim); font-size: 13px;">Never</span>
+              {{end}}
+            </td>
             <td style="text-align: right; display: flex; justify-content: flex-end; gap: 8px;">
               <button class="btn btn-primary btn-sm" onclick="triggerJobRun('{{.ID}}')">Run Now</button>
-              <button class="btn btn-secondary btn-sm" onclick="editJob('{{.ID}}')">Edit</button>
+              <button class="btn btn-secondary btn-sm" onclick="{{if .IsKubernetes}}editK8sJob{{else}}editJob{{end}}('{{.ID}}')">Edit</button>
               <button class="btn btn-secondary btn-sm" style="color: var(--danger-text);" onclick="deleteResource('jobs', '{{.ID}}')">Delete</button>
             </td>
           </tr>
           {{end}}
+          <tr id="job-no-match" hidden>
+            <td colspan="9"><div class="empty-state"><p>No jobs match the filters.</p><button class="btn btn-secondary btn-sm" onclick="clearJobFilters()">Clear filters</button></div></td>
+          </tr>
         {{else}}
           <tr>
-            <td colspan="7">
+            <td colspan="9">
               <div class="empty-state">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
                 <p>No backup jobs defined yet.</p>
-                <button class="btn btn-primary btn-sm" onclick="newJob()">Create your first Job</button>
-                <a class="btn btn-secondary btn-sm" href="/onboarding">Set up a new server (agent + backups)</a>
+                <a class="btn btn-primary btn-sm" href="/onboarding">Set up your first backup</a>
               </div>
             </td>
           </tr>
@@ -89,11 +155,11 @@
   </div>
 </div>
 
-<!-- Add Job Modal -->
+<!-- Job modal (edit only; new jobs are created through /onboarding) -->
 <div id="modal-add-job" class="modal-backdrop">
   <div class="modal-content">
     <div class="modal-header">
-      <h3 id="job-modal-title">Create Backup Job</h3>
+      <h3 id="job-modal-title">Edit Backup Job</h3>
       <button class="close-btn" onclick="closeModal('modal-add-job')">&times;</button>
     </div>
     <form id="job-form" onsubmit="submitJobForm(event)" data-job-id="">
@@ -142,7 +208,53 @@
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" onclick="closeModal('modal-add-job')">Cancel</button>
-        <button type="submit" id="job-submit" class="btn btn-primary">Create Job</button>
+        <button type="submit" id="job-submit" class="btn btn-primary">Save Changes</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Kubernetes cluster job modal (edit only; new cluster jobs are created through /onboarding) -->
+<div id="modal-add-k8s-job" class="modal-backdrop">
+  <div class="modal-content" style="max-width: 860px;">
+    <div class="modal-header">
+      <h3 id="k8s-job-modal-title">Edit Cluster Backup Job</h3>
+      <button class="close-btn" onclick="closeModal('modal-add-k8s-job')">&times;</button>
+    </div>
+    <form id="k8s-job-form" onsubmit="submitK8sJobForm(event)" data-job-id="">
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Job Name</label>
+          <input type="text" name="name" class="form-control" placeholder="e.g. prod cluster nightly" required>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+          <div class="form-group">
+            <label>Cluster Agent</label>
+            <select name="agent_id" class="form-control" required>
+              <option value="">-- Choose Cluster --</option>
+              {{range .Agents}}{{if eq .AgentType "kubernetes"}}
+                <option value="{{.ID}}">{{.Hostname}}</option>
+              {{end}}{{end}}
+            </select>
+          </div>
+          <div class="form-group">
+            <label>PBS Target</label>
+            <select name="target_id" class="form-control" required>
+              <option value="">-- Choose Target --</option>
+              {{range .Targets}}
+                <option value="{{.ID}}">{{.Name}} [{{.Datastore}}]</option>
+              {{end}}
+            </select>
+          </div>
+        </div>
+
+        {{template "job-fields-kubernetes" .}}
+        {{template "job-schedule" .}}
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('modal-add-k8s-job')">Cancel</button>
+        <button type="submit" id="k8s-job-submit" class="btn btn-primary">Save Changes</button>
       </div>
     </form>
   </div>

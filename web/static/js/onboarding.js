@@ -118,7 +118,7 @@ function agentWizardSections(type, target, serverUrl, token) {
     });
     sections.push({
       title: 'Verify',
-      text: 'The cluster shows up on this page and on the Kubernetes page within a minute. Cluster jobs are created in the Kubernetes section; in-cluster database jobs on the Backup Jobs page.',
+      text: 'The agent enrolls within a minute. The next step waits for it and then sets up the cluster backup; in-cluster database jobs can be added the same way afterwards.',
       code: 'kubectl -n fallbck get pods\nkubectl -n fallbck logs deploy/fallbck-k8s-agent'
     });
     return sections;
@@ -132,8 +132,8 @@ function agentWizardSections(type, target, serverUrl, token) {
       note: 'Private or self-signed server certificate: mount the CA bundle and set FALLBCK_AGENT_SERVER_CA to its path, or FALLBCK_AGENT_INSECURE_SKIP_VERIFY=true for testing only.'
     });
     sections.push({
-      title: 'Create the database job',
-      text: 'The agent reports the client tools with its first heartbeat (about 30 seconds) and gets a DB tools badge on this page. Then create a job of type Database on the Backup Jobs page and assign it to this agent.',
+      title: 'What happens next',
+      text: 'The agent reports the client tools with its first heartbeat (about 30 seconds) and gets a DB tools badge on the Agents page. The next step waits for that and then sets up the Database job.',
       code: 'docker compose logs -f fallbck-agent'
     });
     return sections;
@@ -147,8 +147,8 @@ function agentWizardSections(type, target, serverUrl, token) {
       note: 'Without the /var/lib/docker/volumes mount the agent reads volumes through short-lived helper containers instead (slower, needs spool space). Private or self-signed server certificate: mount the CA bundle and set FALLBCK_AGENT_SERVER_CA to its path, or FALLBCK_AGENT_INSECURE_SKIP_VERIFY=true for testing only.'
     });
     sections.push({
-      title: 'Create the Docker host job',
-      text: 'The agent reports a reachable Docker daemon with its first heartbeat (about 30 seconds). Then create a job of type Docker host on the Backup Jobs page. Label containers fallbck.io/pause=true to pause them while their volumes are copied, and fallbck.io/skip=true on containers or volumes to leave them out.',
+      title: 'What happens next',
+      text: 'The agent reports a reachable Docker daemon with its first heartbeat (about 30 seconds). The next step waits for that and then sets up the Docker host job. Label containers fallbck.io/pause=true to pause them while their volumes are copied, and fallbck.io/skip=true on containers or volumes to leave them out.',
       code: 'docker compose logs -f fallbck-agent'
     });
     return sections;
@@ -231,13 +231,13 @@ function agentWizardSections(type, target, serverUrl, token) {
 
   if (type === 'docker') {
     sections.push({
-      title: 'Create the Docker host job',
-      text: 'The agent runs as root, so it reads the Docker socket and /var/lib/docker/volumes directly. It reports a reachable daemon with its next heartbeat (about 30 seconds); then create a job of type Docker host on the Backup Jobs page. Label containers fallbck.io/pause=true to pause them while their volumes are copied, and fallbck.io/skip=true on containers or volumes to leave them out.'
+      title: 'What happens next',
+      text: 'The agent runs as root, so it reads the Docker socket and /var/lib/docker/volumes directly. It reports a reachable daemon with its next heartbeat (about 30 seconds); the next step waits for that and then sets up the Docker host job. Label containers fallbck.io/pause=true to pause them while their volumes are copied, and fallbck.io/skip=true on containers or volumes to leave them out.'
     });
   } else if (type === 'proxmox') {
     sections.push({
-      title: 'Create the Proxmox VE host job',
-      text: 'The agent reports itself as a PVE host with its next heartbeat (about 30 seconds). Then create a job of type Proxmox VE host on the Backup Jobs page; it archives the node configuration into one pve.pxar snapshot per run. Guest disks are not part of it, keep vzdump to PBS for those.'
+      title: 'What happens next',
+      text: 'The agent reports itself as a PVE host with its next heartbeat (about 30 seconds). The next step waits for that and then sets up the Proxmox VE host job; it archives the node configuration into one pve.pxar snapshot per run. Guest disks are not part of it, keep vzdump to PBS for those.'
     });
   } else {
     sections.push({
@@ -254,12 +254,12 @@ function agentWizardSections(type, target, serverUrl, token) {
 // resumes: token (enrollment token id, step 4), agent (agent id, phase B), jobs
 // (created job ids, summary). Typed-in form values are not preserved.
 
-const OB_ORDER = ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'summary'];
+const OB_ORDER = ['0', 'existing', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'summary'];
 const OB_POLL_MS = 3000;
 const OB_HINT_AFTER_MS = 90000;
 
 const ob = {
-  step: '1', type: '', platform: '', tokenId: '', token: '', agentId: '', agent: null,
+  step: '0', start: '', type: '', platform: '', tokenId: '', token: '', agentId: '', agent: null,
   backupType: '', targetId: '', targetAutoPicked: false, jobs: [],
   pollTimer: null, waitStarted: 0, runTimers: {}
 };
@@ -286,7 +286,7 @@ async function obInit() {
     if (!ob.agent) {
       showToast('The agent from the link no longer exists', 'error');
       ob.agentId = '';
-      ob.step = '1';
+      ob.step = '0';
     } else if (ob.jobs.length) {
       await obLoadJobs();
       ob.step = 'summary';
@@ -303,8 +303,12 @@ async function obInit() {
     ob.step = '3';
   } else if (ob.type && step === '2') {
     ob.step = '2';
+  } else if (step === '1' || step === 'existing') {
+    ob.step = step;
+    ob.start = step === '1' ? 'new' : 'existing';
+    obMarkSelected('start', ob.start);
   } else {
-    ob.step = '1';
+    ob.step = '0';
   }
   obRender();
 }
@@ -328,6 +332,12 @@ function obSelect(el) {
   const kind = el.dataset.kind, value = el.dataset.value;
   if (el.classList.contains('ob-disabled')) return;
   switch (kind) {
+    case 'start':
+      ob.start = value;
+      break;
+    case 'agent':
+      ob.agentId = value;
+      break;
     case 'type':
       if (ob.type !== value) ob.platform = '';
       ob.type = value;
@@ -361,6 +371,8 @@ function obKey(event, el) {
 
 function obNext() {
   switch (ob.step) {
+    case '0': if (!ob.start) return; ob.step = ob.start === 'existing' ? 'existing' : '1'; break;
+    case 'existing': if (!ob.agentId) return; obUseExisting(); return;
     case '1': if (!ob.type) return; ob.step = '2'; break;
     case '2': if (!ob.platform) return; ob.step = '3'; break;
     case '3': ob.step = '4'; break;
@@ -398,9 +410,10 @@ function obNext() {
 }
 
 function obBack() {
-  const prev = { '2': '1', '3': '2', '4': '3', '5': ob.tokenId ? '4' : '1', '6': '5', '7': ob.targetAutoPicked ? '5' : '6', '8': '7', '9': '8', 'summary': '5' };
+  const prev = { 'existing': '0', '1': '0', '2': '1', '3': '2', '4': '3', '5': ob.tokenId ? '4' : 'existing', '6': '5', '7': ob.targetAutoPicked ? '5' : '6', '8': '7', '9': '8', 'summary': '5' };
   const p = prev[ob.step];
   if (!p) return;
+  if (ob.step === 'existing' || (ob.step === '5' && !ob.tokenId)) { ob.agentId = ''; ob.agent = null; obMarkSelected('agent', ''); }
   if (ob.step === '7' && ob.targetAutoPicked) { ob.targetId = ''; ob.targetAutoPicked = false; obMarkSelected('target', ''); }
   ob.step = p;
   obRender();
@@ -409,7 +422,7 @@ function obBack() {
 function obRender() {
   obStopWaiting();
   document.querySelectorAll('#onboarding .wizard-page').forEach(p => p.classList.toggle('active', p.dataset.step === ob.step));
-  const n = ob.step === 'summary' ? 10 : Number(ob.step);
+  const n = ob.step === 'summary' ? 10 : ob.step === 'existing' ? 0 : Number(ob.step);
   document.querySelectorAll('#onboarding .wizard-progress-step').forEach(p => {
     const s = Number(p.dataset.step);
     p.classList.toggle('active', s === n);
@@ -433,10 +446,12 @@ function obRender() {
 function obUpdateFooter() {
   const back = document.getElementById('ob-back');
   const next = document.getElementById('ob-next');
-  back.hidden = ob.step === '1' || ob.step === 'summary';
+  back.hidden = ob.step === '0' || ob.step === 'summary';
   next.hidden = ob.step === 'summary';
   let label = 'Next', ok = true;
   switch (ob.step) {
+    case '0': ok = !!ob.start; break;
+    case 'existing': label = 'Continue'; ok = !!ob.agentId; break;
     case '1': ok = !!ob.type; break;
     case '2': ok = !!ob.platform; break;
     case '3': label = 'I ran the commands'; break;
@@ -498,7 +513,7 @@ function obRemint(e) {
   e.preventDefault();
   ob.token = '';
   ob.tokenId = '';
-  ob.step = ob.type && ob.platform ? '3' : '1';
+  ob.step = ob.type && ob.platform ? '3' : '0';
   obRender();
 }
 
@@ -592,15 +607,8 @@ function obShowAgentCard() {
   card.hidden = false;
 }
 
-function obShowExisting(e) {
-  e.preventDefault();
-  document.getElementById('ob-existing').hidden = false;
-}
-
 async function obUseExisting() {
-  const id = document.getElementById('ob-existing-agent').value;
-  if (!id) return;
-  ob.agentId = id;
+  if (!ob.agentId) return;
   ob.tokenId = '';
   ob.token = '';
   await obLoadAgent();

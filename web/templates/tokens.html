@@ -11,7 +11,14 @@
 
 <div class="card">
   <div class="card-header">
-    <h3 class="card-title">Active Enrollment Tokens ({{len .Tokens}})</h3>
+    <h3 class="card-title">{{if .ShowAll}}Enrollment Tokens{{else}}Active Enrollment Tokens{{end}} ({{len .Tokens}})</h3>
+    <div style="font-size: 13px; color: var(--text-muted);">
+      {{if .ShowAll}}
+        <a href="/tokens">Hide used and expired</a>
+      {{else}}
+        {{if .Hidden}}{{.Hidden}} used or expired hidden · {{end}}<a href="/tokens?all=1">Show used and expired</a>
+      {{end}}
+    </div>
   </div>
   <div class="table-container">
     <table>
