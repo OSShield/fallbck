@@ -5,9 +5,9 @@ endif
 
 
 ifndef GITHUB_TOKEN
-  ifndef GITEA_TOKEN
-	$(error GITHUB_TOKEN and GITEA_TOKEN are not set. Please set it in the environment or in a .env file)
-  endif
+ifndef GITEA_TOKEN
+$(error GITHUB_TOKEN and GITEA_TOKEN are not set. Please set it in the environment or in a .env file)
+endif
 endif
 
 .PHONY: binary docker helm
