@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"os"
 	"sync"
 	"time"
@@ -14,11 +13,9 @@ import (
 	"github.com/osshield/fallbck/pkg/config"
 	"github.com/osshield/fallbck/pkg/db"
 	spec "github.com/osshield/fallbck/pkg/k8sbackup"
-	"github.com/osshield/fallbck/pkg/proxy"
 	"github.com/osshield/fallbck/pkg/rundetail"
 	"github.com/osshield/fallbck/pkg/temporal"
 	"github.com/osshield/gopbs"
-	"github.com/osshield/gopbs/pbs"
 	corev1 "k8s.io/api/core/v1"
 	"log/slog"
 
@@ -413,23 +410,14 @@ func (a *K8sAgentActivities) BackupKubernetesResources(ctx context.Context, sess
 	uploadSession.ExcludePaths = nil
 	opts := backup.Options{Session: &uploadSession, ArchiveName: spec.ResourcesArchiveName, OnPhase: pt.Set,
 		Blobs: []gopbs.Blob{{Name: spec.ManifestBlobName, Data: data}}}
-	if session.DirectPBS {
-		if a.Credentials == nil {
-			return nil, errors.New("job requires direct PBS access but the agent has no credentials fetcher")
+	tr, err := openTransport(ctx, session, a.Tunnel, a.Credentials, nil)
+	if err != nil {
+		if isTransportConfigErr(err) {
+			return nil, err
 		}
-		direct, err := a.Credentials(ctx, session.Ticket)
-		if err != nil {
-			return nil, backupFailure(ctx, err, pt, a.LogTail)
-		}
-		opts.Direct = direct
-	} else {
-		if a.Tunnel == nil {
-			return nil, errors.New("agent tunnel connection is not configured")
-		}
-		opts.Dial = func(ctx context.Context, _ pbs.SnapshotRef) (net.Conn, error) {
-			return proxy.Dial(ctx, a.Tunnel, session.Ticket)
-		}
+		return nil, backupFailure(ctx, err, pt, a.LogTail)
 	}
+	opts.Dial, opts.Direct = tr.dial, tr.direct
 	result, err := backup.Run(ctx, opts)
 	if err != nil {
 		slog.Error("Kubernetes resource backup failed", "error", err, "phase", pt.Current())

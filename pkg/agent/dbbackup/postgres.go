@@ -286,7 +286,7 @@ func pgEnv(req *DumpRequest) ([]string, error) {
 		fmt.Sprintf("PGPORT=%d", c.Port),
 		"PGUSER="+c.User,
 		"PGCONNECT_TIMEOUT=15",
-		"PGAPPNAME=fallbck-db-agent",
+		"PGAPPNAME=fallbck-agent",
 	)
 	if c.TLS.Mode != "" {
 		env = append(env, "PGSSLMODE="+c.TLS.Mode)

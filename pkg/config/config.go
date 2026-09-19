@@ -168,7 +168,7 @@ type AgentConfig struct {
 	// FALLBCK_LOG_LEVEL environment variables take precedence, and the server can
 	// raise the level to debug at runtime (per-agent toggle in the web UI)
 	LogLevel string `yaml:"log_level,omitempty" json:"log_level,omitempty"`
-	// DBBackup configures fallbck-db-agent (spool, tools, credential profiles)
+	// DBBackup configures database jobs on fallbck-agent (spool, tools, credential profiles)
 	DBBackup dbbackup.Config `yaml:"db_backup,omitempty" json:"db_backup"`
 	// DockerBackup configures Docker host jobs on fallbck-agent (socket, volume
 	// access mode, helper image)
@@ -242,7 +242,8 @@ func DefaultServerConfig() *ServerConfig {
 // the agent state; the service units point at it explicitly.
 const SystemAgentDataDir = "/var/lib/fallbck/agent"
 
-// SystemDBAgentDataDir is the packaged fallbck-db-agent state directory
+// SystemDBAgentDataDir is the state directory of the retired standalone
+// fallbck-db-agent; `fallbck-agent migrate-db-agent` reads it by default
 const SystemDBAgentDataDir = "/var/lib/fallbck/db-agent"
 
 // SystemAgentDataDirFor returns the packaged data directory for an agent type:

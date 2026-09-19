@@ -136,9 +136,8 @@ func handleTokenCommands(serverURL string, args []string) {
 		fmt.Printf("  Name:      %s\n", tokenResp.Name)
 		fmt.Printf("  Max Uses:  %d\n", tokenResp.MaxUses)
 		fmt.Printf("  Expires:   %s\n\n", tokenResp.ExpiresAt.Format(time.RFC3339))
-		fmt.Println("Enroll agent command (filesystem agent / database agent):")
+		fmt.Println("Enroll agent command:")
 		fmt.Printf("  fallbck-agent enroll --server %s --token %s\n", serverURL, tokenResp.RawToken)
-		fmt.Printf("  fallbck-db-agent enroll --server %s --token %s\n", serverURL, tokenResp.RawToken)
 
 	case "list":
 		resp, err := apiGet(fmt.Sprintf("%s/api/v1/tokens", serverURL))

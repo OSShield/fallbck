@@ -37,7 +37,7 @@ type RunOptions struct {
 	// State overrides where the job's chain state is read and written (default: JSON
 	// files under Config.StateDir)
 	State StateStore
-	// Generator names the agent in the manifest (default fallbck-db-agent)
+	// Generator names the agent in the manifest (default fallbck-agent)
 	Generator string
 }
 
@@ -210,7 +210,7 @@ func Run(ctx context.Context, o RunOptions) (*temporal.BackupExecutionResult, er
 	}
 	generator := o.Generator
 	if generator == "" {
-		generator = "fallbck-db-agent"
+		generator = "fallbck-agent"
 	}
 	manifest := &dbspec.Manifest{
 		SchemaVersion:  dbspec.ManifestSchemaVersion,

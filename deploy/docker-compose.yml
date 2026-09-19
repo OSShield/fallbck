@@ -2,7 +2,7 @@
 #
 #   docker compose up -d                                   # postgres + server (admin auth DISABLED, dev only)
 #   docker compose --profile agent up -d                   # ... plus an example agent (needs an enrollment token, see below)
-#   docker compose --profile db-agent up -d                # ... plus a database agent (can back up the stack's own Postgres)
+#   docker compose --profile db-agent up -d                # ... plus an agent with database tools (can back up the stack's own Postgres)
 #   docker compose -f docker-compose.yml -f compose.sso.yml up -d
 #                                                          # ... behind Caddy (TLS) with dex as OIDC provider:
 #                                                          #     https://fallbck.localhost  (admin@example.com / password)
@@ -12,7 +12,7 @@
 # one plaintext h2c port (8080) that a TLS-terminating reverse proxy should front.
 #
 # Run from the deploy/ directory (or pass -f deploy/docker-compose.yml). Images are built
-# from the repository root with Dockerfile.server / Dockerfile.agent / Dockerfile.db-agent.
+# from the repository root with Dockerfile.server / Dockerfile.agent (targets slim and tools).
 
 services:
   # -------------------------------------------------------------------------
@@ -201,34 +201,6 @@ services:
       - db_agent_data:/var/lib/fallbck/agent
     networks:
       - fallbck-net
-
-  # -------------------------------------------------------------------------
-  # 4b. Deprecated image names (profile "legacy"), still published so existing
-  #     deployments keep pulling them: file-agent = the slim agent, db-agent = the
-  #     standalone fallbck-db-agent. New deployments use agent:latest / agent:tools.
-  # -------------------------------------------------------------------------
-  file-agent-legacy:
-    image: oci.fi/fallbck/file-agent:latest
-    build:
-      context: ..
-      dockerfile: Dockerfile.agent
-      target: slim
-      args:
-        FALLBCK_VERSION: ${FALLBCK_VERSION:-0.3.0}
-    profiles:
-      - legacy
-    entrypoint: ["/usr/local/bin/fallbck-agent", "version"]
-
-  db-agent-legacy:
-    image: oci.fi/fallbck/db-agent:latest
-    build:
-      context: ..
-      dockerfile: Dockerfile.db-agent
-      args:
-        FALLBCK_VERSION: ${FALLBCK_VERSION:-0.3.0}
-    profiles:
-      - legacy
-    entrypoint: ["/usr/local/bin/fallbck-db-agent", "version"]
 
   k8s-agent:
     image: oci.fi/fallbck/k8s-agent:latest
