@@ -127,7 +127,9 @@ func ResolveCredentials(spec *Spec, password string, profiles map[string]Credent
 			// Without a profile only peer-authenticated sockets and unauthenticated
 			// MongoDB (no user) can proceed
 			anonymousMongo := spec.Engine == EngineMongoDB && spec.User == ""
-			if spec.Profile != "" || (!spec.IsSocket() && !anonymousMongo) {
+			// SQL Server without a user means Windows integrated authentication
+			integrated := spec.Engine == EngineMSSQL && spec.User == ""
+			if spec.Profile != "" || (!spec.IsSocket() && !anonymousMongo && !integrated) {
 				return creds, fmt.Errorf("job stores no password and the agent has no credential profile %q (add db_backup.profiles.%s to the agent configuration)", name, name)
 			}
 		} else {
@@ -162,7 +164,7 @@ func ResolveCredentials(spec *Spec, password string, profiles map[string]Credent
 		creds.Port = DefaultPort(spec.Engine)
 	}
 	if creds.User == "" {
-		if spec.Engine != EngineMongoDB {
+		if spec.Engine != EngineMongoDB && spec.Engine != EngineMSSQL {
 			return creds, fmt.Errorf("no database user configured (set it on the job or in the credential profile)")
 		}
 	} else if creds.Password == "" && !strings.HasPrefix(creds.Host, "/") {

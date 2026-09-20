@@ -41,7 +41,7 @@
               {{end}}
             </td>
             <td><strong>{{.Hostname}}</strong></td>
-            <td>{{if eq .AgentType "database"}}<span class="badge badge-info">database</span>{{else if eq .AgentType "kubernetes"}}<span class="badge badge-info">kubernetes</span>{{else}}<span class="badge badge-neutral">filesystem</span>{{end}}{{if .PVEHost}} <span class="badge badge-warning" title="Runs on a Proxmox VE node">PVE</span>{{end}}{{if .DockerHost}} <span class="badge badge-info" title="A Docker daemon answers on this host">Docker</span>{{end}}{{if .DBTools}} <span class="badge badge-success" title="Database client tools found: can run database jobs">DB tools</span>{{end}}</td>
+            <td>{{if eq .AgentType "database"}}<span class="badge badge-info">database</span>{{else if eq .AgentType "kubernetes"}}<span class="badge badge-info">kubernetes</span>{{else}}<span class="badge badge-neutral">filesystem</span>{{end}}{{if .PVEHost}} <span class="badge badge-warning" title="Runs on a Proxmox VE node">PVE</span>{{end}}{{if .DockerHost}} <span class="badge badge-info" title="A Docker daemon answers on this host">Docker</span>{{end}}{{if .DBEngines}} <span class="badge badge-success" title="Database engines this agent can back up (client tools found; mssql needs none)">DB: {{range $i, $e := .DBEngines}}{{if $i}}, {{end}}{{$e}}{{end}}</span>{{else if .DBTools}} <span class="badge badge-success" title="Database client tools found: can run database jobs">DB tools</span>{{end}}</td>
             <td style="font-family: var(--font-mono); font-size: 13px;">{{if .IPAddress}}{{.IPAddress}}{{else}}-{{end}}</td>
             <td>
               <span class="badge badge-neutral">{{.OS}}/{{.Arch}}</span>

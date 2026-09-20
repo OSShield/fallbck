@@ -185,7 +185,7 @@
             <select name="agent_id" class="form-control" required onchange="updateDBTarget()">
               <option value="">-- Choose Agent --</option>
               {{range .Agents}}
-                <option value="{{.ID}}" data-agent-type="{{.AgentType}}" data-pve="{{if .PVEHost}}true{{else}}false{{end}}" data-docker="{{if .DockerHost}}true{{else}}false{{end}}" data-db="{{if .DBTools}}true{{else}}false{{end}}">{{.Hostname}} ({{.OS}}, {{.AgentType}}{{if .PVEHost}}, Proxmox VE{{end}}{{if .DockerHost}}, Docker{{end}}{{if .DBTools}}, DB tools{{end}})</option>
+                <option value="{{.ID}}" data-agent-type="{{.AgentType}}" data-pve="{{if .PVEHost}}true{{else}}false{{end}}" data-docker="{{if .DockerHost}}true{{else}}false{{end}}" data-db="{{if .DBTools}}true{{else}}false{{end}}" data-db-engines="{{range $i, $e := .DBEngines}}{{if $i}},{{end}}{{$e}}{{end}}">{{.Hostname}} ({{.OS}}, {{.AgentType}}{{if .PVEHost}}, Proxmox VE{{end}}{{if .DockerHost}}, Docker{{end}}{{if .DBEngines}}, DB: {{range $i, $e := .DBEngines}}{{if $i}}/{{end}}{{$e}}{{end}}{{else if .DBTools}}, DB tools{{end}})</option>
               {{end}}
             </select>
           </div>

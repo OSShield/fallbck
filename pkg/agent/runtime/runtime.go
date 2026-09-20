@@ -58,13 +58,18 @@ type Agent struct {
 	// PersistToken overrides where token rotations are stored (TokenStore.Persist);
 	// used by the kubernetes agent to write into its identity Secret
 	PersistToken func(cfg *config.AgentConfig) error
-	// DBTools reports whether database client tools are installed (the combined
+	// DBEngines reports the database engines this agent can back up (the combined
 	// filesystem agent probes them); nil means the agent never runs database jobs
-	DBTools func() bool
+	DBEngines func() []string
 }
 
-// dbTools evaluates the DBTools probe when set
-func (a Agent) dbTools() bool { return a.DBTools != nil && a.DBTools() }
+// dbEngines evaluates the DBEngines probe when set
+func (a Agent) dbEngines() []string {
+	if a.DBEngines == nil {
+		return nil
+	}
+	return a.DBEngines()
+}
 
 // FindDefaultConfig returns the first existing agent.yaml among the conventional
 // locations for the agent type: the default data dir (env / system dir as root /
@@ -101,7 +106,7 @@ func LoadConfig(a Agent, configPath string) (*config.AgentConfig, string, error)
 		_, err := enrollment.Enroll(ctx, enrollment.Options{
 			ServerURL: cfg.ServerURL, Token: cfg.EnrollmentKey, DataDir: cfg.DataDir, AgentType: a.Type, Version: a.Version,
 			CACertPath: cfg.ServerCACertPath, InsecureSkipVerify: cfg.InsecureSkipVerify,
-			DockerSocket: cfg.DockerBackup.EffSocket(), DBTools: a.dbTools(),
+			DockerSocket: cfg.DockerBackup.EffSocket(), DBEngines: a.dbEngines(),
 		})
 		cancel()
 		if err != nil {
@@ -432,7 +437,7 @@ func StartHeartbeat(ctx context.Context, cfg *config.AgentConfig, store *TokenSt
 	}
 
 	sendHeartbeat := func() {
-		resp, err := do("/api/v1/agents/heartbeat", api.HeartbeatRequest{AgentID: agentUUID, Status: "online", Version: version, PVEHost: pvebackup.IsPVEHost(), DockerHost: dockerHost(), DBTools: a.dbTools()})
+		resp, err := do("/api/v1/agents/heartbeat", api.HeartbeatRequest{AgentID: agentUUID, Status: "online", Version: version, PVEHost: pvebackup.IsPVEHost(), DockerHost: dockerHost(), DBEngines: a.dbEngines(), DBTools: len(a.dbEngines()) > 0})
 		if err != nil {
 			slog.Warn("Heartbeat failed", "error", err)
 			return

@@ -16,10 +16,11 @@ const (
 	EnginePostgres = "postgres"
 	EngineMySQL    = "mysql"
 	EngineMongoDB  = "mongodb"
+	EngineMSSQL    = "mssql"
 )
 
 // Engines lists the supported engines in display order
-var Engines = []string{EnginePostgres, EngineMySQL, EngineMongoDB}
+var Engines = []string{EnginePostgres, EngineMySQL, EngineMongoDB, EngineMSSQL}
 
 var engineAliases = map[string]string{
 	"postgres":   EnginePostgres,
@@ -29,6 +30,8 @@ var engineAliases = map[string]string{
 	"mariadb":    EngineMySQL,
 	"mongodb":    EngineMongoDB,
 	"mongo":      EngineMongoDB,
+	"mssql":      EngineMSSQL,
+	"sqlserver":  EngineMSSQL,
 }
 
 // NormalizeEngine maps aliases (postgresql, mariadb, mongo) to the canonical engine name
@@ -46,6 +49,8 @@ func DefaultPort(engine string) int {
 		return 3306
 	case EngineMongoDB:
 		return 27017
+	case EngineMSSQL:
+		return 1433
 	}
 	return 0
 }
@@ -143,6 +148,65 @@ type K8sTarget struct {
 	ToolsImage string `json:"tools_image,omitempty"`
 }
 
+// SQL Server backup modes
+const (
+	// MSSQLModeAuto takes a full backup when none exists, the chain was broken or the
+	// last one is older than FullEveryDays, and a differential otherwise
+	MSSQLModeAuto         = "auto"
+	MSSQLModeFull         = "full"
+	MSSQLModeDifferential = "differential"
+	// MSSQLModeLog backs up the transaction log of databases in the FULL or
+	// BULK_LOGGED recovery model (a job of its own on a short schedule)
+	MSSQLModeLog = "log"
+)
+
+// MSSQLOptions configure SQL Server jobs. Backups are native BACKUP DATABASE / BACKUP
+// LOG ... TO DISK files: SQL Server writes them on its own host, the agent picks them
+// up, uploads them and deletes them.
+type MSSQLOptions struct {
+	// Mode is auto (default), full, differential or log
+	Mode string `json:"mode,omitempty"`
+	// FullEveryDays is the age after which auto mode takes a new full backup (default 7)
+	FullEveryDays int `json:"full_every_days,omitempty"`
+	// IncludeLog also backs up the transaction log of FULL/BULK_LOGGED databases right
+	// after their full or differential backup (not used in log mode)
+	IncludeLog bool `json:"include_log,omitempty"`
+	// Compression uses SQL Server's native backup compression. Off by default: PBS
+	// deduplicates uncompressed backups far better, and Express cannot compress.
+	Compression bool `json:"compression,omitempty"`
+	// Checksum adds WITH CHECKSUM (default true)
+	Checksum *bool `json:"checksum,omitempty"`
+	// CopyOnly takes copy-only backups that do not disturb another tool's chain;
+	// differentials cannot be based on them, so it requires mode full or log
+	CopyOnly bool `json:"copy_only,omitempty"`
+	// BackupDir is the directory as SQL Server sees it (default: the instance's
+	// default backup path). The SQL Server service account must be able to write it.
+	BackupDir string `json:"backup_dir,omitempty"`
+	// AgentDir is the same directory as the agent sees it (a UNC share or a bind
+	// mount when SQL Server runs elsewhere or in a container); default BackupDir
+	AgentDir string `json:"agent_dir,omitempty"`
+	// StripeCount splits each backup over this many files (1..16, default 1)
+	StripeCount int `json:"stripe_count,omitempty"`
+	// MaxTransferSize is WITH MAXTRANSFERSIZE in bytes (a multiple of 64 KiB up to
+	// 4 MiB; 0 = server default)
+	MaxTransferSize int `json:"max_transfer_size,omitempty"`
+}
+
+// EffChecksum / EffFullEveryDays / EffStripeCount apply the defaults
+func (o *MSSQLOptions) EffChecksum() bool { return o == nil || o.Checksum == nil || *o.Checksum }
+func (o *MSSQLOptions) EffFullEveryDays() int {
+	if o == nil || o.FullEveryDays <= 0 {
+		return 7
+	}
+	return o.FullEveryDays
+}
+func (o *MSSQLOptions) EffStripeCount() int {
+	if o == nil || o.StripeCount <= 0 {
+		return 1
+	}
+	return o.StripeCount
+}
+
 // Spec is the database job configuration stored server-side (backup_jobs.db_config)
 // and handed to the agent (with the password redacted) for every run.
 type Spec struct {
@@ -170,6 +234,7 @@ type Spec struct {
 	Postgres *PostgresOptions `json:"postgres,omitempty"`
 	MySQL    *MySQLOptions    `json:"mysql,omitempty"`
 	MongoDB  *MongoOptions    `json:"mongodb,omitempty"`
+	MSSQL    *MSSQLOptions    `json:"mssql,omitempty"`
 
 	// Kubernetes is set when the job runs on a kubernetes agent
 	Kubernetes *K8sTarget `json:"kubernetes,omitempty"`
@@ -202,7 +267,7 @@ func (s *Spec) Validate() error {
 	}
 	engine, ok := NormalizeEngine(s.Engine)
 	if !ok {
-		return specErr("unsupported engine %q (postgres, mysql, mongodb)", s.Engine)
+		return specErr("unsupported engine %q (postgres, mysql, mongodb, mssql)", s.Engine)
 	}
 	s.Engine = engine
 	s.Host = strings.TrimSpace(s.Host)
@@ -276,9 +341,46 @@ func (s *Spec) Validate() error {
 	s.ExcludeDatabases = dropEmpty(s.ExcludeDatabases)
 
 	switch s.Engine {
+	case EngineMSSQL:
+		if s.Postgres != nil || s.MySQL != nil || s.MongoDB != nil {
+			return specErr("postgres/mysql/mongodb options given for a mssql job")
+		}
+		if s.Kubernetes != nil {
+			return specErr("SQL Server jobs cannot run on a kubernetes agent: BACKUP ... TO DISK writes inside the SQL Server pod, where the dump pod cannot read it")
+		}
+		if s.Compression == CompressionGzip {
+			return specErr("compression gzip does not apply to SQL Server backups; use mssql.compression for native backup compression")
+		}
+		if s.MSSQL == nil {
+			s.MSSQL = &MSSQLOptions{}
+		}
+		m := s.MSSQL
+		switch m.Mode {
+		case "":
+			m.Mode = MSSQLModeAuto
+		case MSSQLModeAuto, MSSQLModeFull, MSSQLModeDifferential, MSSQLModeLog:
+		default:
+			return specErr("mssql.mode %q is not one of auto, full, differential, log", m.Mode)
+		}
+		if m.CopyOnly && (m.Mode == MSSQLModeAuto || m.Mode == MSSQLModeDifferential) {
+			return specErr("mssql.copy_only needs mode full or log: a differential cannot be based on a copy-only backup")
+		}
+		if m.FullEveryDays < 0 {
+			return specErr("mssql.full_every_days must not be negative")
+		}
+		if m.StripeCount < 0 || m.StripeCount > 16 {
+			return specErr("mssql.stripe_count must be between 1 and 16")
+		}
+		if m.MaxTransferSize != 0 && (m.MaxTransferSize < 65536 || m.MaxTransferSize > 4194304 || m.MaxTransferSize%65536 != 0) {
+			return specErr("mssql.max_transfer_size must be a multiple of 65536 between 65536 and 4194304")
+		}
+		m.BackupDir, m.AgentDir = strings.TrimSpace(m.BackupDir), strings.TrimSpace(m.AgentDir)
+		if m.AgentDir != "" && m.BackupDir == "" {
+			return specErr("mssql.agent_dir needs mssql.backup_dir (the same directory as SQL Server sees it)")
+		}
 	case EnginePostgres:
-		if s.MySQL != nil || s.MongoDB != nil {
-			return specErr("mysql/mongodb options given for a postgres job")
+		if s.MySQL != nil || s.MongoDB != nil || s.MSSQL != nil {
+			return specErr("mysql/mongodb/mssql options given for a postgres job")
 		}
 		if s.Postgres == nil {
 			s.Postgres = &PostgresOptions{}
@@ -309,8 +411,8 @@ func (s *Spec) Validate() error {
 			return err
 		}
 	case EngineMySQL:
-		if s.Postgres != nil || s.MongoDB != nil {
-			return specErr("postgres/mongodb options given for a mysql job")
+		if s.Postgres != nil || s.MongoDB != nil || s.MSSQL != nil {
+			return specErr("postgres/mongodb/mssql options given for a mysql job")
 		}
 		if s.MySQL == nil {
 			s.MySQL = &MySQLOptions{}
@@ -319,8 +421,8 @@ func (s *Spec) Validate() error {
 			return err
 		}
 	case EngineMongoDB:
-		if s.Postgres != nil || s.MySQL != nil {
-			return specErr("postgres/mysql options given for a mongodb job")
+		if s.Postgres != nil || s.MySQL != nil || s.MSSQL != nil {
+			return specErr("postgres/mysql/mssql options given for a mongodb job")
 		}
 		if s.MongoDB == nil {
 			s.MongoDB = &MongoOptions{}
@@ -398,6 +500,14 @@ func (s *Spec) Redacted() *Spec {
 	if s.MongoDB != nil {
 		m := *s.MongoDB
 		c.MongoDB = &m
+	}
+	if s.MSSQL != nil {
+		m := *s.MSSQL
+		if s.MSSQL.Checksum != nil {
+			v := *s.MSSQL.Checksum
+			m.Checksum = &v
+		}
+		c.MSSQL = &m
 	}
 	if s.Kubernetes != nil {
 		k := *s.Kubernetes

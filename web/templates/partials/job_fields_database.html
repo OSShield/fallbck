@@ -8,6 +8,7 @@
         <option value="postgres">PostgreSQL</option>
         <option value="mysql">MySQL / MariaDB</option>
         <option value="mongodb">MongoDB</option>
+        <option value="mssql">Microsoft SQL Server</option>
       </select>
     </div>
     <div class="form-group">
@@ -178,6 +179,43 @@
     <div style="display: flex; align-items: center; gap: 8px; margin-top: 10px;">
       <input type="checkbox" id="mongo_oplog" name="mongo_oplog" checked>
       <label for="mongo_oplog" style="font-size: 13px;">Capture the oplog for a point-in-time dump (replica sets, all databases; restore with --oplogReplay)</label>
+    </div>
+  </div>
+
+  <div class="db-engine-opts" data-engine="mssql" style="background-color: var(--bg-subtle); padding: 14px; border-radius: var(--radius-sm); margin-bottom: 16px;" hidden>
+    <label style="font-weight: 600; font-size: 13px; margin-bottom: 8px; display: block;">SQL Server options</label>
+    <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 10px;">
+      Native <code>BACKUP DATABASE</code> / <code>BACKUP LOG</code> files: SQL Server writes them into a directory on its own host, the agent picks them up, uploads them and deletes them. No client tools are needed. Leave <em>User</em> blank for Windows integrated authentication (the agent's service account needs a login with backup rights); host\instance selects a named instance.
+    </div>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+      <div>
+        <label style="font-size: 12px; color: var(--text-muted);">Mode</label>
+        <select name="ms_mode" class="form-control">
+          <option value="auto">Auto: full when due or the chain broke, differential otherwise</option>
+          <option value="full">Full</option>
+          <option value="differential">Differential (full when there is no usable base)</option>
+          <option value="log">Transaction log only (own job on a short schedule)</option>
+        </select>
+      </div>
+      <div>
+        <label style="font-size: 12px; color: var(--text-muted);">Auto mode: new full every (days)</label>
+        <input type="number" name="ms_full_every_days" class="form-control" value="7" min="1" max="365">
+      </div>
+    </div>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 10px;">
+      <div>
+        <label style="font-size: 12px; color: var(--text-muted);">Backup directory as SQL Server sees it (blank = the instance's default backup path)</label>
+        <input type="text" name="ms_backup_dir" class="form-control" placeholder="D:\SQLBackup or /var/opt/mssql/backup">
+      </div>
+      <div>
+        <label style="font-size: 12px; color: var(--text-muted);">The same directory as the agent sees it (only when it differs: share or bind mount)</label>
+        <input type="text" name="ms_agent_dir" class="form-control" placeholder="\\sqlhost\SQLBackup or /mnt/sqlbackup">
+      </div>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 10px;">
+      <label style="display: flex; align-items: center; gap: 8px; font-size: 13px;"><input type="checkbox" name="ms_include_log"> Also back up the transaction log of databases in the FULL or BULK_LOGGED recovery model after their full or differential backup</label>
+      <label style="display: flex; align-items: center; gap: 8px; font-size: 13px;"><input type="checkbox" name="ms_compression"> Native backup compression (smaller spool, much worse PBS deduplication; not available on Express)</label>
+      <label style="display: flex; align-items: center; gap: 8px; font-size: 13px;"><input type="checkbox" name="ms_copy_only"> Copy-only backups that leave another tool's backup chain alone (mode full or log only)</label>
     </div>
   </div>
 

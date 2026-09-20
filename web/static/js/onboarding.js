@@ -161,6 +161,13 @@ function agentWizardSections(type, target, serverUrl, token) {
       code: `& ([scriptblock]::Create((iwr -useb ${serverUrl}/install-agent.ps1).Content)) -Token ${token}`,
       note: 'Private or self-signed server certificate: add -CaCert C:\\path\\to\\ca.pem. An already downloaded installer can be passed with -MsiPath.'
     });
+    if (type === 'database') {
+      sections.push({
+        title: 'SQL Server access',
+        text: 'SQL Server needs no client tools: the agent talks to it directly and reports the mssql engine with its first heartbeat. The service runs as LocalSystem, so for Windows integrated authentication give NT AUTHORITY\\SYSTEM a login with backup rights (or use a SQL login on the job instead). SQL Server writes its backup files into the instance\'s default backup directory, where the agent picks them up.',
+        code: "CREATE LOGIN [NT AUTHORITY\\SYSTEM] FROM WINDOWS;  -- usually exists already\nALTER SERVER ROLE [sysadmin] ADD MEMBER [NT AUTHORITY\\SYSTEM];  -- or db_backupoperator in every database"
+      });
+    }
     sections.push({
       title: 'Or install the MSI by hand',
       text: `Download fallbck-agent_Windows_x86_64.msi from ${AGENT_WIZARD_RELEASES}/latest. Double-click it and enter the server URL and enrollment key below when asked; the installer enrolls the agent and starts the service. For an unattended install pass them on the command line instead:`,
@@ -576,7 +583,8 @@ function obAgentCaps(a) {
   const caps = [];
   if (a.pve_host) caps.push('Proxmox VE');
   if (a.docker_host) caps.push('Docker');
-  if (a.db_tools) caps.push('DB tools');
+  if ((a.db_engines || []).length) caps.push('DB: ' + a.db_engines.join(', '));
+  else if (a.db_tools) caps.push('DB tools');
   return caps;
 }
 
@@ -624,7 +632,7 @@ function obBackupAvailable(kind) {
   const t = a.agent_type || 'filesystem';
   switch (kind) {
     case 'filesystem': return t === 'filesystem';
-    case 'database': return t === 'kubernetes' || (t === 'filesystem' && a.db_tools);
+    case 'database': return t === 'kubernetes' || (t === 'filesystem' && ((a.db_engines || []).length > 0 || a.db_tools));
     case 'pve': return t === 'filesystem' && a.pve_host;
     case 'docker': return t === 'filesystem' && a.docker_host;
     case 'kubernetes': return t === 'kubernetes';
@@ -755,6 +763,7 @@ function obRenderDetails() {
   const hint = form.querySelector('#db-password-hint');
   if (hint) hint.hidden = true;
   setJobTypeIn(form, ob.backupType);
+  if (ob.backupType === 'database') obLimitEngines(form, a);
   if (ob.backupType === 'kubernetes' && !form.elements['k8s_ns_exclude'].value) {
     form.elements['k8s_ns_exclude'].value = K8S_DEFAULT_NS_EXCLUDES.join('\n');
   }
@@ -762,6 +771,23 @@ function obRenderDetails() {
     const label = { filesystem: 'files', database: 'databases', pve: 'PVE host', docker: 'Docker host', kubernetes: 'cluster' }[ob.backupType] || 'backup';
     form.elements['name'].value = `${a.hostname || 'host'} ${label}`;
   }
+}
+
+// obLimitEngines offers only the engines the fixed agent can back up: the ones a
+// filesystem agent reported, or everything but SQL Server on a kubernetes agent
+function obLimitEngines(form, agent) {
+  const sel = form.elements['db_engine'];
+  if (!sel) return;
+  const engines = agent.db_engines || [];
+  const k8s = (agent.agent_type || 'filesystem') === 'kubernetes';
+  let first = '';
+  for (const opt of sel.options) {
+    const ok = k8s ? opt.value !== 'mssql' : (engines.length ? engines.includes(opt.value) : opt.value !== 'mssql');
+    opt.disabled = !ok; opt.hidden = !ok;
+    if (ok && !first) first = opt.value;
+  }
+  if (sel.selectedOptions[0] && sel.selectedOptions[0].disabled && first) sel.value = first;
+  setDBEngine(sel.value, form);
 }
 
 function obPreset(cron) {
@@ -783,6 +809,7 @@ function obRenderReview() {
     ['Target', target ? `${target.dataset.name} (${target.dataset.datastore}${target.dataset.namespace ? ', ' + target.dataset.namespace : ''})` : ob.targetId, ob.targetAutoPicked ? 'change' : ''],
   ];
   if (p.job_type === 'filesystem') rows.push(['Paths', p.backup_paths.join(', ')], ['Excludes', p.exclude_paths.join(', ') || '-']);
+  if (p.job_type === 'database' && p.db_config.mssql) rows.push(['SQL Server mode', p.db_config.mssql.mode + (p.db_config.mssql.include_log ? ' + log' : '')]);
   if (p.job_type === 'database') rows.push(['Engine', p.db_config.engine], ['Host', p.db_config.host || (p.db_config.kubernetes ? p.db_config.kubernetes.service : '') || '-'], ['Databases', (p.db_config.databases || []).join(', ') || 'all']);
   if (p.job_type === 'pve') rows.push(['Data paths', (p.pve_config.data_paths || []).join(', ') || 'none']);
   if (p.job_type === 'docker') rows.push(['Host paths', (p.docker_config.host_paths || []).join(', ') || 'none'], ['Images', p.docker_config.images]);

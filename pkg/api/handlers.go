@@ -180,7 +180,8 @@ func (s *ServerAPI) HandleAgentEnroll(w http.ResponseWriter, r *http.Request) {
 		Status:     db.AgentStatusOnline,
 		PVEHost:    req.PVEHost,
 		DockerHost: req.DockerHost,
-		DBTools:    req.DBTools,
+		DBEngines:  db.CleanDBEngines(req.DBEngines),
+		DBTools:    req.DBTools || len(req.DBEngines) > 0,
 	}
 
 	now := time.Now().UTC()
@@ -252,7 +253,7 @@ func (s *ServerAPI) HandleAgentHeartbeat(w http.ResponseWriter, r *http.Request)
 		status = db.AgentStatus(req.Status)
 	}
 
-	debug, err := s.DB.UpdateAgentHeartbeat(r.Context(), claims.AgentID, status, db.AgentCapabilities{PVEHost: req.PVEHost, DockerHost: req.DockerHost, DBTools: req.DBTools})
+	debug, err := s.DB.UpdateAgentHeartbeat(r.Context(), claims.AgentID, status, db.AgentCapabilities{PVEHost: req.PVEHost, DockerHost: req.DockerHost, DBTools: req.DBTools || len(req.DBEngines) > 0, DBEngines: db.CleanDBEngines(req.DBEngines)})
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			s.writeError(w, http.StatusUnauthorized, "agent no longer exists")
@@ -354,6 +355,11 @@ func (s *ServerAPI) HandleMergeAgent(w http.ResponseWriter, r *http.Request) {
 	for _, job := range jobs {
 		if job.AgentID != from {
 			continue
+		}
+		if job.IsDatabase() && job.DBConfig != nil && !target.CanRunDBEngine(job.DBConfig.Engine) {
+			s.writeError(w, http.StatusConflict, fmt.Sprintf("Agent %s cannot run job %q: it has not reported the database engine %s (install the client tools and wait for its next heartbeat)",
+				target.Hostname, job.Name, job.DBConfig.Engine))
+			return
 		}
 		if !target.CanRunJob(job.JobType) {
 			s.writeError(w, http.StatusConflict, fmt.Sprintf("Agent %s cannot run job %q (type %s): it has not reported the required capability (database client tools, Proxmox VE node or Docker daemon); wait for its next heartbeat or install the tools first",

@@ -35,8 +35,8 @@ func (d *DB) CreateAgent(ctx context.Context, agent *Agent) error {
 	agent.UpdatedAt = now
 
 	query := `
-		INSERT INTO agents (id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, pve_host, docker_host, db_tools)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+		INSERT INTO agents (id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, pve_host, docker_host, db_tools, db_engines)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 		RETURNING id, created_at, updated_at
 	`
 	if agent.AgentType == "" {
@@ -45,7 +45,7 @@ func (d *DB) CreateAgent(ctx context.Context, agent *Agent) error {
 	return d.Pool.QueryRow(ctx, query,
 		agent.ID, agent.Hostname, agent.IPAddress, agent.OS, agent.Arch,
 		agent.Version, agent.TaskQueue, agent.Status, agent.LastSeenAt,
-		agent.CreatedAt, agent.UpdatedAt, agent.AgentType, agent.PVEHost, agent.DockerHost, agent.DBTools,
+		agent.CreatedAt, agent.UpdatedAt, agent.AgentType, agent.PVEHost, agent.DockerHost, agent.DBTools, enginesOrEmpty(agent.DBEngines),
 	).Scan(&agent.ID, &agent.CreatedAt, &agent.UpdatedAt)
 }
 
@@ -54,13 +54,14 @@ func (d *DB) UpsertAgent(ctx context.Context, agent *Agent) error {
 	agent.UpdatedAt = now
 
 	query := `
-		INSERT INTO agents (id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, pve_host, docker_host, db_tools)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+		INSERT INTO agents (id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, pve_host, docker_host, db_tools, db_engines)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 		ON CONFLICT (id) DO UPDATE SET
 			agent_type = EXCLUDED.agent_type,
 			pve_host = EXCLUDED.pve_host,
 			docker_host = EXCLUDED.docker_host,
 			db_tools = EXCLUDED.db_tools,
+			db_engines = EXCLUDED.db_engines,
 			hostname = EXCLUDED.hostname,
 			ip_address = EXCLUDED.ip_address,
 			os = EXCLUDED.os,
@@ -75,18 +76,18 @@ func (d *DB) UpsertAgent(ctx context.Context, agent *Agent) error {
 	return d.Pool.QueryRow(ctx, query,
 		agent.ID, agent.Hostname, agent.IPAddress, agent.OS, agent.Arch,
 		agent.Version, agent.TaskQueue, agent.Status, agent.LastSeenAt,
-		now, now, agent.AgentType, agent.PVEHost, agent.DockerHost, agent.DBTools,
+		now, now, agent.AgentType, agent.PVEHost, agent.DockerHost, agent.DBTools, enginesOrEmpty(agent.DBEngines),
 	).Scan(&agent.CreatedAt, &agent.UpdatedAt)
 }
 
 func (d *DB) GetAgentByID(ctx context.Context, id uuid.UUID) (*Agent, error) {
 	query := `
-		SELECT id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, debug_logging, pve_host, docker_host, db_tools
+		SELECT id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, debug_logging, pve_host, docker_host, db_tools, db_engines
 		FROM agents WHERE id = $1
 	`
 	row := d.Pool.QueryRow(ctx, query, id)
 	var a Agent
-	err := row.Scan(&a.ID, &a.Hostname, &a.IPAddress, &a.OS, &a.Arch, &a.Version, &a.TaskQueue, &a.Status, &a.LastSeenAt, &a.CreatedAt, &a.UpdatedAt, &a.AgentType, &a.DebugLogging, &a.PVEHost, &a.DockerHost, &a.DBTools)
+	err := row.Scan(&a.ID, &a.Hostname, &a.IPAddress, &a.OS, &a.Arch, &a.Version, &a.TaskQueue, &a.Status, &a.LastSeenAt, &a.CreatedAt, &a.UpdatedAt, &a.AgentType, &a.DebugLogging, &a.PVEHost, &a.DockerHost, &a.DBTools, &a.DBEngines)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -98,7 +99,7 @@ func (d *DB) GetAgentByID(ctx context.Context, id uuid.UUID) (*Agent, error) {
 
 func (d *DB) ListAgents(ctx context.Context) ([]*Agent, error) {
 	query := `
-		SELECT id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, debug_logging, pve_host, docker_host, db_tools
+		SELECT id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, debug_logging, pve_host, docker_host, db_tools, db_engines
 		FROM agents ORDER BY hostname ASC
 	`
 	rows, err := d.Pool.Query(ctx, query)
@@ -110,7 +111,7 @@ func (d *DB) ListAgents(ctx context.Context) ([]*Agent, error) {
 	var agents []*Agent
 	for rows.Next() {
 		var a Agent
-		if err := rows.Scan(&a.ID, &a.Hostname, &a.IPAddress, &a.OS, &a.Arch, &a.Version, &a.TaskQueue, &a.Status, &a.LastSeenAt, &a.CreatedAt, &a.UpdatedAt, &a.AgentType, &a.DebugLogging, &a.PVEHost, &a.DockerHost, &a.DBTools); err != nil {
+		if err := rows.Scan(&a.ID, &a.Hostname, &a.IPAddress, &a.OS, &a.Arch, &a.Version, &a.TaskQueue, &a.Status, &a.LastSeenAt, &a.CreatedAt, &a.UpdatedAt, &a.AgentType, &a.DebugLogging, &a.PVEHost, &a.DockerHost, &a.DBTools, &a.DBEngines); err != nil {
 			return nil, err
 		}
 		agents = append(agents, &a)
@@ -122,9 +123,9 @@ func (d *DB) ListAgents(ctx context.Context) ([]*Agent, error) {
 // debug-logging setting for the response.
 func (d *DB) UpdateAgentHeartbeat(ctx context.Context, id uuid.UUID, status AgentStatus, caps AgentCapabilities) (bool, error) {
 	now := time.Now().UTC()
-	query := `UPDATE agents SET last_seen_at = $1, status = $2, updated_at = $1, pve_host = $4, docker_host = $5, db_tools = $6 WHERE id = $3 RETURNING debug_logging`
+	query := `UPDATE agents SET last_seen_at = $1, status = $2, updated_at = $1, pve_host = $4, docker_host = $5, db_tools = $6, db_engines = $7 WHERE id = $3 RETURNING debug_logging`
 	var debug bool
-	if err := d.Pool.QueryRow(ctx, query, now, status, id, caps.PVEHost, caps.DockerHost, caps.DBTools).Scan(&debug); err != nil {
+	if err := d.Pool.QueryRow(ctx, query, now, status, id, caps.PVEHost, caps.DockerHost, caps.DBTools, enginesOrEmpty(caps.DBEngines)).Scan(&debug); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return false, ErrNotFound
 		}
@@ -706,4 +707,12 @@ func (d *DB) ListRuns(ctx context.Context, limit int) ([]*BackupRun, error) {
 		runs = append(runs, &r)
 	}
 	return runs, rows.Err()
+}
+
+// enginesOrEmpty keeps the NOT NULL text[] column happy: a nil slice would be sent as NULL
+func enginesOrEmpty(e []string) []string {
+	if e == nil {
+		return []string{}
+	}
+	return e
 }

@@ -38,6 +38,7 @@ type Manifest struct {
 	Postgres       *PostgresManifest `json:"postgres,omitempty"`
 	MySQL          *MySQLManifest    `json:"mysql,omitempty"`
 	MongoDB        *MongoManifest    `json:"mongodb,omitempty"`
+	MSSQL          *MSSQLManifest    `json:"mssql,omitempty"`
 	Restore        Restore           `json:"restore"`
 }
 
@@ -168,6 +169,51 @@ type MongoManifest struct {
 	PerDatabase    bool     `json:"per_database"`
 }
 
+// MSSQLManifest describes the native SQL Server backup sets of one run
+type MSSQLManifest struct {
+	Edition        string `json:"edition,omitempty"`
+	ProductVersion string `json:"product_version,omitempty"`
+	// Mode is the job's mode; every backup set names the type actually taken
+	Mode        string           `json:"mode"`
+	BackupDir   string           `json:"backup_dir"`
+	AgentDir    string           `json:"agent_dir,omitempty"`
+	Compression bool             `json:"compression"`
+	Checksum    bool             `json:"checksum"`
+	CopyOnly    bool             `json:"copy_only,omitempty"`
+	BackupSets  []MSSQLBackupSet `json:"backup_sets"`
+	// Skipped lists databases that were left out, with the reason
+	Skipped []MSSQLSkipped `json:"skipped,omitempty"`
+}
+
+// MSSQLBackupSet is one BACKUP DATABASE / BACKUP LOG result as recorded in msdb
+type MSSQLBackupSet struct {
+	Database string `json:"database"`
+	// Type is full, differential or log
+	Type          string   `json:"type"`
+	RecoveryModel string   `json:"recovery_model,omitempty"`
+	Files         []string `json:"files"`
+	BackupSetUUID string   `json:"backup_set_uuid,omitempty"`
+	FirstLSN      string   `json:"first_lsn,omitempty"`
+	LastLSN       string   `json:"last_lsn,omitempty"`
+	CheckpointLSN string   `json:"checkpoint_lsn,omitempty"`
+	// DatabaseBackupLSN is the checkpoint LSN of the full backup this set builds on
+	DatabaseBackupLSN string `json:"database_backup_lsn,omitempty"`
+	// DifferentialBaseGUID is the backup_set_uuid of the differential's base full
+	DifferentialBaseGUID string    `json:"differential_base_guid,omitempty"`
+	StartedAt            time.Time `json:"started_at,omitempty"`
+	FinishedAt           time.Time `json:"finished_at,omitempty"`
+	BackupBytes          int64     `json:"backup_bytes,omitempty"`
+	CompressedBytes      int64     `json:"compressed_bytes,omitempty"`
+	// Reason says why this type was chosen (auto mode, chain resets)
+	Reason string `json:"reason,omitempty"`
+}
+
+// MSSQLSkipped is a database the run left out
+type MSSQLSkipped struct {
+	Database string `json:"database"`
+	Reason   string `json:"reason"`
+}
+
 // Restore carries a human-readable summary and ready-to-run commands
 type Restore struct {
 	Summary  string   `json:"summary"`
@@ -201,6 +247,34 @@ type JobStateRecord struct {
 	CompletedAt time.Time      `json:"completed_at"`
 	MySQL       *MySQLState    `json:"mysql,omitempty"`
 	Postgres    *PostgresState `json:"postgres,omitempty"`
+	MSSQL       *MSSQLState    `json:"mssql,omitempty"`
+}
+
+// MSSQLState is the backup chain FallBCK holds per database: the last full, the last
+// differential on top of it and the log backups taken since, so a later run can tell
+// whether a differential or log backup would still restore from FallBCK's snapshots
+type MSSQLState struct {
+	Databases map[string]*MSSQLDBState `json:"databases"`
+}
+
+// MSSQLDBState is one database's chain
+type MSSQLDBState struct {
+	RecoveryModel string          `json:"recovery_model,omitempty"`
+	LastFull      *MSSQLBackupRef `json:"last_full,omitempty"`
+	LastDiff      *MSSQLBackupRef `json:"last_diff,omitempty"`
+	// Logs are the log backups since the newest full or differential, oldest first
+	Logs []MSSQLBackupRef `json:"logs,omitempty"`
+}
+
+// MSSQLBackupRef points at a backup set inside an earlier snapshot
+type MSSQLBackupRef struct {
+	RunID         string    `json:"run_id"`
+	Snapshot      string    `json:"snapshot"`
+	Files         []string  `json:"files"`
+	BackupSetUUID string    `json:"backup_set_uuid"`
+	FirstLSN      string    `json:"first_lsn,omitempty"`
+	LastLSN       string    `json:"last_lsn,omitempty"`
+	At            time.Time `json:"at"`
 }
 
 type MySQLState struct {

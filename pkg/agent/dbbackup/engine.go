@@ -101,6 +101,9 @@ type DumpRequest struct {
 	// SpoolDir exists and is empty on entry; SecretDir (0700) holds credential files
 	SpoolDir  string
 	SecretDir string
+	// Snapshot is the PBS snapshot this run writes (type/id/time); engines that keep
+	// a chain record it so later runs can point back at it
+	Snapshot string
 	// PrevState is the last successful run's state (nil on the first run)
 	PrevState *dbspec.JobState
 	Progress  ProgressFunc
@@ -122,6 +125,7 @@ type EngineResult struct {
 	Postgres       *dbspec.PostgresManifest
 	MySQL          *dbspec.MySQLManifest
 	MongoDB        *dbspec.MongoManifest
+	MSSQL          *dbspec.MSSQLManifest
 	Restore        dbspec.Restore
 	// State is the engine part of the job state saved after a successful upload
 	State *dbspec.JobStateRecord
@@ -173,6 +177,7 @@ var engines = map[string]Engine{
 	dbspec.EnginePostgres: postgresEngine{},
 	dbspec.EngineMySQL:    mysqlEngine{},
 	dbspec.EngineMongoDB:  mongoEngine{},
+	dbspec.EngineMSSQL:    mssqlEngine{},
 }
 
 // Lookup returns the engine for a canonical engine name

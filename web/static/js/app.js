@@ -282,29 +282,37 @@ function setJobTypeIn(form, type) {
   show('job-pve-fields', isPVE);
   show('job-docker-fields', isDocker);
   show('job-k8s-fields', isK8s);
-  const sel = form.elements['agent_id'];
-  if (sel && sel.tagName === 'SELECT') {
-    let keep = false;
-    for (const opt of sel.options) {
-      if (!opt.value) continue;
-      const agentType = opt.dataset.agentType || 'filesystem';
-      // Database jobs may also run on a kubernetes agent (dumped from a pod in the
-      // cluster) or on a filesystem agent with the client tools; Proxmox VE and Docker
-      // jobs need the filesystem agent on such a host
-      let match = agentType === type;
-      if (type === 'database') match = match || agentType === 'kubernetes' || (agentType === 'filesystem' && opt.dataset.db === 'true');
-      if (type === 'pve') match = agentType === 'filesystem' && opt.dataset.pve === 'true';
-      if (type === 'docker') match = agentType === 'filesystem' && opt.dataset.docker === 'true';
-      opt.hidden = !match; opt.disabled = !match;
-      if (match && opt.selected) keep = true;
-    }
-    if (!keep) sel.value = '';
-  }
+  filterJobAgents(form, type);
   if (form.elements['db_engine']) setDBEngine(form.elements['db_engine'].value, form);
-  updateDBTarget(form);
+  else updateDBTarget(form);
 }
 
 function setJobType(type) { setJobTypeIn(jobForm(), type); }
+
+// filterJobAgents limits the agent select (when the form has one) to agents that can
+// run the type; database jobs also go by the engine: a kubernetes agent dumps from a
+// pod (everything but SQL Server), a filesystem agent offers the engines it reported
+function filterJobAgents(form, type) {
+  const sel = form.elements['agent_id'];
+  if (!sel || sel.tagName !== 'SELECT') return;
+  const engine = form.elements['db_engine'] ? form.elements['db_engine'].value : '';
+  let keep = false;
+  for (const opt of sel.options) {
+    if (!opt.value) continue;
+    const agentType = opt.dataset.agentType || 'filesystem';
+    let match = agentType === type;
+    if (type === 'database') {
+      const engines = (opt.dataset.dbEngines || '').split(',').filter(Boolean);
+      if (agentType === 'filesystem') match = engines.length ? engines.includes(engine) : (opt.dataset.db === 'true' && engine !== 'mssql');
+      else match = (agentType === 'kubernetes' || agentType === 'database') && engine !== 'mssql';
+    }
+    if (type === 'pve') match = agentType === 'filesystem' && opt.dataset.pve === 'true';
+    if (type === 'docker') match = agentType === 'filesystem' && opt.dataset.docker === 'true';
+    opt.hidden = !match; opt.disabled = !match;
+    if (match && opt.selected) keep = true;
+  }
+  if (!keep) sel.value = '';
+}
 
 // selectedAgentIsK8s: from the agent select, or from data-agent-type when the form
 // has a fixed agent (onboarding)
@@ -331,7 +339,8 @@ function updateDBTarget(form = jobForm()) {
   form.elements['db_profile'].disabled = k8s;
   form.elements['db_tls_ca_file'].disabled = k8s;
   const label = form.querySelector('#db-host-label');
-  if (label) label.innerText = k8s ? 'Host (optional when a Service is given)' : 'Host (or unix socket path)';
+  const mssql = form.elements['db_engine'] && form.elements['db_engine'].value === 'mssql';
+  if (label) label.innerText = k8s ? 'Host (optional when a Service is given)' : mssql ? 'Host (host\\instance for a named instance)' : 'Host (or unix socket path)';
 }
 
 function setDBEngine(engine, form = jobForm()) {
@@ -341,7 +350,14 @@ function setDBEngine(engine, form = jobForm()) {
     el.querySelectorAll('input,select').forEach(c => { c.disabled = !on; });
   });
   const port = form.elements['db_port'];
-  if (port) port.placeholder = { postgres: '5432', mysql: '3306', mongodb: '27017' }[engine] || '';
+  if (port) port.placeholder = { postgres: '5432', mysql: '3306', mongodb: '27017', mssql: '1433' }[engine] || '';
+  // SQL Server: no gzip of the spool (native compression instead), user optional
+  const mssql = engine === 'mssql';
+  if (form.elements['db_compression']) form.elements['db_compression'].disabled = mssql;
+  if (form.elements['db_user']) form.elements['db_user'].placeholder = mssql ? 'blank = Windows integrated authentication' : 'backup';
+  const typeEl = form.elements['job_type'];
+  filterJobAgents(form, typeEl ? typeEl.value : (form.dataset.jobType || 'filesystem'));
+  updateDBTarget(form);
 }
 
 // loadJobIntoForm fills every field of a job form from an API job record
@@ -401,6 +417,14 @@ function loadJobIntoForm(form, job) {
     form.elements['mongo_auth_source'].value = mo.auth_source || '';
     form.elements['mongo_replica_set'].value = mo.replica_set || '';
     form.elements['mongo_oplog'].checked = mo.oplog !== false;
+    const ms = dc.mssql || {};
+    form.elements['ms_mode'].value = ms.mode || 'auto';
+    form.elements['ms_full_every_days'].value = ms.full_every_days || 7;
+    form.elements['ms_backup_dir'].value = ms.backup_dir || '';
+    form.elements['ms_agent_dir'].value = ms.agent_dir || '';
+    form.elements['ms_include_log'].checked = !!ms.include_log;
+    form.elements['ms_compression'].checked = !!ms.compression;
+    form.elements['ms_copy_only'].checked = !!ms.copy_only;
     const k8s = dc.kubernetes || {};
     form.elements['db_k8s_namespace'].value = k8s.namespace || '';
     form.elements['db_k8s_service'].value = k8s.service || '';
@@ -493,6 +517,9 @@ function buildJobPayload(form) {
       dc.postgres = { mode: fd.get('pg_mode'), format: fd.get('pg_format'), role_passwords: fd.get('pg_role_passwords'), globals: fd.get('pg_globals') === 'on' };
     } else if (engine === 'mysql') {
       dc.mysql = { single_transaction: fd.get('my_single_transaction') === 'on', include_binlogs: fd.get('my_include_binlogs') === 'on', per_database: fd.get('my_per_database') === 'on' };
+    } else if (engine === 'mssql') {
+      dc.compression = 'none';
+      dc.mssql = { mode: fd.get('ms_mode') || 'auto', full_every_days: parseInt(fd.get('ms_full_every_days') || '7') || 7, include_log: fd.get('ms_include_log') === 'on', compression: fd.get('ms_compression') === 'on', copy_only: fd.get('ms_copy_only') === 'on', backup_dir: (fd.get('ms_backup_dir') || '').trim(), agent_dir: (fd.get('ms_agent_dir') || '').trim() };
     } else if (engine === 'mongodb') {
       dc.mongodb = { oplog: fd.get('mongo_oplog') === 'on', read_preference: fd.get('mongo_read_preference') || '', auth_source: fd.get('mongo_auth_source') || '', replica_set: fd.get('mongo_replica_set') || '' };
     }
@@ -968,6 +995,18 @@ function renderDBDetail(m) {
       ['Binlog files', bl.files ? String(bl.files.length) : '0'],
       ['Chain gap', bl.chain_gap ? 'yes' : ''], ['Chain reset', bl.chain_reset ? 'yes' : ''],
     ]));
+  }
+  if (m.mssql) {
+    const ms = m.mssql;
+    html += rdCard('SQL Server', rdKV([
+      ['Edition', rdEsc(ms.edition || '')], ['Mode', rdEsc(ms.mode || '')],
+      ['Backup directory', rdMono(ms.backup_dir || '') + (ms.agent_dir ? ' (agent: ' + rdMono(ms.agent_dir) + ')' : '')],
+      ['Compression', ms.compression ? 'native' : 'none'], ['Checksum', ms.checksum ? 'yes' : 'no'], ['Copy-only', ms.copy_only ? 'yes' : ''],
+    ]));
+    const sets = (ms.backup_sets || []).map(b => [rdEsc(b.database), rdEsc(b.type), rdEsc(b.recovery_model || ''), rdMono(b.first_lsn || ''), rdMono(b.last_lsn || ''),
+      rdBytes(b.compressed_bytes || b.backup_bytes || 0), rdMono(rdShort(b.backup_set_uuid || '')), rdEsc(b.reason || '')]);
+    html += rdCard('SQL Server backup sets', rdTable(['Database', 'Type', 'Recovery', 'First LSN', 'Last LSN', 'Size', 'Set', 'Why this type'], sets));
+    if (ms.skipped && ms.skipped.length) html += rdCard('Skipped databases', rdTable(['Database', 'Reason'], ms.skipped.map(x => [rdEsc(x.database), rdEsc(x.reason)])));
   }
   if (m.mongodb) {
     html += rdCard('MongoDB', rdKV([

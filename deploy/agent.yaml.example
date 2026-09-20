@@ -41,3 +41,7 @@ token_expires_at: 2027-08-25T00:00:00Z
 #       engine: mysql
 #       user: backup
 #       password: "s3cret"
+#     mssql:                                        # SQL Server: a SQL login; leave the job's user
+#       engine: mssql                               # blank instead for Windows integrated authentication
+#       user: fallbck_backup
+#       password_file: /etc/fallbck/mssql-backup.pass
