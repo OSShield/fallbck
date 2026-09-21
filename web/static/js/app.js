@@ -449,6 +449,7 @@ function loadJobIntoForm(form, job) {
     form.elements['my_per_database'].checked = !!my.per_database;
     form.elements['mongo_read_preference'].value = mo.read_preference || '';
     form.elements['mongo_auth_source'].value = mo.auth_source || '';
+    form.elements['mongo_auth_mechanism'].value = mo.auth_mechanism || '';
     form.elements['mongo_replica_set'].value = mo.replica_set || '';
     form.elements['mongo_oplog'].checked = mo.oplog !== false;
     const ms = dc.mssql || {};
@@ -555,7 +556,7 @@ function buildJobPayload(form) {
       dc.compression = 'none';
       dc.mssql = { mode: fd.get('ms_mode') || 'auto', full_every_days: parseInt(fd.get('ms_full_every_days') || '7') || 7, include_log: fd.get('ms_include_log') === 'on', compression: fd.get('ms_compression') === 'on', copy_only: fd.get('ms_copy_only') === 'on', backup_dir: (fd.get('ms_backup_dir') || '').trim(), agent_dir: (fd.get('ms_agent_dir') || '').trim() };
     } else if (engine === 'mongodb') {
-      dc.mongodb = { oplog: fd.get('mongo_oplog') === 'on', read_preference: fd.get('mongo_read_preference') || '', auth_source: fd.get('mongo_auth_source') || '', replica_set: fd.get('mongo_replica_set') || '' };
+      dc.mongodb = { oplog: fd.get('mongo_oplog') === 'on', read_preference: fd.get('mongo_read_preference') || '', auth_source: fd.get('mongo_auth_source') || '', auth_mechanism: fd.get('mongo_auth_mechanism') || '', replica_set: fd.get('mongo_replica_set') || '' };
     }
     payload.db_config = dc;
   }

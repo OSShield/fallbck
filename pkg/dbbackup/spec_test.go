@@ -242,3 +242,28 @@ func TestMSSQLIntegratedAuthCredentials(t *testing.T) {
 		t.Error("a SQL login without a password or profile must fail")
 	}
 }
+
+func TestMongoAuthMechanism(t *testing.T) {
+	s := &Spec{Engine: "mongo", Host: "m1", User: "svc", MongoDB: &MongoOptions{AuthMechanism: " scram-sha-256 "}}
+	if err := s.Validate(); err != nil || s.MongoDB.AuthMechanism != MongoAuthScramSHA256 || s.MongoDB.EffAuthSource() != "admin" || s.MongoDB.PasswordlessAuth() {
+		t.Errorf("normalised: %v %+v", err, s.MongoDB)
+	}
+	if err := (&Spec{Engine: "mongo", Host: "m1", MongoDB: &MongoOptions{AuthMechanism: "SCRAM-SHA-512"}}).Validate(); err == nil {
+		t.Error("unknown mechanism must fail")
+	}
+	x := &Spec{Engine: "mongo", Host: "m1", MongoDB: &MongoOptions{AuthMechanism: "MONGODB-X509"}, TLS: TLSSpec{Mode: TLSVerifyFull, CertFile: "/c.pem"}}
+	if err := x.Validate(); err != nil || x.MongoDB.EffAuthSource() != "$external" || !x.MongoDB.PasswordlessAuth() {
+		t.Errorf("x509: %v %+v", err, x.MongoDB)
+	}
+	creds, err := ResolveCredentials(x, "", nil)
+	if err != nil || creds.Password != "" {
+		t.Errorf("x509 needs no password or profile: %v %+v", err, creds)
+	}
+	if _, err := ResolveCredentials(&Spec{Engine: "mongo", Host: "m1", User: "svc", MongoDB: &MongoOptions{AuthMechanism: "PLAIN"}}, "", nil); !errors.Is(err, ErrNoCredentials) {
+		t.Errorf("PLAIN still needs a password: %v", err)
+	}
+	k := &Spec{Engine: "mongo", Host: "m1", Kubernetes: &K8sTarget{Namespace: "db"}, MongoDB: &MongoOptions{AuthMechanism: "MONGODB-X509"}}
+	if err := k.Validate(); err == nil {
+		t.Error("x509 on a kubernetes target must fail")
+	}
+}

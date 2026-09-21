@@ -159,7 +159,19 @@
 
   <div class="db-engine-opts" data-engine="mongodb" style="background-color: var(--bg-subtle); padding: 14px; border-radius: var(--radius-sm); margin-bottom: 16px;" hidden>
     <label style="font-weight: 600; font-size: 13px; margin-bottom: 8px; display: block;">MongoDB options</label>
-    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
+    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 12px;">
+      <div>
+        <label style="font-size: 12px; color: var(--text-muted);">Auth mechanism</label>
+        <select name="mongo_auth_mechanism" class="form-control">
+          <option value="">default (SCRAM, negotiated)</option>
+          <option value="SCRAM-SHA-256">SCRAM-SHA-256</option>
+          <option value="SCRAM-SHA-1">SCRAM-SHA-1</option>
+          <option value="MONGODB-X509">MONGODB-X509 (client certificate, no password)</option>
+          <option value="PLAIN">PLAIN (LDAP)</option>
+          <option value="GSSAPI">GSSAPI (Kerberos, no password)</option>
+          <option value="MONGODB-AWS">MONGODB-AWS (no password)</option>
+        </select>
+      </div>
       <div>
         <label style="font-size: 12px; color: var(--text-muted);">Read preference</label>
         <select name="mongo_read_preference" class="form-control">
@@ -171,7 +183,7 @@
       </div>
       <div>
         <label style="font-size: 12px; color: var(--text-muted);">Auth source</label>
-        <input type="text" name="mongo_auth_source" class="form-control" placeholder="admin">
+        <input type="text" name="mongo_auth_source" class="form-control" placeholder="admin ($external for X.509/LDAP/Kerberos/AWS)">
       </div>
       <div>
         <label style="font-size: 12px; color: var(--text-muted);">Replica set</label>

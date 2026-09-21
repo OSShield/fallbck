@@ -2,6 +2,7 @@ package dbbackup
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 
@@ -75,5 +76,42 @@ func TestMongoRunPerDatabaseAndOldTools(t *testing.T) {
 	_, err := Run(context.Background(), RunOptions{Session: testSession(uuid.New()), Spec: spec, Config: testConfig(t), Upload: up.fn})
 	if !IsPrecheck(err) || !strings.Contains(err.Error(), "too old") {
 		t.Errorf("old tools: %v", err)
+	}
+}
+
+func TestMongoURIAuthMechanism(t *testing.T) {
+	dir := t.TempDir()
+	req := func(spec *dbspec.Spec, creds dbspec.Credentials) *DumpRequest {
+		if err := spec.Validate(); err != nil {
+			t.Fatal(err)
+		}
+		return &DumpRequest{Spec: spec, Creds: creds, SecretDir: dir}
+	}
+	uri, err := mongoURI(req(&dbspec.Spec{Engine: "mongo", Host: "m1", User: "svc", MongoDB: &dbspec.MongoOptions{AuthMechanism: "SCRAM-SHA-256"}},
+		dbspec.Credentials{Host: "m1", Port: 27017, User: "svc", Password: "pw"}))
+	if err != nil || !strings.Contains(uri, "authMechanism=SCRAM-SHA-256") || !strings.Contains(uri, "authSource=admin") {
+		t.Errorf("scram: %q %v", uri, err)
+	}
+	uri, err = mongoURI(req(&dbspec.Spec{Engine: "mongo", Host: "m1", User: "svc@CORP", MongoDB: &dbspec.MongoOptions{AuthMechanism: "GSSAPI"}},
+		dbspec.Credentials{Host: "m1", Port: 27017, User: "svc@CORP"}))
+	if err != nil || !strings.Contains(uri, "authMechanism=GSSAPI") || !strings.Contains(uri, "authSource=%24external") || !strings.HasPrefix(uri, "mongodb://svc%40CORP@") {
+		t.Errorf("gssapi: %q %v", uri, err)
+	}
+	cert := dir + "/client.pem"
+	if err := os.WriteFile(cert, []byte("CERT"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	x := &dbspec.Spec{Engine: "mongo", Host: "m1", MongoDB: &dbspec.MongoOptions{AuthMechanism: "MONGODB-X509"}, TLS: dbspec.TLSSpec{Mode: "verify-full", CertFile: cert}}
+	uri, err = mongoURI(req(x, dbspec.Credentials{Host: "m1", Port: 27017, TLS: x.TLS}))
+	if err != nil || !strings.Contains(uri, "authMechanism=MONGODB-X509") || !strings.Contains(uri, "authSource=%24external") || !strings.Contains(uri, "tls=true") || !strings.Contains(uri, "tlsCertificateKeyFile=") {
+		t.Errorf("x509: %q %v", uri, err)
+	}
+	noTLS := &dbspec.Spec{Engine: "mongo", Host: "m1", MongoDB: &dbspec.MongoOptions{AuthMechanism: "MONGODB-X509"}, TLS: dbspec.TLSSpec{CertFile: cert}}
+	if _, err := mongoURI(req(noTLS, dbspec.Credentials{Host: "m1", Port: 27017, TLS: noTLS.TLS})); err == nil || !IsPrecheck(err) {
+		t.Errorf("x509 without tls must be a precheck error: %v", err)
+	}
+	noCert := &dbspec.Spec{Engine: "mongo", Host: "m1", MongoDB: &dbspec.MongoOptions{AuthMechanism: "MONGODB-X509"}, TLS: dbspec.TLSSpec{Mode: "require"}}
+	if _, err := mongoURI(req(noCert, dbspec.Credentials{Host: "m1", Port: 27017, TLS: noCert.TLS})); err == nil || !IsPrecheck(err) {
+		t.Errorf("x509 without cert must be a precheck error: %v", err)
 	}
 }

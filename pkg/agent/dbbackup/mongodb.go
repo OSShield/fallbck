@@ -83,16 +83,28 @@ func mongoURI(req *DumpRequest) (string, error) {
 	} else {
 		u.Host = fmt.Sprintf("%s:%d", c.Host, c.Port)
 	}
-	if c.User != "" {
+	if c.User != "" && c.Password != "" {
 		u.User = url.UserPassword(c.User, c.Password)
+	} else if c.User != "" {
+		// Certificate / Kerberos / AWS mechanisms carry no password
+		u.User = url.User(c.User)
 	}
 	q := url.Values{}
-	if c.User != "" {
-		auth := opts.AuthSource
-		if auth == "" {
-			auth = "admin"
+	if c.User != "" || opts.AuthMechanism != "" {
+		q.Set("authSource", opts.EffAuthSource())
+	}
+	if opts.AuthMechanism != "" {
+		q.Set("authMechanism", opts.AuthMechanism)
+	}
+	if opts.AuthMechanism == dbspec.MongoAuthX509 {
+		if c.TLS.CertFile == "" {
+			return "", precheckf("set tls.cert_file (and tls.key_file) on the job or profile", "MONGODB-X509 authenticates with a client certificate")
 		}
-		q.Set("authSource", auth)
+		switch c.TLS.Mode {
+		case dbspec.TLSRequire, dbspec.TLSVerifyCA, dbspec.TLSVerifyFull:
+		default:
+			return "", precheckf("set tls.mode to require, verify-ca or verify-full", "MONGODB-X509 needs a TLS connection")
+		}
 	}
 	if opts.ReplicaSet != "" {
 		q.Set("replicaSet", opts.ReplicaSet)
@@ -174,7 +186,12 @@ func (mongoEngine) Dump(ctx context.Context, req *DumpRequest) (*EngineResult, e
 			return url.PathEscape(req.Creds.User) + "@"
 		}
 		return ""
-	}() + fmt.Sprintf("%s:%d/?authSource=admin", req.Creds.Host, req.Creds.Port)
+	}() + fmt.Sprintf("%s:%d/?authSource=%s", req.Creds.Host, req.Creds.Port, url.QueryEscape(opts.EffAuthSource())) + func() string {
+		if opts.AuthMechanism != "" {
+			return "&authMechanism=" + opts.AuthMechanism
+		}
+		return ""
+	}()
 	gz := ""
 	if gzip {
 		gz = " --gzip"
