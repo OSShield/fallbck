@@ -30,7 +30,7 @@ RUN apk add --no-cache ca-certificates tzdata
 COPY --from=builder /bin/fallbck-k8s-agent /usr/local/bin/fallbck-k8s-agent
 
 # The agent runs unprivileged; worker pods set their own securityContext (root with
-# only DAC_READ_SEARCH by default, to read arbitrarily-owned PVC files).
+# only DAC_OVERRIDE by default, to read arbitrarily-owned PVC files).
 RUN addgroup -S fallbck && adduser -S -G fallbck -u 10004 fallbck
 USER fallbck
 

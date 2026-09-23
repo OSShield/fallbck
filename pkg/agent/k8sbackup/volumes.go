@@ -315,9 +315,12 @@ func attachedNode(ctx context.Context, c *Clients, ns, pvcName, pvName string) s
 // ---- worker pod -------------------------------------------------------------
 
 func workerPod(name, ns, claim string, readOnly bool, nodeName string, labels map[string]string, w WorkerConfig) *corev1.Pod {
-	// Default: root with every capability dropped except DAC_READ_SEARCH — PVC file
+	// Default: root with every capability dropped except DAC_OVERRIDE — PVC file
 	// ownership is arbitrary and a non-root worker would fail on root-owned files.
-	// Overridable via the Helm chart for PSS-restricted namespaces.
+	// DAC_OVERRIDE (not DAC_READ_SEARCH) because it is in the Pod Security "baseline"
+	// allow-list, so the worker is admitted in baseline namespaces; the PVC is mounted
+	// read-only, so the write bypass it also grants is moot. Overridable via the Helm
+	// chart for "restricted" namespaces (run as the PVC owner's uid).
 	rootUser := int64(0)
 	no := false
 	yes := true
@@ -325,7 +328,7 @@ func workerPod(name, ns, claim string, readOnly bool, nodeName string, labels ma
 		RunAsUser:                &rootUser,
 		AllowPrivilegeEscalation: &no,
 		ReadOnlyRootFilesystem:   &yes,
-		Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}, Add: []corev1.Capability{"DAC_READ_SEARCH"}},
+		Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}, Add: []corev1.Capability{"DAC_OVERRIDE"}},
 	}
 	if w.SecurityContextJSON != "" {
 		var override corev1.SecurityContext

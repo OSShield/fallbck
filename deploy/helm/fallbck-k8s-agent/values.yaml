@@ -42,8 +42,11 @@ worker:
   # volumes OOM. Keep it small (2) unless volumes are huge and you raise the memory limit.
   maxProcs: 2
   # Container securityContext for workers. Default (set by the agent when empty):
-  # root with all capabilities dropped except DAC_READ_SEARCH, read-only rootfs —
-  # needed to read arbitrarily-owned PVC files. Override for PSS-restricted namespaces.
+  # root with all capabilities dropped except DAC_OVERRIDE, read-only rootfs —
+  # needed to read arbitrarily-owned PVC files and admitted by Pod Security "baseline".
+  # Override for "restricted" namespaces, e.g. run as the uid that owns the PVC data:
+  #   securityContext: {runAsUser: 991, runAsNonRoot: true, allowPrivilegeEscalation: false,
+  #                     readOnlyRootFilesystem: true, capabilities: {drop: ["ALL"]}}
   securityContext: {}
 
   # Database jobs assigned to this agent run in a dump pod in the database's namespace:
