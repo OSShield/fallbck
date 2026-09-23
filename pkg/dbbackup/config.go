@@ -1,6 +1,7 @@
 package dbbackup
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -114,9 +115,19 @@ type Credentials struct {
 	Host     string
 	Port     int
 	TLS      TLSSpec
-	// Source records where the password came from ("job", "profile:<name>", "none")
+	// Source records where the password came from ("job", "profile:<name>", "none",
+	// or "local:<method>" for the agent's passwordless fallback on the database host)
 	Source string
+	// RunAs names the OS user the client tools run as, for peer / socket authentication
+	// on the database host (PostgreSQL: postgres); "" is the agent's own user. Only the
+	// agent's local fallback sets it, never a job or profile.
+	RunAs string
 }
+
+// ErrNoCredentials marks a resolution failure that means "nothing configured" (no
+// password on the job, no matching profile, no user) as opposed to a broken profile.
+// The agent may then try passwordless local authentication on the database host.
+var ErrNoCredentials = errors.New("no database credentials configured")
 
 // ResolveCredentials merges the job spec with the agent profile. password is the
 // server-stored password for this run ("" when the job has none). The profile is
@@ -140,7 +151,7 @@ func ResolveCredentials(spec *Spec, password string, profiles map[string]Credent
 			// SQL Server without a user means Windows integrated authentication
 			integrated := spec.Engine == EngineMSSQL && spec.User == ""
 			if spec.Profile != "" || (!spec.IsSocket() && !anonymousMongo && !integrated) {
-				return creds, fmt.Errorf("job stores no password and the agent has no credential profile %q (add db_backup.profiles.%s to the agent configuration)", name, name)
+				return creds, fmt.Errorf("%w: job stores no password and the agent has no credential profile %q (fallbck-agent database profile create --name %s ...)", ErrNoCredentials, name, name)
 			}
 		} else {
 			if e, _ := NormalizeEngine(p.Engine); e != spec.Engine {
@@ -175,10 +186,10 @@ func ResolveCredentials(spec *Spec, password string, profiles map[string]Credent
 	}
 	if creds.User == "" {
 		if spec.Engine != EngineMongoDB && spec.Engine != EngineMSSQL {
-			return creds, fmt.Errorf("no database user configured (set it on the job or in the credential profile)")
+			return creds, fmt.Errorf("%w: no database user configured (set it on the job or in the credential profile)", ErrNoCredentials)
 		}
 	} else if creds.Password == "" && !strings.HasPrefix(creds.Host, "/") {
-		return creds, fmt.Errorf("no password available for %s@%s (job password blank and profile provides none); only unix-socket connections may run without a password", creds.User, creds.Host)
+		return creds, fmt.Errorf("%w: no password available for %s@%s (job password blank and profile provides none); only unix-socket connections may run without a password", ErrNoCredentials, creds.User, creds.Host)
 	}
 	return creds, nil
 }

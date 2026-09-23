@@ -373,6 +373,7 @@ function updateDBProfiles(form = jobForm()) {
   else if (match.length) hint.innerText = `Profiles on ${host || 'the agent'} for ${engine || 'this engine'}: ${match.map(p => p.name).join(', ')}`;
   else if (all.length) hint.innerText = `${host || 'The agent'} has no ${engine} profile (${all.map(p => p.name + ' [' + p.engine + ']').join(', ')}). Create one there: fallbck-agent database profile create --name <name> --engine ${engine} ...`;
   else hint.innerText = `No profiles reported by ${host || 'the agent'} yet. Create one on the host: fallbck-agent database profile create --name <name> --engine ${engine || '<engine>'} --user <user> --ask-password`;
+  if (chosen && engine !== 'mssql') hint.innerText += ' With user, password and profile all blank, an agent running as root on the database host itself uses passwordless local access (PostgreSQL peer, MySQL/MariaDB socket, MongoDB without auth).';
 }
 
 function setDBEngine(engine, form = jobForm()) {

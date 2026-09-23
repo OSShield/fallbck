@@ -17,7 +17,9 @@ type postgresEngine struct{}
 
 func (postgresEngine) Name() string { return dbspec.EnginePostgres }
 
-var pgToolNames = []string{"pg_dump", "pg_dumpall", "pg_basebackup"}
+// pgToolNames are the tools detected per directory; psql runs the prechecks when the
+// tools run as another OS user (peer authentication)
+var pgToolNames = []string{"pg_dump", "pg_dumpall", "pg_basebackup", "psql"}
 
 // pgSearchGlobs are the per-major install directories of common distributions
 var pgSearchGlobs = []string{
@@ -154,10 +156,52 @@ func pgMode(spec *dbspec.Spec) (dump, base bool) {
 	return true, false
 }
 
+// pgOpen connects for the checks: in-process (pgx) normally, through psql running as
+// the run's OS user when the tools run as one (peer authentication is decided by the
+// OS user on the socket, which the agent itself is not)
+func pgOpen(ctx context.Context, req *DumpRequest) (querier, error) {
+	if req.Creds.RunAs == "" {
+		return pgConnect(ctx, req.Creds)
+	}
+	psql, ok := req.Tools.Binaries["psql"]
+	for _, alt := range req.Tools.Alternatives {
+		if ok {
+			break
+		}
+		psql, ok = alt["psql"]
+	}
+	if !ok {
+		return nil, precheckf(pgInstallHint, "psql not found (needed to run the checks as OS user %s)", req.Creds.RunAs)
+	}
+	env, err := pgEnv(req)
+	if err != nil {
+		return nil, err
+	}
+	return psqlQuerier{path: psql.Path, env: env, runAs: req.Creds.RunAs, runner: req.Runner}, nil
+}
+
+// runToFile runs a tool with its stdout on a file the agent opens itself, so a tool
+// running as another OS user needs no write access to the spool
+func runToFile(ctx context.Context, req *DumpRequest, c Command, path string) (Result, error) {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return Result{}, err
+	}
+	c.Stdout, c.RunAs = f, req.Creds.RunAs
+	r, err := req.Runner.Run(ctx, c)
+	if cerr := f.Close(); err == nil && cerr != nil {
+		err = cerr
+	}
+	return r, err
+}
+
 func (postgresEngine) Precheck(ctx context.Context, req *DumpRequest) (ServerInfo, error) {
 	var info ServerInfo
-	q, err := pgConnect(ctx, req.Creds)
+	q, err := pgOpen(ctx, req)
 	if err != nil {
+		if IsPrecheck(err) {
+			return info, err
+		}
 		return info, &PrecheckError{Msg: fmt.Sprintf("connecting to PostgreSQL at %s:%d as %s", req.Creds.Host, req.Creds.Port, req.Creds.User), Err: err, Hint: "check host, port, credentials, pg_hba.conf and TLS settings"}
 	}
 	defer q.close()
@@ -348,12 +392,12 @@ func (postgresEngine) Dump(ctx context.Context, req *DumpRequest) (*EngineResult
 		if dbspec.Bool(opts.Globals, true) {
 			req.progress("dump", "globals")
 			file := filepath.Join(pgDir, "globals.sql")
-			args := []string{"--globals-only", "--no-password", "--file=" + file}
+			args := []string{"--globals-only", "--no-password"}
 			includePw := opts.RolePasswords == "include" || (opts.RolePasswords == "auto" && req.Server.Superuser)
 			if !includePw {
 				args = append(args, "--no-role-passwords")
 			}
-			r, err := req.Runner.Run(ctx, Command{Name: "pg_dumpall", Path: tools["pg_dumpall"].Path, Args: args, Env: env})
+			r, err := runToFile(ctx, req, Command{Name: "pg_dumpall", Path: tools["pg_dumpall"].Path, Args: args, Env: env}, file)
 			if err != nil {
 				return nil, err
 			}
@@ -378,9 +422,9 @@ func (postgresEngine) Dump(ctx context.Context, req *DumpRequest) (*EngineResult
 				}
 			}
 			args = append(args, opts.ExtraDumpArgs...)
-			args = append(args, "--dbname="+name, "--file="+file)
+			args = append(args, "--dbname="+name)
 			start := time.Now()
-			r, err := req.Runner.Run(ctx, Command{Name: "pg_dump", Path: tools["pg_dump"].Path, Args: args, Env: env})
+			r, err := runToFile(ctx, req, Command{Name: "pg_dump", Path: tools["pg_dump"].Path, Args: args, Env: env}, file)
 			if err != nil {
 				return nil, fmt.Errorf("dumping database %s: %w", name, err)
 			}
@@ -397,7 +441,7 @@ func (postgresEngine) Dump(ctx context.Context, req *DumpRequest) (*EngineResult
 		if len(req.Databases) > 1 {
 			res.Notes = append(res.Notes, "each database dump is its own consistent snapshot (dumped sequentially)")
 		}
-		if q, err := pgConnect(ctx, req.Creds); err == nil {
+		if q, err := pgOpen(ctx, req); err == nil {
 			var lsn string
 			fn := "pg_current_wal_lsn()"
 			if req.Server.IsReplica {
@@ -413,7 +457,12 @@ func (postgresEngine) Dump(ctx context.Context, req *DumpRequest) (*EngineResult
 	if doBase {
 		req.progress("basebackup", "")
 		baseDir := filepath.Join(pgDir, "base")
-		if err := os.MkdirAll(pgDir, 0o700); err != nil {
+		if req.Creds.RunAs != "" {
+			// pg_basebackup creates and writes the directory itself
+			if err := prepareDirFor(pgDir, req.Creds.RunAs); err != nil {
+				return nil, err
+			}
+		} else if err := os.MkdirAll(pgDir, 0o700); err != nil {
 			return nil, err
 		}
 		bb := tools["pg_basebackup"]
@@ -424,7 +473,7 @@ func (postgresEngine) Dump(ctx context.Context, req *DumpRequest) (*EngineResult
 		if bb.Major >= 13 {
 			args = append(args, "--manifest-checksums=sha256")
 		}
-		r, err := req.Runner.Run(ctx, Command{Name: "pg_basebackup", Path: bb.Path, Args: args, Env: env})
+		r, err := req.Runner.Run(ctx, Command{Name: "pg_basebackup", Path: bb.Path, Args: args, Env: env, RunAs: req.Creds.RunAs})
 		if err != nil {
 			return nil, err
 		}
@@ -447,7 +496,7 @@ func (postgresEngine) Dump(ctx context.Context, req *DumpRequest) (*EngineResult
 		if m := pgWALEndRe.FindStringSubmatch(r.Stderr); m != nil {
 			bm.WALEndLSN = m[1]
 		}
-		if q, err := pgConnect(ctx, req.Creds); err == nil {
+		if q, err := pgOpen(ctx, req); err == nil {
 			if bm.Timeline == 0 {
 				var tl int64
 				if err := q.queryRow(ctx, "SELECT timeline_id FROM pg_control_checkpoint()", &tl); err == nil {

@@ -205,7 +205,7 @@ func cannotRun(a *db.Agent, summary *inventory.Summary, j *db.BackupJob) string 
 			}
 		}
 		if !found {
-			return fmt.Sprintf("Credential profile %q is not configured on the agent (fallbck-agent database profile create --name %s ...).", name, name)
+			return fmt.Sprintf("Credential profile %q is not configured on the agent (fallbck-agent database profile create --name %s ...); runs fall back to passwordless local access only when the agent runs as root on the database host.", name, name)
 		}
 	}
 	return ""

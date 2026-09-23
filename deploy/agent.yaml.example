@@ -31,6 +31,11 @@ token_expires_at: 2027-08-25T00:00:00Z
 #   # Credential profiles used by jobs whose password is left blank in the UI. A job
 #   # names its profile (default: the engine name); the profile may also supply user,
 #   # host, port and TLS settings the job leaves blank. Readable by root only.
+#   # No profile at all is fine when the agent runs as root on the database host and
+#   # the job's host is this machine: PostgreSQL then runs pg_dump as the postgres OS
+#   # user over the unix socket (peer authentication), MySQL/MariaDB connects as
+#   # root@localhost over the socket (auth_socket / unix_socket), MongoDB connects
+#   # without authentication. Nothing needs to be configured for that.
 #   # Prefer the encrypted store: `fallbck-agent database profile create ...` (and
 #   # `... profile import` to move these out of this file); profiles here still load,
 #   # with a startup warning, and a stored profile of the same name wins.

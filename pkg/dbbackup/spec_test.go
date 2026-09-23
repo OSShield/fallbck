@@ -2,6 +2,7 @@ package dbbackup
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -91,11 +92,20 @@ func TestResolveCredentials(t *testing.T) {
 	if err != nil || c.User != "root" || c.Port != 3307 {
 		t.Errorf("named profile: %+v %v", c, err)
 	}
-	if _, err := ResolveCredentials(&Spec{Engine: EngineMySQL, Host: "db02"}, "", profiles); err == nil {
-		t.Error("missing default profile must fail")
+	if _, err := ResolveCredentials(&Spec{Engine: EngineMySQL, Host: "db02"}, "", profiles); !errors.Is(err, ErrNoCredentials) {
+		t.Errorf("missing default profile must fail with ErrNoCredentials: %v", err)
 	}
-	if _, err := ResolveCredentials(&Spec{Engine: EngineMySQL, Host: "db02", Profile: "postgres"}, "", profiles); err == nil {
-		t.Error("engine mismatch must fail")
+	if _, err := ResolveCredentials(&Spec{Engine: EngineMySQL, Host: "db02", Profile: "nope"}, "", profiles); !errors.Is(err, ErrNoCredentials) {
+		t.Errorf("missing named profile must fail with ErrNoCredentials: %v", err)
+	}
+	if _, err := ResolveCredentials(&Spec{Engine: EnginePostgres, Host: "db02", Profile: "postgres"}, "", map[string]CredentialProfile{"postgres": {Engine: EnginePostgres}}); !errors.Is(err, ErrNoCredentials) {
+		t.Errorf("profile without user must fail with ErrNoCredentials: %v", err)
+	}
+	if _, err := ResolveCredentials(&Spec{Engine: EnginePostgres, Host: "db02", User: "app", Profile: "postgres"}, "", map[string]CredentialProfile{"postgres": {Engine: EnginePostgres}}); !errors.Is(err, ErrNoCredentials) {
+		t.Errorf("tcp without password must fail with ErrNoCredentials: %v", err)
+	}
+	if _, err := ResolveCredentials(&Spec{Engine: EngineMySQL, Host: "db02", Profile: "postgres"}, "", profiles); err == nil || errors.Is(err, ErrNoCredentials) {
+		t.Errorf("engine mismatch must fail, and not as missing credentials: %v", err)
 	}
 	if _, err := ResolveCredentials(&Spec{Engine: EnginePostgres, Host: "/var/run/postgresql", User: "postgres"}, "", nil); err != nil {
 		t.Errorf("socket without password should pass: %v", err)
