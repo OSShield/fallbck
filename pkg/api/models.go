@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -75,6 +76,9 @@ type HeartbeatRequest struct {
 	// DBEngines / DBTools: see EnrollRequest
 	DBEngines []string `json:"db_engines,omitempty"`
 	DBTools   bool     `json:"db_tools,omitempty"`
+	// Inventory is the compact inventory summary (inventory.Summary), attached every
+	// few minutes rather than with every heartbeat
+	Inventory json.RawMessage `json:"inventory,omitempty"`
 }
 
 // MergeAgentRequest moves the jobs and runs of one agent onto another and deletes

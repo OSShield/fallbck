@@ -31,6 +31,9 @@ token_expires_at: 2027-08-25T00:00:00Z
 #   # Credential profiles used by jobs whose password is left blank in the UI. A job
 #   # names its profile (default: the engine name); the profile may also supply user,
 #   # host, port and TLS settings the job leaves blank. Readable by root only.
+#   # Prefer the encrypted store: `fallbck-agent database profile create ...` (and
+#   # `... profile import` to move these out of this file); profiles here still load,
+#   # with a startup warning, and a stored profile of the same name wins.
 #   profiles:
 #     postgres:
 #       engine: postgres

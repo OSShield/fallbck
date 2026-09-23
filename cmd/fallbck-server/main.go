@@ -168,6 +168,7 @@ func main() {
 		serverWorker = temporal.NewServerWorker(temporalClient, database, cfg, tokenManager)
 		serverActs := activities.NewServerActivities(database, cfg, tokenManager)
 		serverWorker.Register(workflows.BackupJobWorkflow, serverActs)
+		serverWorker.RegisterWorkflow(workflows.AgentOpsWorkflow)
 		if err := serverWorker.Start(); err != nil {
 			slog.Error("Failed to start Temporal server worker", "error", err)
 			os.Exit(1)

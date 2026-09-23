@@ -18,8 +18,10 @@ import (
 	"github.com/osshield/fallbck/pkg/agent/runtime"
 	"github.com/osshield/fallbck/pkg/api"
 	"github.com/osshield/fallbck/pkg/config"
+	"github.com/osshield/fallbck/pkg/inventory"
 	"github.com/osshield/fallbck/pkg/temporal/activities"
 	"go.temporal.io/sdk/worker"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 var AgentVersion = "0.1.0"
@@ -166,6 +168,35 @@ func runAgent(logging *runtime.Logging) {
 		dataDir = os.TempDir()
 	}
 
+	// Inventory for the status page: namespaces and their volumes
+	agent.Inventory = runtime.NewInventory(cfg, "", AgentVersion)
+	agent.Inventory.ExtraCounts = func(ctx context.Context, counts map[string]int) {
+		if ns, err := clients.Core.CoreV1().Namespaces().List(ctx, metav1.ListOptions{}); err == nil {
+			counts["namespaces"] = len(ns.Items)
+		}
+		if pvcs, err := clients.Core.CoreV1().PersistentVolumeClaims("").List(ctx, metav1.ListOptions{}); err == nil {
+			counts["pvcs"] = len(pvcs.Items)
+		}
+	}
+	agent.Inventory.Extra = func(ctx context.Context, d *inventory.Detail) {
+		kd := &inventory.KubernetesDetail{Namespaces: []inventory.KubernetesNamespace{}}
+		if v, err := clients.Discovery.ServerVersion(); err == nil {
+			kd.ServerVersion = v.GitVersion
+		}
+		perNS := map[string]int{}
+		if pvcs, err := clients.Core.CoreV1().PersistentVolumeClaims("").List(ctx, metav1.ListOptions{}); err == nil {
+			for _, p := range pvcs.Items {
+				perNS[p.Namespace]++
+			}
+		}
+		if ns, err := clients.Core.CoreV1().Namespaces().List(ctx, metav1.ListOptions{}); err == nil {
+			for _, n := range ns.Items {
+				kd.Namespaces = append(kd.Namespaces, inventory.KubernetesNamespace{Name: n.Name, PVCs: perNS[n.Name]})
+			}
+		}
+		d.Kubernetes = kd
+	}
+
 	err = runtime.Run(agent, cfg, "", func(w worker.Worker, conns *runtime.Conns, store *runtime.TokenStore) error {
 		httpClient := runtime.ServerHTTPClient(cfg)
 		acts := activities.NewK8sAgentActivities()
@@ -211,6 +242,7 @@ func runAgent(logging *runtime.Logging) {
 			return resp.AuthToken, resp.TokenExpiresAt, err
 		}
 		w.RegisterActivity(acts)
+		w.RegisterActivity(&activities.AgentOpsActivities{LogTail: logging.Tail, LogLevel: func() string { return logging.Control.Level().String() }, Detail: agent.Inventory.Detail})
 
 		// Orphan sweep: at start and periodically, remove leftovers of crashed runs
 		go func() {

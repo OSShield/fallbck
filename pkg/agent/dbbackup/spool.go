@@ -177,3 +177,12 @@ func writeSecret(dir, name, content string) (string, error) {
 	}
 	return path, nil
 }
+
+// FreeBytes reports the free space on the filesystem holding path (0 when unknown)
+func FreeBytes(path string) uint64 {
+	n, err := freeBytes(path)
+	if err != nil {
+		return 0
+	}
+	return n
+}

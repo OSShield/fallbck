@@ -32,6 +32,11 @@ func NewServerWorker(c client.Client, database *db.DB, cfg *config.ServerConfig,
 	}
 }
 
+// RegisterWorkflow registers one more workflow on the server worker
+func (sw *ServerWorker) RegisterWorkflow(workflowFunc interface{}) {
+	sw.worker.RegisterWorkflow(workflowFunc)
+}
+
 // RegisterWorkflowAndActivities registers workflows and server activities
 func (sw *ServerWorker) Register(workflowFunc interface{}, serverActivities interface{}) {
 	sw.worker.RegisterWorkflow(workflowFunc)

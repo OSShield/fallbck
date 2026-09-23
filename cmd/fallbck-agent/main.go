@@ -128,6 +128,7 @@ func main() {
 			slog.Warn("Could not clean the spool directory", "dir", dbCfg.SpoolDir, "error", err)
 		}
 		agent.DBEngines = runtime.DBEnginesProbe(dbCfg, 10*time.Minute)
+		agent.Inventory = runtime.NewInventory(cfg, configPath, AgentVersion)
 		register := func(w worker.Worker, conns *runtime.Conns, store *runtime.TokenStore) error {
 			acts := activities.NewAgentActivities()
 			acts.Tunnel = conns.Tunnel
@@ -157,6 +158,9 @@ func main() {
 			dbActs.LogTail = logging.Tail
 			dbActs.ReportProgress = runtime.ProgressReporter(cfg, store)
 			w.RegisterActivity(dbActs)
+
+			ops := &activities.AgentOpsActivities{LogTail: logging.Tail, LogLevel: func() string { return logging.Control.Level().String() }, Detail: agent.Inventory.Detail}
+			w.RegisterActivity(ops)
 			return nil
 		}
 		if runtime.IsWindowsService() {
@@ -200,6 +204,12 @@ func main() {
 			os.Exit(1)
 		}
 
+	case "database":
+		if err := databaseCommand(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "Error:", err)
+			os.Exit(1)
+		}
+
 	case "version":
 		fmt.Printf("fallbck-agent v%s\n", AgentVersion)
 
@@ -220,6 +230,8 @@ Commands:
   run               Start the backup agent worker daemon (filesystem, Proxmox VE, Docker
                     and, when the client tools are installed, database jobs)
   tools             Show the detected database client tools (pg_dump, mariadb-dump, mongodump, ...)
+  database          Credential profiles in the encrypted store (profile create|list|delete|import)
+                    and the db_backup settings (config <key> [<value>]); see database --help
   migrate-db-agent  Take over a fallbck-db-agent installation on this host (state and
                     credential profiles), then retire it with fallbck-ctl agents merge
   service           Windows: install|uninstall|start|stop|status the Windows service

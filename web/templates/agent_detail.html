@@ -1,0 +1,292 @@
+{{define "content"}}
+{{$a := .Agent}}
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 12px; flex-wrap: wrap;">
+  <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+    <a href="/agents" class="btn btn-secondary btn-sm">&larr; Agents</a>
+    {{if eq (printf "%s" .Status) "online"}}
+      <span class="badge badge-success"><span class="badge-dot"></span> Online</span>
+    {{else if eq (printf "%s" .Status) "busy"}}
+      <span class="badge badge-warning"><span class="badge-dot"></span> Backing up</span>
+    {{else}}
+      <span class="badge badge-danger"><span class="badge-dot"></span> Offline</span>
+    {{end}}
+    <span class="badge badge-neutral">{{$a.AgentType}}</span>
+    {{if $a.PVEHost}}<span class="badge badge-warning" title="Runs on a Proxmox VE node">PVE</span>{{end}}
+    {{if $a.DockerHost}}<span class="badge badge-info" title="A Docker daemon answers on this host">Docker</span>{{end}}
+    {{if $a.DBEngines}}<span class="badge badge-success" title="Database engines this agent can back up">DB: {{range $i, $e := $a.DBEngines}}{{if $i}}, {{end}}{{$e}}{{end}}</span>{{end}}
+  </div>
+  <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+    <button class="btn btn-secondary btn-sm" id="agent-refresh-btn" onclick="refreshAgentInventory('{{$a.ID}}')" title="Ask the agent for its full inventory now (it must be online)">Refresh inventory</button>
+    <button class="btn btn-secondary btn-sm" id="agent-logs-btn" onclick="loadAgentLogs('{{$a.ID}}')" title="Fetch the agent's recent log lines (it must be online)">View logs</button>
+    {{if $a.DebugLogging}}
+      <button class="btn btn-secondary btn-sm" title="Debug logging is on. Click to return to the configured level." onclick="toggleAgentDebug('{{$a.ID}}', false)">Debug: on</button>
+    {{else}}
+      <button class="btn btn-secondary btn-sm" title="Raise this agent's log level to debug — applied on its next heartbeat (~30s)" onclick="toggleAgentDebug('{{$a.ID}}', true)">Debug: off</button>
+    {{end}}
+    <a class="btn btn-primary btn-sm" href="/onboarding?agent={{$a.ID}}">Set up backups</a>
+    <button class="btn btn-secondary btn-sm" style="color: var(--danger-text);" onclick="deleteResource('agents', '{{$a.ID}}')">Delete</button>
+  </div>
+</div>
+
+{{/* ---- Alerts ---- */}}
+<div class="card" style="margin-bottom: 16px;">
+  <div class="card-header">
+    <h3 class="card-title">Alerts{{if .Alerts}} ({{len .Alerts}}){{end}}</h3>
+  </div>
+  <div style="padding: 12px 16px;">
+    {{if .Alerts}}
+      {{range .Alerts}}
+      <div style="display: flex; gap: 12px; align-items: flex-start; padding: 10px 12px; margin-bottom: 8px; border-radius: var(--radius-sm); border: 1px solid var(--{{.Level}}-border); background: var(--{{.Level}}-bg);">
+        <span class="badge badge-{{.Level}}" style="flex-shrink: 0;">{{if eq (printf "%s" .Level) "danger"}}Problem{{else if eq (printf "%s" .Level) "warning"}}Warning{{else}}Info{{end}}</span>
+        <div style="font-size: 13px;">
+          <div style="font-weight: 600;">{{.Title}}</div>
+          {{if .Detail}}<div style="color: var(--text-muted); margin-top: 2px;">{{.Detail}}</div>{{end}}
+          {{if .JobID}}<a href="/jobs?agent={{$a.ID}}" style="font-size: 12px;">Open this agent's jobs</a>{{end}}
+        </div>
+      </div>
+      {{end}}
+    {{else}}
+      <p style="color: var(--text-muted); font-size: 13px; margin: 0;">No problems found: the agent is checking in, its jobs match what it can run, and the last runs succeeded.</p>
+    {{end}}
+  </div>
+</div>
+
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; margin-bottom: 16px;">
+  {{/* ---- Connectivity ---- */}}
+  <div class="card">
+    <div class="card-header"><h3 class="card-title">Connectivity</h3></div>
+    <div style="padding: 16px; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; font-size: 14px;">
+      <div><div class="kv-label">Last heartbeat</div><div title="{{formatTime $a.LastSeenAt}}">{{since $a.LastSeenAt}}</div></div>
+      <div><div class="kv-label">Agent version</div><div>{{if $a.Version}}{{$a.Version}}{{else}}-{{end}} <span style="color: var(--text-muted); font-size: 12px;">(server {{.Version}})</span></div></div>
+      <div><div class="kv-label">Platform</div><div>{{$a.OS}}/{{$a.Arch}}</div></div>
+      <div><div class="kv-label">IP address</div><div style="font-family: var(--font-mono); font-size: 13px;">{{if $a.IPAddress}}{{$a.IPAddress}}{{else}}-{{end}}</div></div>
+      <div><div class="kv-label">Task queue</div><div style="font-family: var(--font-mono); font-size: 12px; word-break: break-all;">{{$a.TaskQueue}}</div></div>
+      <div><div class="kv-label">Enrolled</div><div>{{formatTime $a.CreatedAt}}</div></div>
+      {{if .Summary}}
+      <div><div class="kv-label">Agent uptime</div><div>{{if .Summary.UptimeSeconds}}{{uptime .Summary.UptimeSeconds}}{{else}}-{{end}}</div></div>
+      <div><div class="kv-label">Summary reported</div><div title="{{formatTime $a.InventoryAt}}">{{since $a.InventoryAt}}</div></div>
+      {{end}}
+    </div>
+  </div>
+
+  {{/* ---- Credential profiles ---- */}}
+  <div class="card">
+    <div class="card-header">
+      <h3 class="card-title">Credential profiles</h3>
+      <span style="font-size: 12px; color: var(--text-muted);">Stored on the agent host; passwords never leave it</span>
+    </div>
+    <div style="padding: 0;">
+      {{if and .Summary .Summary.Profiles}}
+      <div class="table-container">
+        <table>
+          <thead><tr><th>Name</th><th>Engine</th><th>User</th><th>Host</th></tr></thead>
+          <tbody>
+            {{range .Summary.Profiles}}
+            <tr>
+              <td style="font-family: var(--font-mono); font-size: 13px;"><strong>{{.Name}}</strong></td>
+              <td>{{if .Engine}}<span class="badge badge-info">{{.Engine}}</span>{{else}}-{{end}}</td>
+              <td style="font-size: 13px;">{{if .User}}{{.User}}{{else}}-{{end}}</td>
+              <td style="font-family: var(--font-mono); font-size: 12px;">{{if .Host}}{{.Host}}{{else}}-{{end}}</td>
+            </tr>
+            {{end}}
+          </tbody>
+        </table>
+      </div>
+      {{else}}
+      <div style="padding: 16px; font-size: 13px; color: var(--text-muted);">
+        {{if .Summary}}No profiles configured.{{else}}Not reported yet: the agent sends its profile names with a heartbeat every 5 minutes.{{end}}
+        <div style="margin-top: 8px;">Create one on the host:</div>
+        <pre style="margin: 6px 0 0; font-size: 12px; background: var(--bg-subtle); padding: 8px 10px; border-radius: var(--radius-sm); white-space: pre-wrap;">fallbck-agent database profile create --name prod --engine postgresql --user backup --ask-password</pre>
+      </div>
+      {{end}}
+    </div>
+  </div>
+
+  {{/* ---- Tools & disk ---- */}}
+  <div class="card">
+    <div class="card-header"><h3 class="card-title">Client tools &amp; disk</h3></div>
+    <div style="padding: 16px; font-size: 13px;">
+      {{if .Summary}}
+        {{if .Summary.Tools}}
+        <table style="width: 100%; margin-bottom: 12px;">
+          <thead><tr><th style="text-align:left;">Engine</th><th style="text-align:left;">Tool</th><th style="text-align:left;">Version</th></tr></thead>
+          <tbody>
+          {{range $engine, $tools := .Summary.Tools}}
+            {{range $tools}}
+            <tr>
+              <td><span class="badge badge-neutral">{{$engine}}</span></td>
+              <td style="font-family: var(--font-mono); font-size: 12px;" title="{{.Path}}">{{.Name}}</td>
+              <td style="color: var(--text-muted);">{{if .Version}}{{.Version}}{{else}}-{{end}}</td>
+            </tr>
+            {{end}}
+          {{end}}
+          </tbody>
+        </table>
+        {{else}}
+        <p style="color: var(--text-muted); margin: 0 0 12px;">No database client tools found on the host.</p>
+        {{end}}
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px;">
+          {{with .Summary.Spool}}
+          <div><div class="kv-label">Spool free</div><div title="{{.Path}}">{{formatUBytes .FreeBytes}}{{if .MinFreeBytes}} <span style="color: var(--text-muted); font-size: 12px;">(min {{formatBytes .MinFreeBytes}})</span>{{end}}</div><div style="font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); word-break: break-all;">{{.Path}}</div></div>
+          {{end}}
+          {{with .Summary.Data}}
+          <div><div class="kv-label">Data dir free</div><div>{{formatUBytes .FreeBytes}}</div><div style="font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); word-break: break-all;">{{.Path}}</div></div>
+          {{end}}
+          {{range $k, $v := .Summary.Counts}}
+          <div><div class="kv-label">{{$k}}</div><div>{{$v}}</div></div>
+          {{end}}
+        </div>
+      {{else}}
+        <p style="color: var(--text-muted); margin: 0;">Not reported yet.</p>
+      {{end}}
+    </div>
+  </div>
+</div>
+
+{{/* ---- Full inventory (on demand) ---- */}}
+<div class="card" style="margin-bottom: 16px;">
+  <div class="card-header">
+    <h3 class="card-title">Host inventory</h3>
+    <span style="font-size: 12px; color: var(--text-muted);">{{if $a.InventoryDetailAt}}Refreshed {{since $a.InventoryDetailAt}}{{else}}Never refreshed{{end}}</span>
+  </div>
+  <div style="padding: 16px; font-size: 13px;">
+    {{with .Detail}}
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; margin-bottom: 14px;">
+        <div><div class="kv-label">Hostname</div><div>{{.Hostname}}</div></div>
+        <div><div class="kv-label">Config file</div><div style="font-family: var(--font-mono); font-size: 12px; word-break: break-all;">{{if .ConfigPath}}{{.ConfigPath}}{{else}}-{{end}}</div></div>
+        <div><div class="kv-label">Data dir</div><div style="font-family: var(--font-mono); font-size: 12px; word-break: break-all;">{{if .DataDir}}{{.DataDir}}{{else}}-{{end}}</div></div>
+        {{range $k, $v := .Settings}}
+        <div><div class="kv-label">{{$k}}</div><div style="font-family: var(--font-mono); font-size: 12px; word-break: break-all;">{{$v}}</div></div>
+        {{end}}
+      </div>
+      {{with .PVE}}
+      <h4 style="margin: 0 0 6px; font-size: 13px;">Proxmox VE</h4>
+      <div style="margin-bottom: 14px;">Node <strong>{{.Node}}</strong>{{if .Version}}, {{.Version}}{{end}}</div>
+      {{end}}
+      {{with .Docker}}
+      <h4 style="margin: 0 0 6px; font-size: 13px;">Docker{{if .Version}} <span style="color: var(--text-muted); font-weight: normal;">{{.Version}}</span>{{end}}</h4>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin-bottom: 14px;">
+        <div class="table-container">
+          <table>
+            <thead><tr><th>Container</th><th>Image</th><th>State</th><th>Project</th></tr></thead>
+            <tbody>
+              {{range .Containers}}<tr><td style="font-family: var(--font-mono); font-size: 12px;">{{.Name}}</td><td style="font-size: 12px;">{{.Image}}</td><td>{{if eq .State "running"}}<span class="badge badge-success">running</span>{{else}}<span class="badge badge-neutral">{{.State}}</span>{{end}}</td><td style="font-size: 12px;">{{.Project}}</td></tr>
+              {{else}}<tr><td colspan="4" style="color: var(--text-muted);">No containers.</td></tr>{{end}}
+            </tbody>
+          </table>
+        </div>
+        <div class="table-container">
+          <table>
+            <thead><tr><th>Volume</th><th>Driver</th></tr></thead>
+            <tbody>
+              {{range .Volumes}}<tr><td style="font-family: var(--font-mono); font-size: 12px;">{{.Name}}</td><td style="font-size: 12px;">{{.Driver}}</td></tr>
+              {{else}}<tr><td colspan="2" style="color: var(--text-muted);">No volumes.</td></tr>{{end}}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {{end}}
+      {{with .Kubernetes}}
+      <h4 style="margin: 0 0 6px; font-size: 13px;">Kubernetes{{if .ServerVersion}} <span style="color: var(--text-muted); font-weight: normal;">{{.ServerVersion}}</span>{{end}}</h4>
+      <div class="table-container" style="margin-bottom: 14px;">
+        <table>
+          <thead><tr><th>Namespace</th><th>PVCs</th></tr></thead>
+          <tbody>
+            {{range .Namespaces}}<tr><td style="font-family: var(--font-mono); font-size: 12px;">{{.Name}}</td><td>{{.PVCs}}</td></tr>
+            {{else}}<tr><td colspan="2" style="color: var(--text-muted);">No namespaces.</td></tr>{{end}}
+          </tbody>
+        </table>
+      </div>
+      {{end}}
+    {{else}}
+      <p style="color: var(--text-muted); margin: 0;">Click <strong>Refresh inventory</strong> to fetch the agent's host details (settings, containers, volumes, namespaces). The agent must be online.</p>
+    {{end}}
+  </div>
+</div>
+
+{{/* ---- Logs (on demand) ---- */}}
+<div class="card" style="margin-bottom: 16px;" id="agent-logs-card" hidden>
+  <div class="card-header">
+    <h3 class="card-title">Recent log lines</h3>
+    <span style="font-size: 12px; color: var(--text-muted);" id="agent-logs-meta"></span>
+  </div>
+  <div style="padding: 16px;">
+    <pre id="agent-logs-pre" style="background: var(--bg-subtle); padding: 12px; border-radius: var(--radius-sm); font-size: 12px; white-space: pre-wrap; word-break: break-word; max-height: 480px; overflow: auto; margin: 0;"></pre>
+  </div>
+</div>
+
+{{/* ---- Jobs ---- */}}
+<div class="card" style="margin-bottom: 16px;">
+  <div class="card-header">
+    <h3 class="card-title">Backup jobs ({{len .Jobs}})</h3>
+    <a class="btn btn-secondary btn-sm" href="/jobs?agent={{$a.ID}}">All jobs</a>
+  </div>
+  <div class="table-container">
+    <table>
+      <thead><tr><th>Name</th><th>Type</th><th>Schedule</th><th>State</th><th>Last run</th><th style="text-align: right;">Actions</th></tr></thead>
+      <tbody>
+        {{range .Jobs}}
+        <tr>
+          <td><strong>{{.Name}}</strong>{{if .DBConfig}}<div style="font-size: 11px; color: var(--text-muted);">{{.DBConfig.Engine}}{{if .DBConfig.Profile}} · profile <code>{{.DBConfig.Profile}}</code>{{end}}</div>{{end}}</td>
+          <td><span class="badge badge-neutral">{{.JobType}}</span></td>
+          <td style="font-family: var(--font-mono); font-size: 12px;">{{.ScheduleCron}}</td>
+          <td>{{if .Enabled}}<span class="badge badge-success"><span class="badge-dot"></span> Active</span>{{else}}<span class="badge badge-neutral">Disabled</span>{{end}}</td>
+          <td>
+            {{if .LastRun}}
+              <a href="/runs/{{.LastRun.RunID}}" style="text-decoration: none;">
+                {{if eq (printf "%s" .LastRun.Status) "completed"}}<span class="badge badge-success">Completed</span>
+                {{else if eq (printf "%s" .LastRun.Status) "failed"}}<span class="badge badge-danger">Failed</span>
+                {{else if eq (printf "%s" .LastRun.Status) "cancelled"}}<span class="badge badge-neutral">Cancelled</span>
+                {{else}}<span class="badge badge-warning">{{.LastRun.Status}}</span>{{end}}
+              </a>
+              <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">{{formatTime .LastRun.At}}</div>
+            {{else}}<span style="color: var(--text-dim); font-size: 13px;">Never</span>{{end}}
+          </td>
+          <td style="text-align: right;">
+            <button class="btn btn-primary btn-sm" onclick="triggerJobRun('{{.ID}}')">Run Now</button>
+          </td>
+        </tr>
+        {{else}}
+        <tr><td colspan="6"><div class="empty-state"><p>No jobs use this agent yet.</p><a class="btn btn-primary btn-sm" href="/onboarding?agent={{$a.ID}}">Set up backups</a></div></td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{{/* ---- Recent runs ---- */}}
+<div class="card">
+  <div class="card-header">
+    <h3 class="card-title">Recent runs</h3>
+    <a class="btn btn-secondary btn-sm" href="/runs">All runs</a>
+  </div>
+  <div class="table-container">
+    <table>
+      <thead><tr><th>Status</th><th>Job</th><th>Uploaded</th><th>Started</th><th>Duration</th><th></th></tr></thead>
+      <tbody>
+        {{range .Runs}}
+        <tr>
+          <td>
+            {{if eq .Status "completed"}}<span class="badge badge-success"><span class="badge-dot"></span> Completed</span>
+            {{else if eq .Status "running"}}<span class="badge badge-warning"><span class="badge-dot"></span> Running</span>
+            {{else if eq .Status "failed"}}<span class="badge badge-danger"><span class="badge-dot"></span> Failed</span>
+            {{else if eq .Status "cancelling"}}<span class="badge badge-warning"><span class="badge-dot"></span> Cancelling</span>
+            {{else if eq .Status "cancelled"}}<span class="badge badge-neutral"><span class="badge-dot"></span> Cancelled</span>
+            {{else}}<span class="badge badge-neutral"><span class="badge-dot"></span> {{.Status}}</span>{{end}}
+          </td>
+          <td><strong>{{.JobName}}</strong>{{if .ErrorMessage}}<div style="font-size: 11px; color: var(--danger-text); max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{{.ErrorMessage}}">{{.ErrorMessage}}</div>{{end}}</td>
+          <td>{{formatBytes .BytesUploaded}}</td>
+          <td style="color: var(--text-muted); font-size: 13px;">{{formatTime .CreatedAt}}</td>
+          <td style="color: var(--text-muted); font-size: 13px; font-family: var(--font-mono);">{{.DurationString}}</td>
+          <td style="text-align: right;"><a href="/runs/{{.ID}}" class="btn btn-secondary btn-sm">Details</a></td>
+        </tr>
+        {{else}}
+        <tr><td colspan="6"><div class="empty-state"><p>No runs on this agent yet.</p></div></td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<style>.kv-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .03em; margin-bottom: 2px; }</style>
+{{end}}

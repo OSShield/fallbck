@@ -1,14 +1,21 @@
 package web
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+	"github.com/osshield/fallbck/pkg/agenthealth"
 	"github.com/osshield/fallbck/pkg/auth"
 	"github.com/osshield/fallbck/pkg/config"
+	"github.com/osshield/fallbck/pkg/db"
+	"github.com/osshield/fallbck/pkg/dbbackup"
+	"github.com/osshield/fallbck/pkg/inventory"
 )
 
 func TestUIRenderRoutes(t *testing.T) {
@@ -167,5 +174,60 @@ func TestSafeNext(t *testing.T) {
 		if got := safeNext(in); got != want {
 			t.Errorf("safeNext(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// TestAgentDetailRenders executes the status page template with a fully populated
+// agent (summary, detail, alerts, jobs, runs) so template errors surface here
+// rather than in a browser
+func TestAgentDetailRenders(t *testing.T) {
+	ui := NewUIHandler(nil, config.DefaultServerConfig(), Deps{Version: "1.2.0"})
+	now := time.Now()
+	old := now.Add(-10 * time.Minute)
+	summary := inventory.Summary{
+		At: now, UptimeSeconds: 262800,
+		Profiles: []dbbackup.ProfileSummary{{Name: "prod", Engine: "postgresql", User: "backup", Host: "db.local"}},
+		Tools:    map[string][]inventory.Tool{"postgresql": {{Name: "pg_dump", Path: "/usr/bin/pg_dump", Version: "16.3"}}},
+		Spool:    &inventory.Disk{Path: "/var/spool/fallbck", FreeBytes: 100 << 20, MinFreeBytes: 1 << 30},
+		Counts:   map[string]int{"containers": 3},
+	}
+	detail := inventory.Detail{Summary: summary, Hostname: "db1", ConfigPath: "/etc/fallbck/agent.yaml", Settings: map[string]string{"spool_dir": "/var/spool/fallbck"},
+		Docker:     &inventory.DockerDetail{Version: "27.1", Containers: []inventory.DockerContainer{{Name: "web", Image: "nginx", State: "running", Project: "site"}}, Volumes: []inventory.DockerVolume{{Name: "data", Driver: "local"}}},
+		Kubernetes: &inventory.KubernetesDetail{ServerVersion: "v1.31", Namespaces: []inventory.KubernetesNamespace{{Name: "default", PVCs: 2}}},
+		PVE:        &inventory.PVEDetail{Version: "8.2", Node: "pve1"}}
+	sj, _ := json.Marshal(summary)
+	dj, _ := json.Marshal(detail)
+	agent := &db.Agent{ID: uuid.New(), Hostname: "db1", AgentType: db.AgentTypeFilesystem, Version: "1.1.0", OS: "linux", Arch: "amd64", Status: db.AgentStatusOnline, LastSeenAt: &old, DBTools: true, DBEngines: []string{"postgres"}, Inventory: sj, InventoryAt: &old, InventoryDetail: dj, InventoryDetailAt: &old, TaskQueue: "agent-x"}
+	job := &db.BackupJob{ID: uuid.New(), AgentID: agent.ID, Name: "nightly", Enabled: true, JobType: db.JobTypeDatabase, DBConfig: &dbbackup.Spec{Engine: "postgresql", Profile: "missing"}, ScheduleCron: "0 2 * * *"}
+	job.LastRun = &db.JobLastRun{RunID: uuid.New(), Status: db.RunStatusFailed, At: old}
+	run := &db.BackupRun{ID: uuid.New(), JobID: job.ID, AgentID: agent.ID, Status: db.RunStatusFailed, JobName: "nightly", ErrorMessage: "boom", CreatedAt: old}
+	alerts := agenthealth.Evaluate(agenthealth.Input{Agent: agent, Jobs: []*db.BackupJob{job}, LastRuns: map[uuid.UUID]*db.JobLastRun{job.ID: job.LastRun}, ServerVersion: "1.2.0", Now: now})
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/agents/"+agent.ID.String(), nil)
+	ui.renderPage(rr, req, "agent_detail.html", map[string]interface{}{
+		"Title": agent.Hostname, "ActiveNav": "agents", "Agent": agent,
+		"Status": agenthealth.EffectiveStatus(agent, now), "Stale": true, "Alerts": alerts,
+		"Summary": agenthealth.Summary(agent), "Detail": agenthealth.Detail(agent),
+		"Jobs": []*db.BackupJob{job}, "Runs": []*db.BackupRun{run},
+	})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	for _, want := range []string{
+		"Agent is offline", "Spool directory is low on space", "Agent version is behind the server",
+		`Credential profile &#34;missing&#34; is not configured`, `Last run of &#34;nightly&#34; failed`,
+		"<strong>prod</strong>", "db.local", "pg_dump", "16.3", "nginx", "pve1", "v1.31", "/etc/fallbck/agent.yaml",
+		"refreshAgentInventory(", "loadAgentLogs(", "agent-logs-pre", "boom", "3d 1h",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page missing %q", want)
+		}
+	}
+	// The stored password of a profile must never be on the page (the summary has
+	// no field for it; this guards against one being added)
+	if strings.Contains(body, "password\"") {
+		t.Error("page contains a password field")
 	}
 }

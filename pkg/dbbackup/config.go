@@ -22,6 +22,16 @@ type CredentialProfile struct {
 	TLS          TLSSpec `yaml:"tls,omitempty" json:"tls"`
 }
 
+// ProfileSummary is what an agent tells the server about a credential profile: the
+// name to pick in the UI, the engine it is for, and the user and host it carries,
+// never the password
+type ProfileSummary struct {
+	Name   string `json:"name"`
+	Engine string `json:"engine"`
+	User   string `json:"user,omitempty"`
+	Host   string `json:"host,omitempty"`
+}
+
 // ToolConfig pins the client tool directories (default: PATH and well-known locations)
 type ToolConfig struct {
 	PostgresBinDir string `yaml:"postgres_bindir,omitempty" json:"postgres_bindir,omitempty"`

@@ -30,6 +30,7 @@ import (
 	"github.com/osshield/fallbck/pkg/api"
 	"github.com/osshield/fallbck/pkg/config"
 	"github.com/osshield/fallbck/pkg/dockerbackup"
+	"github.com/osshield/fallbck/pkg/inventory"
 	"github.com/osshield/fallbck/pkg/pvebackup"
 	"github.com/osshield/fallbck/pkg/rundetail"
 	"go.temporal.io/sdk/client"
@@ -61,6 +62,8 @@ type Agent struct {
 	// DBEngines reports the database engines this agent can back up (the combined
 	// filesystem agent probes them); nil means the agent never runs database jobs
 	DBEngines func() []string
+	// Inventory builds the periodic summary attached to heartbeats (nil: none)
+	Inventory *Inventory
 }
 
 // dbEngines evaluates the DBEngines probe when set
@@ -120,6 +123,9 @@ func LoadConfig(a Agent, configPath string) (*config.AgentConfig, string, error)
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to load agent configuration after enrollment: %w", err)
 		}
+	}
+	if err := MergeStoredProfiles(cfg); err != nil {
+		return nil, "", err
 	}
 	return cfg, configPath, nil
 }
@@ -436,8 +442,16 @@ func StartHeartbeat(ctx context.Context, cfg *config.AgentConfig, store *TokenSt
 		return httpClient.Do(req)
 	}
 
+	var lastSummary time.Time
 	sendHeartbeat := func() {
-		resp, err := do("/api/v1/agents/heartbeat", api.HeartbeatRequest{AgentID: agentUUID, Status: "online", Version: version, PVEHost: pvebackup.IsPVEHost(), DockerHost: dockerHost(), DBEngines: a.dbEngines(), DBTools: len(a.dbEngines()) > 0})
+		req := api.HeartbeatRequest{AgentID: agentUUID, Status: "online", Version: version, PVEHost: pvebackup.IsPVEHost(), DockerHost: dockerHost(), DBEngines: a.dbEngines(), DBTools: len(a.dbEngines()) > 0}
+		if a.Inventory != nil && time.Since(lastSummary) >= inventory.SummaryInterval {
+			if data, err := json.Marshal(a.Inventory.Summary(ctx)); err == nil {
+				req.Inventory = data
+				lastSummary = time.Now()
+			}
+		}
+		resp, err := do("/api/v1/agents/heartbeat", req)
 		if err != nil {
 			slog.Warn("Heartbeat failed", "error", err)
 			return

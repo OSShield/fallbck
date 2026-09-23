@@ -71,7 +71,9 @@
     </div>
     <div class="form-group">
       <label>Credential profile (agent-side)</label>
-      <input type="text" name="db_profile" class="form-control" placeholder="default: engine name" autocomplete="off">
+      <input type="text" name="db_profile" class="form-control" placeholder="default: engine name" autocomplete="off" list="db-profile-list">
+      <datalist id="db-profile-list"></datalist>
+      <div id="db-profile-hint" style="font-size: 12px; color: var(--text-muted); margin-top: 4px;"></div>
     </div>
   </div>
 
