@@ -44,7 +44,7 @@ type VolumeResult struct {
 	Mode string `json:"mode"`
 	// Consistency: csi-snapshot | crash-consistent-live
 	Consistency string `json:"consistency,omitempty"`
-	// Status: completed | failed | skipped
+	// Status: completed | failed | skipped | cancelled
 	Status        string  `json:"status"`
 	SnapshotID    string  `json:"snapshot_id,omitempty"`
 	BytesScanned  int64   `json:"bytes_scanned"`
@@ -68,6 +68,10 @@ type Manifest struct {
 	Volumes       []VolumeResult    `json:"volumes"`
 	Warnings      []string          `json:"warnings,omitempty"`
 	Restore       ManifestRestore   `json:"restore"`
+	// Partial marks a manifest the server assembled from the volume outcomes because
+	// the run ended (resources step failed, cancelled) before the agent produced one:
+	// only Job, Snapshot and Volumes are meaningful, and nothing was uploaded for it
+	Partial bool `json:"partial,omitempty"`
 }
 
 type ManifestGenerator struct {
