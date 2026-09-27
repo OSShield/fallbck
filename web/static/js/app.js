@@ -708,6 +708,9 @@ function loadK8sJobIntoForm(form, job) {
   form.elements['k8s_volumes_selector'].value = vols.label_selector || '';
   form.elements['k8s_volumes_skip_selector'].value = vols.skip_label_selector || '';
   form.elements['k8s_parallelism'].value = vols.parallelism || 2;
+  const vns = vols.namespaces || {};
+  form.elements['k8s_vol_ns_include'].value = (vns.include || []).join('\n');
+  form.elements['k8s_vol_ns_exclude'].value = (vns.exclude || []).join('\n');
   form.elements['k8s_storage_classes'].value = (vols.storage_classes || []).join('\n');
   form.elements['k8s_exclude_storage_classes'].value = (vols.exclude_storage_classes || []).join('\n');
   form.elements['k8s_snapshot_overrides'].value = Object.entries(vols.snapshot_class_overrides || {}).map(([k, v]) => `${k}=${v}`).join('\n');
@@ -745,6 +748,10 @@ function buildK8sPayload(form) {
         mode: fd.get('k8s_volumes_mode'),
         label_selector: fd.get('k8s_volumes_selector') || '',
         skip_label_selector: fd.get('k8s_volumes_skip_selector') || '',
+        // A volume namespace filter replaces the top-level one for PVCs; omitted
+        // (null) when both fields are blank, so volumes inherit the API resources filter
+        namespaces: (formLines(fd, 'k8s_vol_ns_include').length || formLines(fd, 'k8s_vol_ns_exclude').length)
+          ? { include: formLines(fd, 'k8s_vol_ns_include'), exclude: formLines(fd, 'k8s_vol_ns_exclude') } : null,
         storage_classes: formLines(fd, 'k8s_storage_classes'),
         exclude_storage_classes: formLines(fd, 'k8s_exclude_storage_classes'),
         snapshot_class_overrides: overrides,
