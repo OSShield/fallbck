@@ -115,3 +115,41 @@ func TestMongoURIAuthMechanism(t *testing.T) {
 		t.Errorf("x509 without cert must be a precheck error: %v", err)
 	}
 }
+
+// mongodump prints its URI on connection failures; the password must not reach the
+// run's error message (nor the agent log, which uses the same redacted stderr)
+func TestMongoFailureRedactsPassword(t *testing.T) {
+	bin := t.TempDir()
+	fakeBin(t, bin, "mongodump", `
+case "$1" in --version) echo "mongodump version: 100.9.4"; exit 0;; esac
+for a in "$@"; do case "$a" in --config=*) cat "${a#--config=}" >&2;; esac; done
+echo "Failed: can't create session: could not connect to server: connection refused (uri: mongodb://backup:p%40ss%2Fw@mongo1:27017/?authSource=admin)" >&2
+exit 1
+`)
+	withPath(t, bin)
+	spec := &dbspec.Spec{Engine: "mongo", Host: "mongo1", User: "backup"}
+	_, err := Run(context.Background(), RunOptions{Session: testSession(uuid.New()), Spec: spec, Password: "p@ss/w", Config: testConfig(t), Upload: (&captureUpload{}).fn})
+	if err == nil {
+		t.Fatal("expected failure")
+	}
+	msg := err.Error()
+	for _, leak := range []string{"p@ss/w", "p%40ss%2Fw"} {
+		if strings.Contains(msg, leak) {
+			t.Errorf("password %q leaked into the error: %s", leak, msg)
+		}
+	}
+	if !strings.Contains(msg, "backup:***@mongo1") || !strings.Contains(msg, "connection refused") {
+		t.Errorf("error should keep the rest of the message with the password masked: %s", msg)
+	}
+}
+
+func TestRedact(t *testing.T) {
+	forms := secretForms("p@ss/w:x")
+	out := redact("uri: mongodb://u:p%40ss%2Fw%3Ax@h/ and plain p@ss/w:x and query p%40ss%2Fw%3Ax", forms)
+	if strings.Contains(out, "p@ss") || strings.Contains(out, "p%40") || strings.Count(out, "***") != 3 {
+		t.Errorf("redact: %q", out)
+	}
+	if redact("nothing", nil) != "nothing" || len(secretForms("")) != 0 {
+		t.Error("empty secrets must be a no-op")
+	}
+}
