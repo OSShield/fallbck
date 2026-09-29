@@ -705,6 +705,7 @@ function loadK8sJobIntoForm(form, job) {
   form.elements['k8s_include_secrets'].checked = res.include_secrets !== false;
   form.elements['k8s_volumes_mode'].value = vols.mode || 'all';
   form.elements['k8s_volumes_selector'].value = vols.label_selector || '';
+  form.elements['k8s_volumes_skip_selector'].value = vols.skip_label_selector || '';
   form.elements['k8s_parallelism'].value = vols.parallelism || 2;
   form.elements['k8s_storage_classes'].value = (vols.storage_classes || []).join('\n');
   form.elements['k8s_exclude_storage_classes'].value = (vols.exclude_storage_classes || []).join('\n');
@@ -742,6 +743,7 @@ function buildK8sPayload(form) {
       volumes: {
         mode: fd.get('k8s_volumes_mode'),
         label_selector: fd.get('k8s_volumes_selector') || '',
+        skip_label_selector: fd.get('k8s_volumes_skip_selector') || '',
         storage_classes: formLines(fd, 'k8s_storage_classes'),
         exclude_storage_classes: formLines(fd, 'k8s_exclude_storage_classes'),
         snapshot_class_overrides: overrides,

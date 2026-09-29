@@ -216,8 +216,10 @@ func TestPlanVolumes(t *testing.T) {
 			Status:     corev1.PersistentVolumeClaimStatus{Phase: phase},
 		}
 	}
+	optOut := pvc("app", "optout", "ceph", corev1.ClaimBound, nil)
+	optOut.Labels = map[string]string{"fallbck.io/skip-backup": "true"}
 	core := k8sfake.NewSimpleClientset(
-		sc("ceph", "rbd.csi.ceph.com"), sc("local", "rancher.io/local-path"),
+		sc("ceph", "rbd.csi.ceph.com"), sc("local", "rancher.io/local-path"), optOut,
 		pvc("app", "snapme", "ceph", corev1.ClaimBound, nil),
 		pvc("app", "liveme", "local", corev1.ClaimBound, nil),
 		pvc("app", "skipme", "ceph", corev1.ClaimBound, map[string]string{"fallbck.io/skip": "true"}),
@@ -242,8 +244,8 @@ func TestPlanVolumes(t *testing.T) {
 	for _, p := range plans {
 		byName[p.PVCName] = p
 	}
-	if len(plans) != 3 {
-		t.Fatalf("plans: %+v", plans)
+	if len(plans) != 4 || byName["optout"].PVCName == "" {
+		t.Fatalf("plans (labelled PVC is included without a skip selector): %+v", plans)
 	}
 	if p := byName["snapme"]; p.Mode != spec.ModeSnapshot || p.SnapshotClass != "ceph-snap" || p.GroupID != "k8s-c1-pvc-app-snapme" {
 		t.Errorf("snapme: %+v", p)
@@ -253,6 +255,24 @@ func TestPlanVolumes(t *testing.T) {
 	}
 	if p := byName["pending"]; p.Mode != spec.ModeSkipped {
 		t.Errorf("pending: %+v", p)
+	}
+
+	// skip label selector → left out of the plan entirely
+	s3 := &spec.Spec{Namespaces: spec.NamespaceFilter{Exclude: []string{"kube-system"}}, Volumes: spec.VolumeOptions{SkipLabelSelector: "fallbck.io/skip-backup=true"}}
+	if err := s3.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	plans3, _, _, err := PlanVolumes(context.Background(), c, s3, "k8s-c1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plans3) != 3 {
+		t.Errorf("skip selector: %+v", plans3)
+	}
+	for _, p := range plans3 {
+		if p.PVCName == "optout" {
+			t.Error("optout must be skipped by label")
+		}
 	}
 
 	// live fallback disabled → skipped with reason

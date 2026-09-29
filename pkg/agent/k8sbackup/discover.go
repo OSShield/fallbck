@@ -9,6 +9,7 @@ import (
 	spec "github.com/osshield/fallbck/pkg/k8sbackup"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 )
 
 const skipAnnotation = "fallbck.io/skip"
@@ -124,6 +125,13 @@ func PlanVolumes(ctx context.Context, c *Clients, s *spec.Spec, clusterBackupID 
 	if err != nil {
 		return nil, warnings, crd, fmt.Errorf("listing persistent volume claims: %w", err)
 	}
+	// Opt-out by label (job setting), on top of the built-in skip annotation
+	skipSel := labels.Nothing()
+	if s.Volumes.SkipLabelSelector != "" {
+		if skipSel, err = labels.Parse(s.Volumes.SkipLabelSelector); err != nil {
+			return nil, warnings, crd, fmt.Errorf("volumes.skip_label_selector: %w", err)
+		}
+	}
 
 	nsFilter := s.VolumeNamespaces()
 	scAllowed := func(name string) bool {
@@ -152,7 +160,7 @@ func PlanVolumes(ctx context.Context, c *Clients, s *spec.Spec, clusterBackupID 
 		if !nsFilter.Matches(pvc.Namespace) {
 			continue
 		}
-		if pvc.Annotations[skipAnnotation] == "true" {
+		if pvc.Annotations[skipAnnotation] == "true" || skipSel.Matches(labels.Set(pvc.Labels)) {
 			continue
 		}
 		sc := ""
