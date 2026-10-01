@@ -52,6 +52,16 @@
       <input type="number" name="k8s_parallelism" class="form-control" value="2" min="1" max="8">
     </div>
   </div>
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+    <div class="form-group">
+      <label style="font-size: 12px; color: var(--text-muted);">Volume namespaces to include (globs; blank = same as API resources above)</label>
+      <textarea name="k8s_vol_ns_include" class="form-control" rows="2" placeholder="app-*"></textarea>
+    </div>
+    <div class="form-group">
+      <label style="font-size: 12px; color: var(--text-muted);">Volume namespaces to exclude (used only when either volume namespace field is set)</label>
+      <textarea name="k8s_vol_ns_exclude" class="form-control" rows="2"></textarea>
+    </div>
+  </div>
   <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
     <div class="form-group">
       <label style="font-size: 12px; color: var(--text-muted);">Storage classes to include (one per line; blank = all)</label>
