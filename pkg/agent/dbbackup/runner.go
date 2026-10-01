@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/url"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -27,6 +29,56 @@ type Command struct {
 	// RunAs names the OS user to run the tool as (peer / socket authentication on the
 	// database host); "" keeps the agent's own user. Unix only; the agent must be root.
 	RunAs string
+	// Secrets are masked in everything the tool writes to stderr before it reaches
+	// error messages or the agent log (mongodump echoes its URI, password included)
+	Secrets []string
+}
+
+// redact masks every secret (longest first, so an escaped form is not left half-masked)
+func redact(s string, secrets []string) string {
+	if s == "" || len(secrets) == 0 {
+		return s
+	}
+	sorted := append([]string(nil), secrets...)
+	sort.Slice(sorted, func(i, j int) bool { return len(sorted[i]) > len(sorted[j]) })
+	for _, sec := range sorted {
+		if sec != "" {
+			s = strings.ReplaceAll(s, sec, "***")
+		}
+	}
+	return s
+}
+
+// secretForms lists the spellings a password may take in tool output: as typed and
+// as the URI encodings the agent itself produces
+func secretForms(password string) []string {
+	if password == "" {
+		return nil
+	}
+	forms := []string{password}
+	seen := map[string]bool{password: true}
+	for _, f := range []string{
+		strings.TrimPrefix(url.UserPassword("u", password).String(), "u:"),
+		url.QueryEscape(password),
+		url.PathEscape(password),
+	} {
+		if !seen[f] {
+			seen[f] = true
+			forms = append(forms, f)
+		}
+	}
+	return forms
+}
+
+// redactingRunner adds the run's secrets to every command it executes
+type redactingRunner struct {
+	Runner
+	secrets []string
+}
+
+func (r redactingRunner) Run(ctx context.Context, c Command) (Result, error) {
+	c.Secrets = append(append([]string(nil), c.Secrets...), r.secrets...)
+	return r.Runner.Run(ctx, c)
 }
 
 // Result describes a finished command
@@ -171,7 +223,7 @@ func (r *execRunner) Run(ctx context.Context, c Command) (Result, error) {
 	cmd.Env = c.Env
 	cmd.Dir = c.Dir
 	cmd.Stdout = c.Stdout
-	stderr := newRingWriter(64*1024, func(line string) { slog.Debug("tool output", "tool", c.Name, "stderr", line) })
+	stderr := newRingWriter(64*1024, func(line string) { slog.Debug("tool output", "tool", c.Name, "stderr", redact(line, c.Secrets)) })
 	cmd.Stderr = stderr
 	configureKill(cmd)
 	if c.RunAs != "" {
@@ -183,7 +235,7 @@ func (r *execRunner) Run(ctx context.Context, c Command) (Result, error) {
 	slog.Debug("Running tool", "tool", c.Name, "path", c.Path, "args", c.Args)
 
 	err := cmd.Run()
-	res := Result{Duration: time.Since(start), Stderr: stderr.String()}
+	res := Result{Duration: time.Since(start), Stderr: redact(stderr.String(), c.Secrets)}
 	if cmd.ProcessState != nil {
 		res.ExitCode = cmd.ProcessState.ExitCode()
 	}

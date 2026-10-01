@@ -85,6 +85,10 @@ func Run(ctx context.Context, o RunOptions) (*temporal.BackupExecutionResult, er
 		return nil, &PrecheckError{Msg: "resolving credentials", Err: err}
 	}
 	slog.Info("Database backup starting", "engine", spec.Engine, "host", creds.Host, "port", creds.Port, "user", creds.User, "credentials", creds.Source, "databases", spec.Databases)
+	// Whatever the tools print must not carry the password into errors or logs
+	if creds.Password != "" {
+		runner = redactingRunner{Runner: runner, secrets: secretForms(creds.Password)}
+	}
 
 	report(Progress{Phase: "detect"})
 	tools, err := engine.Detect(ctx, runner, cfg.Tools)
