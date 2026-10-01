@@ -118,13 +118,32 @@ type MySQLOptions struct {
 	ExtraDumpArgs []string `json:"extra_dump_args,omitempty"`
 }
 
+// MongoDB authentication mechanisms (authMechanism URI option). Blank lets the
+// server negotiate (SCRAM); the $external ones take their identity from a client
+// certificate, Kerberos ticket, LDAP or AWS credentials instead of a password.
+const (
+	MongoAuthScramSHA1   = "SCRAM-SHA-1"
+	MongoAuthScramSHA256 = "SCRAM-SHA-256"
+	MongoAuthX509        = "MONGODB-X509"
+	MongoAuthPlain       = "PLAIN"
+	MongoAuthGSSAPI      = "GSSAPI"
+	MongoAuthAWS         = "MONGODB-AWS"
+)
+
+// MongoAuthMechanisms lists the accepted values in display order
+var MongoAuthMechanisms = []string{MongoAuthScramSHA256, MongoAuthScramSHA1, MongoAuthX509, MongoAuthPlain, MongoAuthGSSAPI, MongoAuthAWS}
+
 // MongoOptions are the MongoDB-specific job settings
 type MongoOptions struct {
 	// Oplog captures the oplog during the dump (point-in-time, requires a replica set and
 	// dumping all databases); default true when no database list is given
-	Oplog                  *bool    `json:"oplog,omitempty"`
-	ReadPreference         string   `json:"read_preference,omitempty"`
-	AuthSource             string   `json:"auth_source,omitempty"` // default admin
+	Oplog          *bool  `json:"oplog,omitempty"`
+	ReadPreference string `json:"read_preference,omitempty"`
+	// AuthSource is the database holding the user (default admin, or $external for
+	// the certificate / Kerberos / LDAP / AWS mechanisms)
+	AuthSource string `json:"auth_source,omitempty"`
+	// AuthMechanism is one of MongoAuthMechanisms; blank = server default (SCRAM)
+	AuthMechanism          string   `json:"auth_mechanism,omitempty"`
 	ReplicaSet             string   `json:"replica_set,omitempty"`
 	NumParallelCollections int      `json:"num_parallel_collections,omitempty"`
 	ExtraArgs              []string `json:"extra_args,omitempty"`
@@ -439,6 +458,18 @@ func (s *Spec) Validate() error {
 		default:
 			return specErr("mongodb.read_preference %q is not a valid read preference", m.ReadPreference)
 		}
+		if m.AuthMechanism = strings.ToUpper(strings.TrimSpace(m.AuthMechanism)); m.AuthMechanism != "" {
+			known := false
+			for _, k := range MongoAuthMechanisms {
+				known = known || k == m.AuthMechanism
+			}
+			if !known {
+				return specErr("mongodb.auth_mechanism %q is not one of %s", m.AuthMechanism, strings.Join(MongoAuthMechanisms, ", "))
+			}
+			if m.AuthMechanism == MongoAuthX509 && s.Kubernetes != nil {
+				return specErr("mongodb.auth_mechanism MONGODB-X509 needs a client certificate file, which kubernetes targets cannot use")
+			}
+		}
 		if err := validateExtraArgs(m.ExtraArgs); err != nil {
 			return err
 		}
@@ -600,6 +631,34 @@ func (s *Spec) EffectivePort() int {
 // IsSocket reports whether Host is a local unix socket path
 func (s *Spec) IsSocket() bool {
 	return strings.HasPrefix(s.Host, "/")
+}
+
+// PasswordlessAuth reports whether the mechanism authenticates without a password
+// (client certificate, Kerberos ticket, AWS credentials), so a job needs none
+func (o *MongoOptions) PasswordlessAuth() bool {
+	if o == nil {
+		return false
+	}
+	switch strings.ToUpper(strings.TrimSpace(o.AuthMechanism)) {
+	case MongoAuthX509, MongoAuthGSSAPI, MongoAuthAWS:
+		return true
+	}
+	return false
+}
+
+// EffAuthSource is the authSource to use: the configured one, else $external for
+// the external mechanisms and admin otherwise
+func (o *MongoOptions) EffAuthSource() string {
+	if o != nil && o.AuthSource != "" {
+		return o.AuthSource
+	}
+	if o != nil {
+		switch strings.ToUpper(strings.TrimSpace(o.AuthMechanism)) {
+		case MongoAuthX509, MongoAuthPlain, MongoAuthGSSAPI, MongoAuthAWS:
+			return "$external"
+		}
+	}
+	return "admin"
 }
 
 // Bool returns the value of an optional boolean with a default
