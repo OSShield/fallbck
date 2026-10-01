@@ -68,7 +68,7 @@ func newHarness(t *testing.T, mutate func(*db.BackupTarget)) *harness {
 	agentID, targetID := uuid.New(), uuid.New()
 	target := &db.BackupTarget{
 		ID: targetID, Name: "fake", Endpoint: fake.URL(), Datastore: "store1", Namespace: "ns1",
-		AuthTokenEncrypted: "root@pam!fallbck=s3cret", Fingerprint: fake.Fingerprint(), TLSVerify: true,
+		AuthToken: "root@pam!fallbck=s3cret", Fingerprint: fake.Fingerprint(), TLSVerify: true,
 	}
 	if mutate != nil {
 		mutate(target)
@@ -215,14 +215,14 @@ func TestTunnelRejections(t *testing.T) {
 		}
 	})
 	t.Run("target without token", func(t *testing.T) {
-		h := newHarness(t, func(tg *db.BackupTarget) { tg.AuthTokenEncrypted = "" })
+		h := newHarness(t, func(tg *db.BackupTarget) { tg.AuthToken = "" })
 		_, err := proxy.Dial(ctx, h.conn, h.ticket(t, h.agentID))
 		if status.Code(err) != codes.FailedPrecondition {
 			t.Errorf("expected FailedPrecondition, got %v", err)
 		}
 	})
 	t.Run("PBS refuses credentials", func(t *testing.T) {
-		h := newHarness(t, func(tg *db.BackupTarget) { tg.AuthTokenEncrypted = "root@pam!fallbck=wrong" })
+		h := newHarness(t, func(tg *db.BackupTarget) { tg.AuthToken = "root@pam!fallbck=wrong" })
 		_, err := proxy.Dial(ctx, h.conn, h.ticket(t, h.agentID))
 		if status.Code(err) != codes.PermissionDenied {
 			t.Errorf("expected PermissionDenied from PBS 401, got %v", err)

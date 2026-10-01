@@ -23,6 +23,7 @@
           <th>Datastore</th>
           <th>Namespace</th>
           <th>Format</th>
+          <th>Encryption</th>
           <th>Token</th>
           <th>TLS Verify</th>
           <th style="text-align: right;">Actions</th>
@@ -38,6 +39,7 @@
             <td><code>{{.Datastore}}</code></td>
             <td>{{if .Namespace}}<code>{{.Namespace}}</code>{{else}}<span style="color: var(--text-dim);">root</span>{{end}}</td>
             <td><span class="badge badge-info">pxar {{if .PxarFormat}}{{.PxarFormat}}{{else}}v1{{end}}</span></td>
+            <td>{{if and (eq .EncryptionMode "encrypt") .KeyFingerprint}}<span class="badge badge-success" title="Key {{.KeyFingerprint}}">&#128274; {{printf "%.11s" .KeyFingerprint}}</span>{{else}}<span style="color: var(--text-dim);">off</span>{{end}}</td>
             <td>{{if .HasToken}}<span class="badge badge-success">set</span>{{else}}<span class="badge badge-danger">missing</span>{{end}}</td>
             <td>
               {{if .TLSVerify}}
@@ -55,7 +57,7 @@
           {{end}}
         {{else}}
           <tr>
-            <td colspan="9">
+            <td colspan="10">
               <div class="empty-state">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/></svg>
                 <p>No PBS backup targets configured.</p>

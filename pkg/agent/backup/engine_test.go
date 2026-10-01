@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/osshield/fallbck/pkg/db"
+	fbpbs "github.com/osshield/fallbck/pkg/pbs"
 	"github.com/osshield/fallbck/pkg/proxy"
 	"github.com/osshield/fallbck/pkg/proxy/pbstest"
 	"github.com/osshield/fallbck/pkg/rundetail"
@@ -42,7 +43,7 @@ func makeTree(t *testing.T) string {
 
 // directDial plays the server's role: open the PBS session straight on the fake
 func directDial(fake *pbstest.Server, session *temporal.BackupSessionInfo) func(context.Context, pbs.SnapshotRef) (net.Conn, error) {
-	target := &db.BackupTarget{Endpoint: fake.URL(), Fingerprint: fake.Fingerprint(), AuthTokenEncrypted: "root@pam!t=s"}
+	target := &db.BackupTarget{Endpoint: fake.URL(), Fingerprint: fake.Fingerprint(), AuthToken: "root@pam!t=s"}
 	return func(ctx context.Context, ref pbs.SnapshotRef) (net.Conn, error) {
 		return proxy.OpenBackupSession(ctx, target, proxy.SessionParams{
 			Datastore: session.Datastore, Namespace: session.Namespace,
@@ -399,5 +400,90 @@ func TestRunReadPathsKeepArchiveNames(t *testing.T) {
 	}
 	if _, err := Run(ctx, Options{Session: session, Dial: directDial(fake, session), ReadPaths: []string{link, link}}); err == nil {
 		t.Error("mismatched read paths must be rejected")
+	}
+}
+
+// An encrypted run must produce an encrypted snapshot: the manifest says so, the
+// blob on the server is not the plaintext, the key fingerprint is recorded, and a
+// session flagged encrypted refuses to run without a key
+func TestRunEncrypted(t *testing.T) {
+	fake := pbstest.New(t)
+	dir := makeTree(t)
+	session := &temporal.BackupSessionInfo{
+		Datastore: "store1", BackupType: "host", BackupID: "node7", BackupTime: time.Now().Unix(),
+		PxarFormat: db.PxarFormatV2, BackupPaths: []string{dir}, Encrypted: true, KeyFingerprint: "fp",
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	if _, err := Run(ctx, Options{Session: session, Dial: directDial(fake, session), ArchiveName: "root"}); err == nil || !strings.Contains(err.Error(), "refusing to upload plaintext") {
+		t.Fatalf("encrypted session without a key must refuse: %v", err)
+	}
+
+	var key [32]byte
+	for i := range key {
+		key[i] = byte(i + 1)
+	}
+	fp, err := fbpbs.KeyFingerprint(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enc, err := NewEncryption("AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=", fp, time.Now(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain := []byte(`{"schema_version":1,"marker":"PLAINTEXT-MANIFEST"}`)
+	cache := t.TempDir()
+	res, err := Run(ctx, Options{
+		Session: session, Dial: directDial(fake, session), ArchiveName: "root", Crypt: enc, CacheDir: cache,
+		Blobs: []gopbs.Blob{{Name: "fallbck-db.json", Data: plain}},
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Status != db.RunStatusCompleted || res.KeyFingerprint != fp {
+		t.Errorf("result %+v", res)
+	}
+	blobs := fake.Blobs()
+	manifest, ok := blobs["index.json.blob"]
+	if !ok {
+		t.Fatal("manifest not uploaded")
+	}
+	if !strings.Contains(string(manifest), `"crypt-mode":"encrypt"`) && !strings.Contains(string(manifest), `"crypt-mode": "encrypt"`) {
+		t.Errorf("manifest does not record encryption: %s", manifest)
+	}
+	if !strings.Contains(string(manifest), `"key-fingerprint":"`+fp+`"`) {
+		t.Errorf("manifest lacks the key fingerprint %s: %s", fp, manifest)
+	}
+	if b, ok := blobs["fallbck-db.json.blob"]; !ok || strings.Contains(string(b), "PLAINTEXT-MANIFEST") {
+		t.Errorf("manifest blob missing or uploaded in clear (%d bytes)", len(b))
+	}
+	// The metadata cache is kept per key
+	entries, _ := os.ReadDir(cache)
+	if len(entries) != 1 || entries[0].Name() != "key-"+strings.ReplaceAll(fp, ":", "")[:16] {
+		t.Errorf("cache dir per key: %v", entries)
+	}
+	enc.Wipe()
+	if enc.Config.Key != [32]byte{} {
+		t.Error("wipe")
+	}
+}
+
+func TestNewEncryptionValidation(t *testing.T) {
+	if _, err := NewEncryption("notbase64!", "fp", time.Time{}, ""); err == nil {
+		t.Error("bad base64")
+	}
+	if _, err := NewEncryption("AQID", "fp", time.Time{}, ""); err == nil {
+		t.Error("short key")
+	}
+	if _, err := NewEncryption("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "fp", time.Time{}, ""); err == nil {
+		t.Error("zero key")
+	}
+	if _, err := NewEncryption("AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=", "", time.Time{}, ""); err == nil {
+		t.Error("missing fingerprint")
+	}
+	e, err := NewEncryption("AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=", "fp", time.Time{}, "-----BEGIN PUBLIC KEY-----\nx\n-----END PUBLIC KEY-----")
+	if err != nil || len(e.Config.MasterPublicKey) == 0 || e.Config.Mode != pbs.CryptModeEncrypt {
+		t.Errorf("master key carried: %v %+v", err, e)
 	}
 }

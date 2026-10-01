@@ -253,6 +253,13 @@ func Run(ctx context.Context, o RunOptions) (*temporal.BackupExecutionResult, er
 	if manifest.Databases == nil {
 		manifest.Databases = []dbspec.DatabaseEntry{}
 	}
+	if o.Session.Encrypted {
+		// The snapshot is client-side encrypted: fetching the dump from PBS needs the
+		// target's key file before any of the engine commands apply
+		manifest.Restore.Commands = append([]string{
+			fmt.Sprintf("# snapshot is encrypted (key %s): proxmox-backup-client restore --keyfile <exported key file> %s %s.pxar.didx ./", o.Session.KeyFingerprint, manifest.Snapshot.Type+"/"+manifest.Snapshot.ID+"/"+snapshotTime.Format(time.RFC3339), dbspec.ArchiveName),
+		}, manifest.Restore.Commands...)
+	}
 	data, err := manifest.Marshal()
 	if err != nil {
 		return nil, fmt.Errorf("encoding manifest: %w", err)

@@ -144,6 +144,12 @@ type CreateTargetRequest struct {
 	Fingerprint string `json:"fingerprint"`
 	TLSVerify   bool   `json:"tls_verify"`
 	PxarFormat  string `json:"pxar_format"`
+	// EncryptionMode none | encrypt ("" = none on create, unchanged on update);
+	// enabling generates the target's key server-side
+	EncryptionMode string `json:"encryption_mode"`
+	// MasterPublicKey (RSA, PEM) wraps the encryption key into every snapshot for
+	// recovery; nil on update keeps the stored one, "" clears it
+	MasterPublicKey *string `json:"master_public_key"`
 }
 
 // CloneTargetRequest creates a target from an existing one with another namespace

@@ -133,6 +133,107 @@ function resetTargetForm(form) {
   const hint = form.querySelector('#target-token-hint');
   if (hint) hint.innerText = 'Encrypted on the server. Agents never receive this token directly.';
   form.elements['tls_verify'].checked = true;
+  form.elements['encryption_mode'].value = 'none';
+  updateTargetEncryption(form, null);
+}
+
+// updateTargetEncryption shows the encryption options for the chosen mode and, for a
+// stored target, the active key with its export / rotate / import actions
+function updateTargetEncryption(form, t) {
+  if (t === undefined) t = form._target || null;
+  form._target = t;
+  const modeEl = form.elements && form.elements['encryption_mode'];
+  if (!modeEl) return; // stand-in form (onboarding key gate)
+  const on = modeEl.value === 'encrypt';
+  form.querySelectorAll('.target-encryption-opts').forEach(el => { el.hidden = !on; });
+  const status = form.querySelector('.target-key-status');
+  const actions = form.querySelector('.target-key-actions');
+  if (!status || !actions) return;
+  const stored = !!(t && t.id);
+  const hasKey = stored && t.encryption_mode === 'encrypt' && t.key_fingerprint;
+  actions.hidden = !hasKey;
+  status.hidden = !on;
+  if (!on) return;
+  if (!stored) status.innerHTML = 'The key is generated when the target is saved. <strong>Export it right after saving</strong> and store the file somewhere safe.';
+  else if (!hasKey) status.innerText = 'Encryption is turned on when you save; the key is generated then.';
+  else {
+    const created = t.key_created_at ? new Date(t.key_created_at).toLocaleString() : '';
+    status.innerHTML = `Active key <code style="font-family:var(--font-mono);font-size:11px;">${rdEsc(t.key_fingerprint)}</code>${created ? ' created ' + rdEsc(created) : ''}.` +
+      (form.dataset.keyNotice ? `<div style="color:var(--danger-text);margin-top:6px;">${rdEsc(form.dataset.keyNotice)}</div>` : '');
+  }
+}
+
+// downloadBlob saves a response body as a file named by its Content-Disposition
+function downloadBlob(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function exportTargetKey(form) {
+  const t = form._target;
+  const passphrase = form.elements['key_passphrase'].value;
+  if (!t || !t.id) return;
+  if (passphrase.length < 5) { showToast('Choose a passphrase of at least 5 characters for the key file', 'error'); return; }
+  try {
+    const resp = await apiFetch(`/api/v1/targets/${t.id}/encryption/export`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ passphrase })
+    });
+    if (!resp.ok) { const e = await resp.json().catch(() => ({})); throw new Error(e.error || 'Export failed'); }
+    const cd = resp.headers.get('Content-Disposition') || '';
+    const m = cd.match(/filename="([^"]+)"/);
+    downloadBlob(await resp.blob(), m ? m[1] : `fallbck-${t.name}.key.json`);
+    form.elements['key_passphrase'].value = '';
+    form.dataset.keyNotice = '';
+    form.dataset.keyExported = t.key_fingerprint;
+    updateTargetEncryption(form, t);
+    showToast('Key file downloaded. Store it and its passphrase separately from the server.', 'success');
+    if (typeof obKeyExported === 'function') obKeyExported(t);
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function rotateTargetKey(form) {
+  const t = form._target;
+  if (!t || !t.id) return;
+  if (!confirm('Generate a new key for this target?\n\nNew snapshots use the new key and do not deduplicate against the old ones. The old key is kept for the snapshots written with it and can still be exported.')) return;
+  try {
+    const resp = await apiFetch(`/api/v1/targets/${t.id}/encryption/rotate`, { method: 'POST' });
+    if (!resp.ok) { const e = await resp.json().catch(() => ({})); throw new Error(e.error || 'Rotation failed'); }
+    const info = await resp.json();
+    t.key_fingerprint = info.fingerprint; t.key_created_at = info.key_created_at; t.encryption_mode = info.mode;
+    form.dataset.keyNotice = 'New key active. Export it now.';
+    updateTargetEncryption(form, t);
+    showToast('Key rotated', 'success');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function importTargetKey(form) {
+  const t = form._target;
+  const file = form.elements['key_file'].files[0];
+  if (!t || !t.id) return;
+  if (!file) { showToast('Choose a key file to import', 'error'); return; }
+  try {
+    const keyfile = await file.text();
+    const resp = await apiFetch(`/api/v1/targets/${t.id}/encryption/import`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ keyfile, passphrase: form.elements['key_passphrase'].value })
+    });
+    if (!resp.ok) { const e = await resp.json().catch(() => ({})); throw new Error(e.error || 'Import failed'); }
+    const info = await resp.json();
+    t.key_fingerprint = info.fingerprint; t.key_created_at = info.key_created_at; t.encryption_mode = info.mode;
+    form.elements['key_file'].value = '';
+    form.dataset.keyNotice = '';
+    updateTargetEncryption(form, t);
+    showToast(`Key ${info.fingerprint.slice(0, 23)}… is now active`, 'success');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
 }
 
 function loadTargetIntoForm(form, t) {
@@ -151,6 +252,10 @@ function loadTargetIntoForm(form, t) {
   tok.placeholder = t.has_token ? 'leave blank to keep the current token' : 'no token stored — enter one';
   const hint = form.querySelector('#target-token-hint');
   if (hint) hint.innerText = 'Leave blank to keep the stored token, or enter a new one to replace it.';
+  form.elements['encryption_mode'].value = t.encryption_mode || 'none';
+  form.elements['master_public_key'].value = t.master_public_key || '';
+  form.dataset.keyNotice = '';
+  updateTargetEncryption(form, t);
 }
 
 function buildTargetPayload(form) {
@@ -164,7 +269,9 @@ function buildTargetPayload(form) {
     auth_token: fd.get('auth_token') || '',
     fingerprint: fd.get('fingerprint') || '',
     tls_verify: fd.get('tls_verify') === 'on',
-    pxar_format: fd.get('pxar_format') || 'v1'
+    pxar_format: fd.get('pxar_format') || 'v1',
+    encryption_mode: fd.get('encryption_mode') || 'none',
+    master_public_key: (fd.get('master_public_key') || '').trim()
   };
 }
 
@@ -208,8 +315,20 @@ async function submitTargetForm(e) {
   const form = e.target;
   const id = form.dataset.targetId || '';
   try {
-    await saveTarget(buildTargetPayload(form), id);
+    const t = await saveTarget(buildTargetPayload(form), id);
     showToast(id ? 'Backup target updated' : 'Backup target added successfully!', 'success');
+    // A freshly generated key must be exported before the admin moves on: keep the
+    // modal open on the saved target with the export action shown
+    const freshKey = t.encryption_mode === 'encrypt' && t.key_fingerprint && (!id || form.dataset.keyExported !== t.key_fingerprint) && (!form._target || form._target.key_fingerprint !== t.key_fingerprint);
+    if (freshKey) {
+      loadTargetIntoForm(form, t);
+      form.dataset.keyNotice = 'Export the key file now. Without it (or the server database and its master key) nothing on this target can be restored.';
+      updateTargetEncryption(form, t);
+      document.getElementById('target-modal-title').innerText = 'Export the encryption key';
+      document.getElementById('target-submit').innerText = 'Save Changes';
+      form.querySelector('.target-key-actions').scrollIntoView({ block: 'nearest' });
+      return;
+    }
     closeModal('modal-add-target');
     setTimeout(() => window.location.reload(), 800);
   } catch (err) {
@@ -990,6 +1109,7 @@ function renderRun(run) {
     ['Started', run.start_time ? rdEsc(new Date(run.start_time).toLocaleString()) : '-'],
     ['Duration', rdEsc(duration)],
     ['PBS snapshot', run.pbs_snapshot_id ? rdMono(run.pbs_snapshot_id) : '-'],
+    ['Encryption', run.key_fingerprint ? `AES-256-GCM, key ${rdMono(rdShort(run.key_fingerprint.replace(/:/g, '')))}` : 'none'],
   ]));
 
   html += rdCard('Transfer', rdKV([

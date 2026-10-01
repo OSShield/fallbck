@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -296,29 +297,34 @@ func (d *DB) CreateTarget(ctx context.Context, target *BackupTarget) error {
 	target.UpdatedAt = now
 
 	query := `
-		INSERT INTO backup_targets (id, name, target_type, endpoint, datastore, namespace, auth_token_encrypted, fingerprint, tls_verify, pxar_format, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		INSERT INTO backup_targets (id, name, target_type, endpoint, datastore, namespace, auth_token_encrypted, fingerprint, tls_verify, pxar_format, created_at, updated_at, encryption_mode, master_public_key)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		RETURNING id
 	`
 	if target.PxarFormat == "" {
 		target.PxarFormat = PxarFormatV1
 	}
+	if target.EncryptionMode == "" {
+		target.EncryptionMode = EncryptionNone
+	}
 	return d.Pool.QueryRow(ctx, query,
 		target.ID, target.Name, target.TargetType, target.Endpoint, target.Datastore,
-		target.Namespace, target.AuthTokenEncrypted, target.Fingerprint, target.TLSVerify, target.PxarFormat,
-		target.CreatedAt, target.UpdatedAt,
+		target.Namespace, d.seal(target.AuthToken), target.Fingerprint, target.TLSVerify, target.PxarFormat,
+		target.CreatedAt, target.UpdatedAt, target.EncryptionMode, target.MasterPublicKey,
 	).Scan(&target.ID)
 }
 
 // CloneTarget creates a new target from an existing one: same PBS endpoint,
-// datastore, API token (copied encrypted, it never leaves the server), fingerprint,
-// TLS setting and (unless overridden) pxar format, with a new name and namespace.
+// datastore, API token (the sealed column is copied as is), fingerprint,
+// TLS setting, master public key and (unless overridden) pxar format, with a new name
+// and namespace. The encryption key is not copied: the clone starts unencrypted and
+// gets its own key when encryption is enabled on it (import the exported file to share one).
 func (d *DB) CloneTarget(ctx context.Context, sourceID uuid.UUID, name, namespace, pxarFormat string) (*BackupTarget, error) {
 	id := uuid.New()
 	now := time.Now().UTC()
 	tag, err := d.Pool.Exec(ctx, `
-		INSERT INTO backup_targets (id, name, target_type, endpoint, datastore, namespace, auth_token_encrypted, fingerprint, tls_verify, pxar_format, created_at, updated_at)
-		SELECT $1, $2, target_type, endpoint, datastore, $3, auth_token_encrypted, fingerprint, tls_verify, COALESCE(NULLIF($4::text, ''), pxar_format), $5, $5
+		INSERT INTO backup_targets (id, name, target_type, endpoint, datastore, namespace, auth_token_encrypted, fingerprint, tls_verify, pxar_format, created_at, updated_at, encryption_mode, master_public_key)
+		SELECT $1, $2, target_type, endpoint, datastore, $3, auth_token_encrypted, fingerprint, tls_verify, COALESCE(NULLIF($4::text, ''), pxar_format), $5, $5, 'none', master_public_key
 		FROM backup_targets WHERE id = $6`,
 		id, name, namespace, pxarFormat, now, sourceID)
 	if err != nil {
@@ -331,8 +337,9 @@ func (d *DB) CloneTarget(ctx context.Context, sourceID uuid.UUID, name, namespac
 }
 
 // UpdateTarget replaces a target's editable fields (name, endpoint, datastore,
-// namespace, token, fingerprint, TLS, format). The caller supplies the final values,
-// including AuthTokenEncrypted (kept unchanged by loading the existing row first when
+// namespace, token, fingerprint, TLS, format, master public key); the encryption
+// mode and key change only through SetTargetEncryption. The caller supplies the final values,
+// including AuthToken (kept unchanged by loading the existing row first when
 // the operator leaves the token field blank).
 func (d *DB) UpdateTarget(ctx context.Context, target *BackupTarget) error {
 	if target.PxarFormat == "" {
@@ -342,10 +349,12 @@ func (d *DB) UpdateTarget(ctx context.Context, target *BackupTarget) error {
 	tag, err := d.Pool.Exec(ctx, `
 		UPDATE backup_targets
 		SET name = $2, target_type = $3, endpoint = $4, datastore = $5, namespace = $6,
-		    auth_token_encrypted = $7, fingerprint = $8, tls_verify = $9, pxar_format = $10, updated_at = $11
+		    auth_token_encrypted = $7, fingerprint = $8, tls_verify = $9, pxar_format = $10, updated_at = $11,
+		    master_public_key = $12
 		WHERE id = $1`,
 		target.ID, target.Name, target.TargetType, target.Endpoint, target.Datastore, target.Namespace,
-		target.AuthTokenEncrypted, target.Fingerprint, target.TLSVerify, target.PxarFormat, target.UpdatedAt)
+		d.seal(target.AuthToken), target.Fingerprint, target.TLSVerify, target.PxarFormat, target.UpdatedAt,
+		target.MasterPublicKey)
 	if err != nil {
 		return err
 	}
@@ -356,28 +365,38 @@ func (d *DB) UpdateTarget(ctx context.Context, target *BackupTarget) error {
 }
 
 func (d *DB) GetTargetByID(ctx context.Context, id uuid.UUID) (*BackupTarget, error) {
-	query := `
-		SELECT id, name, target_type, endpoint, datastore, namespace, auth_token_encrypted, fingerprint, tls_verify, pxar_format, created_at, updated_at
-		FROM backup_targets WHERE id = $1
-	`
-	row := d.Pool.QueryRow(ctx, query, id)
-	var t BackupTarget
-	err := row.Scan(&t.ID, &t.Name, &t.TargetType, &t.Endpoint, &t.Datastore, &t.Namespace, &t.AuthTokenEncrypted, &t.Fingerprint, &t.TLSVerify, &t.PxarFormat, &t.CreatedAt, &t.UpdatedAt)
+	row := d.Pool.QueryRow(ctx, targetSelect+` WHERE t.id = $1`, id)
+	t, err := scanTarget(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
+	if t.AuthToken, err = d.open(t.AuthToken); err != nil {
+		return nil, fmt.Errorf("target %s: %w", t.Name, err)
+	}
 	return t.Sanitize(), nil
 }
 
+// targetSelect joins the active encryption key's fingerprint onto the target
+const targetSelect = `
+	SELECT t.id, t.name, t.target_type, t.endpoint, t.datastore, t.namespace, t.auth_token_encrypted, t.fingerprint, t.tls_verify, t.pxar_format, t.created_at, t.updated_at,
+	       t.encryption_mode, t.encryption_key_id, t.master_public_key, COALESCE(k.fingerprint, ''), k.created_at
+	FROM backup_targets t LEFT JOIN target_keys k ON k.id = t.encryption_key_id`
+
+func scanTarget(row pgx.Row) (*BackupTarget, error) {
+	var t BackupTarget
+	err := row.Scan(&t.ID, &t.Name, &t.TargetType, &t.Endpoint, &t.Datastore, &t.Namespace, &t.AuthToken, &t.Fingerprint, &t.TLSVerify, &t.PxarFormat, &t.CreatedAt, &t.UpdatedAt,
+		&t.EncryptionMode, &t.EncryptionKeyID, &t.MasterPublicKey, &t.KeyFingerprint, &t.KeyCreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
 func (d *DB) ListTargets(ctx context.Context) ([]*BackupTarget, error) {
-	query := `
-		SELECT id, name, target_type, endpoint, datastore, namespace, auth_token_encrypted, fingerprint, tls_verify, pxar_format, created_at, updated_at
-		FROM backup_targets ORDER BY name ASC
-	`
-	rows, err := d.Pool.Query(ctx, query)
+	rows, err := d.Pool.Query(ctx, targetSelect+` ORDER BY t.name ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -385,13 +404,102 @@ func (d *DB) ListTargets(ctx context.Context) ([]*BackupTarget, error) {
 
 	var targets []*BackupTarget
 	for rows.Next() {
-		var t BackupTarget
-		if err := rows.Scan(&t.ID, &t.Name, &t.TargetType, &t.Endpoint, &t.Datastore, &t.Namespace, &t.AuthTokenEncrypted, &t.Fingerprint, &t.TLSVerify, &t.PxarFormat, &t.CreatedAt, &t.UpdatedAt); err != nil {
+		t, err := scanTarget(rows)
+		if err != nil {
 			return nil, err
+		}
+		if t.AuthToken, err = d.open(t.AuthToken); err != nil {
+			return nil, fmt.Errorf("target %s: %w", t.Name, err)
 		}
 		targets = append(targets, t.Sanitize())
 	}
 	return targets, rows.Err()
+}
+
+// ---- Encryption keys --------------------------------------------------------
+
+// CreateTargetKey stores a key (sealed) for a target
+func (d *DB) CreateTargetKey(ctx context.Context, k *TargetKey) error {
+	if k.ID == uuid.Nil {
+		k.ID = uuid.New()
+	}
+	if k.CreatedAt.IsZero() {
+		k.CreatedAt = time.Now().UTC()
+	}
+	_, err := d.Pool.Exec(ctx, `
+		INSERT INTO target_keys (id, target_id, key_sealed, fingerprint, created_at, retired_at, created_by)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		k.ID, k.TargetID, d.seal(hex.EncodeToString(k.Key[:])), k.Fingerprint, k.CreatedAt, k.RetiredAt, k.CreatedBy)
+	return err
+}
+
+// GetTargetKey loads one key with its material
+func (d *DB) GetTargetKey(ctx context.Context, id uuid.UUID) (*TargetKey, error) {
+	var k TargetKey
+	var sealed string
+	err := d.Pool.QueryRow(ctx, `SELECT id, target_id, key_sealed, fingerprint, created_at, retired_at, created_by FROM target_keys WHERE id = $1`, id).
+		Scan(&k.ID, &k.TargetID, &sealed, &k.Fingerprint, &k.CreatedAt, &k.RetiredAt, &k.CreatedBy)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	hexKey, err := d.open(sealed)
+	if err != nil {
+		return nil, fmt.Errorf("encryption key %s: %w", k.Fingerprint, err)
+	}
+	raw, err := hex.DecodeString(hexKey)
+	if err != nil || len(raw) != 32 {
+		return nil, fmt.Errorf("encryption key %s is corrupt", k.Fingerprint)
+	}
+	copy(k.Key[:], raw)
+	return &k, nil
+}
+
+// ListTargetKeys lists a target's keys (newest first) without their material
+func (d *DB) ListTargetKeys(ctx context.Context, targetID uuid.UUID) ([]*TargetKey, error) {
+	rows, err := d.Pool.Query(ctx, `SELECT id, target_id, fingerprint, created_at, retired_at, created_by FROM target_keys WHERE target_id = $1 ORDER BY created_at DESC`, targetID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*TargetKey
+	for rows.Next() {
+		var k TargetKey
+		if err := rows.Scan(&k.ID, &k.TargetID, &k.Fingerprint, &k.CreatedAt, &k.RetiredAt, &k.CreatedBy); err != nil {
+			return nil, err
+		}
+		out = append(out, &k)
+	}
+	return out, rows.Err()
+}
+
+// SetTargetEncryption switches a target's mode and active key in one statement;
+// keyID nil clears the active key (mode none keeps the keys for old snapshots)
+func (d *DB) SetTargetEncryption(ctx context.Context, targetID uuid.UUID, mode string, keyID *uuid.UUID) error {
+	tag, err := d.Pool.Exec(ctx, `UPDATE backup_targets SET encryption_mode = $2, encryption_key_id = $3, updated_at = $4 WHERE id = $1`,
+		targetID, mode, keyID, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// RetireTargetKey marks a key as no longer used for new snapshots
+func (d *DB) RetireTargetKey(ctx context.Context, id uuid.UUID) error {
+	_, err := d.Pool.Exec(ctx, `UPDATE target_keys SET retired_at = $2 WHERE id = $1 AND retired_at IS NULL`, id, time.Now().UTC())
+	return err
+}
+
+// CountRunsWithKey counts runs whose snapshot was written with the key
+func (d *DB) CountRunsWithKey(ctx context.Context, fingerprint string) (int, error) {
+	var n int
+	err := d.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM backup_runs WHERE key_fingerprint = $1`, fingerprint).Scan(&n)
+	return n, err
 }
 
 func (d *DB) DeleteTarget(ctx context.Context, id uuid.UUID) error {
@@ -647,13 +755,15 @@ func (d *DB) UpdateRun(ctx context.Context, run *BackupRun) error {
 		UPDATE backup_runs
 		SET status = $1, start_time = $2, end_time = $3, bytes_scanned = $4,
 		    bytes_uploaded = $5, dedup_ratio = $6, chunk_count = $7,
-		    error_message = $8, pbs_snapshot_id = $9, log_tail = $10, details = $11
+		    error_message = $8, pbs_snapshot_id = $9, log_tail = $10, details = $11,
+		    key_fingerprint = $13
 		WHERE id = $12
 	`
 	_, err := d.Pool.Exec(ctx, query,
 		run.Status, run.StartTime, run.EndTime, run.BytesScanned,
 		run.BytesUploaded, run.DedupRatio, run.ChunkCount,
 		run.ErrorMessage, run.PBSSnapshotID, run.LogTail, []byte(details), run.ID,
+		run.KeyFingerprint,
 	)
 	return err
 }

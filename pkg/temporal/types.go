@@ -39,6 +39,12 @@ type BackupSessionInfo struct {
 	// DirectPBS: the agent fetches PBS credentials with its ticket and connects to PBS
 	// itself instead of through the server tunnel (job setting)
 	DirectPBS bool `json:"direct_pbs"`
+	// Encrypted: the target encrypts client-side; the agent fetches the key with its
+	// ticket (GET /api/v1/agents/encryption-key) and must not upload without it.
+	// KeyFingerprint names the key for logs and the run record; the key itself never
+	// travels through Temporal.
+	Encrypted      bool   `json:"encrypted,omitempty"`
+	KeyFingerprint string `json:"key_fingerprint,omitempty"`
 	// JobType is filesystem or database; database jobs carry DBConfig (password
 	// redacted — the agent fetches it with its ticket when DBPasswordOnServer is set)
 	JobType string `json:"job_type,omitempty"`
@@ -77,6 +83,8 @@ type BackupExecutionResult struct {
 	// Details is a type-specific JSON blob (archives / databases / PVCs) persisted on
 	// the run for the detail page; carries a top-level "type" discriminator.
 	Details json.RawMessage `json:"details,omitempty"`
+	// KeyFingerprint is the encryption key the snapshot was written with ("" = plaintext)
+	KeyFingerprint string `json:"key_fingerprint,omitempty"`
 }
 
 // BackupFailureDetails travel as application-error details from a failed agent

@@ -209,7 +209,7 @@ func UpgradeBackupSession(ctx context.Context, conn net.Conn, host, apiToken str
 
 // OpenBackupSession dials the target and opens a backup session for p
 func OpenBackupSession(ctx context.Context, target *db.BackupTarget, p SessionParams) (net.Conn, error) {
-	if target.AuthTokenEncrypted == "" {
+	if target.AuthToken == "" {
 		return nil, errors.New("backup target has no PBS API token configured")
 	}
 	addr, err := pbsAddr(target.Endpoint)
@@ -220,7 +220,7 @@ func OpenBackupSession(ctx context.Context, target *db.BackupTarget, p SessionPa
 	if err != nil {
 		return nil, err
 	}
-	sess, err := UpgradeBackupSession(ctx, conn, addr, target.AuthTokenEncrypted, p)
+	sess, err := UpgradeBackupSession(ctx, conn, addr, target.AuthToken, p)
 	if err != nil {
 		_ = conn.Close()
 		return nil, err

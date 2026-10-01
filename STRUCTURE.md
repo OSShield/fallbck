@@ -43,6 +43,8 @@ The primary backup target is Proxmox Backup Server, driven by the Proxmox Backup
 
 Agents never see PBS credentials or choose the datastore/namespace/snapshot; the server does not parse the backup protocol, it only transports it.
 
+Targets can encrypt client-side: the server keeps one key per target (sealed with its master key), `PrepareBackupSession` flags the session `encrypted`, the agent fetches the key with its ticket (`GET /api/v1/agents/encryption-key`) and gopbs encrypts chunks and blobs and signs the manifest (`pkg/agent/backup.Options.Crypt`); a session flagged encrypted refuses to run without a key. Keys are exported to administrators only as passphrase-protected key files (`POST /api/v1/targets/{id}/encryption/export`).
+
 Database jobs (`job_type: database`, `db_config`) follow the same path with `fallbck-agent` (it reports `db_tools` when the vendor client tools are installed; agents of the retired type `database` still running the old standalone binary are accepted too): `PrepareBackupSession` names the group `host/db-<engine>-<host>` and passes the job spec with the password redacted; the agent fetches a server-stored password with its ticket (`GET /api/v1/agents/db-credentials`), uses a local credential profile, or, with neither configured and running as root on the database host, falls back to passwordless local authentication (PostgreSQL peer as the `postgres` OS user over the socket, MySQL/MariaDB `auth_socket` as root, MongoDB unauthenticated; `pkg/agent/dbbackup/local.go`), dumps with the vendor tools into a spool directory, and uploads it through the same tunnel/direct path as archive `db.pxar` plus a `fallbck-db.json.blob` manifest (versions, checksums, WAL/binlog/oplog positions, restore commands). Per job, an administrator can enable `direct_pbs`: the agent then obtains the target's endpoint, fingerprint and API token for that run (`GET /api/v1/agents/pbs-credentials`, agent token + backup ticket, only honoured for jobs with the flag) and connects to PBS directly with gopbs. Retention is a PBS datastore prune job; FallBCK never prunes or deletes on PBS. Restore is done with PBS's own tools (GUI / `proxmox-backup-client`) since the snapshots are standard pxar.
 
 ## Code map
@@ -52,6 +54,8 @@ Database jobs (`job_type: database`, `db_config`) follow the same path with `fal
 | `cmd/fallbck-agent` | agent: enrollment, activity worker through the gateway (filesystem, PVE, Docker and database activities), heartbeats with capability flags (`pve_host`, `docker_host`, `db_tools`), token rotation, `tools` and `migrate-db-agent` |
 | `cmd/fallbck-ctl` | admin CLI (API key authenticated) |
 | `pkg/auth` | JWT token manager, agent tokens + verifier, sessions, API keys, OIDC, HTTP middleware |
+| `pkg/secrets` | server master key (AES-256-GCM sealer) protecting stored secrets at rest: PBS API tokens and per-target backup encryption keys (`target_keys`) |
+| `pkg/pbs` | PBS helpers shared by server and agents: API token parsing, backup encryption keys (generate, fingerprint, export/import as `proxmox-backup-client` key files, RSA master public key validation) |
 | `pkg/gateway` | authenticating, task-queue-scoped Temporal gRPC gateway for agents |
 | `pkg/temporal/embedded` | in-process Temporal server (config, Postgres schema bootstrap, lifecycle) |
 | `pkg/temporal/ui` | embedded Temporal Web UI (loopback ui-server, proxied under `/temporal/`) |

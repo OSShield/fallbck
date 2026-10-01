@@ -7,6 +7,13 @@ http_bind: "0.0.0.0"
 public_url: "https://backup.example.com"          # the reverse proxy's URL (OIDC redirect, agents)
 jwt_secret: "super-secret-key-change-in-production-must-be-32-plus-chars"
 data_dir: "/var/lib/fallbck/server"
+
+# Master key sealing stored secrets (PBS API tokens, backup encryption keys) at rest.
+# Generated on first start when the file is missing. Back it up with the database:
+# without it the sealed secrets, and with them every encrypted backup, are lost.
+# Containers can pass the key itself (64 hex chars) as FALLBCK_MASTER_KEY instead.
+security:
+  master_key_file: "/var/lib/fallbck/server/master.key"
 # agent_ca_bundle_path: "/etc/fallbck/proxy-ca.pem"   # only for private CAs on public_url
 # timezone: "Europe/Stockholm"     # cron schedules run here (default: TZ env / host zone, else UTC)
 

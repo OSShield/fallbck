@@ -31,6 +31,9 @@ type DBAgentActivities struct {
 	Workers int
 	// Credentials fetches PBS connection details for jobs in direct mode
 	Credentials func(ctx context.Context, ticket string) (*backup.DirectOptions, error)
+	// EncryptionKey fetches the target's client-side encryption key for a run
+	// (GET /api/v1/agents/encryption-key with the run's ticket)
+	EncryptionKey KeyFetcher
 	// DBPassword fetches the server-stored database password for a run
 	DBPassword func(ctx context.Context, ticket string) (string, error)
 	// RefreshTicket re-issues the run's ticket with a fresh snapshot timestamp for
@@ -94,28 +97,26 @@ func (a *DBAgentActivities) ExecuteDatabaseBackup(ctx context.Context, session *
 	}
 
 	// No phase for the credentials fetch here (nil tracker), as before
-	tr, err := openTransport(ctx, session, a.Tunnel, a.Credentials, nil)
+	tr, err := openTransport(ctx, session, a.Tunnel, a.Credentials, a.EncryptionKey, nil)
 	if err != nil {
 		if !isTransportConfigErr(err) {
 			slog.Error("Failed to fetch PBS credentials for direct backup", "error", err)
 		}
 		return failed(err)
 	}
-	dial, direct := tr.dial, tr.direct
+	defer tr.close()
 
 	upload := func(ctx context.Context, spoolDir string, blobs []gopbs.Blob) (*temporal.BackupExecutionResult, error) {
 		s := *session
 		s.BackupPaths = []string{spoolDir}
 		s.ExcludePaths = nil
-		return backup.Run(ctx, backup.Options{
+		return backup.Run(ctx, tr.options(backup.Options{
 			Session:     &s,
 			Workers:     a.Workers,
-			Dial:        dial,
-			Direct:      direct,
 			ArchiveName: dbbackup.ArchiveName,
 			Blobs:       blobs,
 			OnPhase:     pt.Set,
-		})
+		}))
 	}
 
 	result, err := dbrun.Run(ctx, dbrun.RunOptions{

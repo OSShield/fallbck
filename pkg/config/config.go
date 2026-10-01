@@ -141,6 +141,27 @@ type ServerConfig struct {
 	AgentTokens AgentTokensConfig    `yaml:"agent_tokens" json:"agent_tokens"`
 	Database    DatabaseConfig       `yaml:"database" json:"database"`
 	Temporal    TemporalServerConfig `yaml:"temporal" json:"temporal"`
+	Security    SecurityConfig       `yaml:"security" json:"security"`
+}
+
+// SecurityConfig holds the server master key that seals stored secrets (PBS API
+// tokens, backup encryption keys) at rest
+type SecurityConfig struct {
+	// MasterKeyFile holds 64 hex characters; generated on first start when missing
+	// (default <data_dir>/master.key). Back it up together with the database: the
+	// sealed secrets, including backup encryption keys, are unreadable without it.
+	MasterKeyFile string `yaml:"master_key_file" json:"master_key_file"`
+	// MasterKey is the key itself (64 hex characters) for container deployments
+	// (FALLBCK_MASTER_KEY); it takes precedence over the file
+	MasterKey string `yaml:"master_key,omitempty" json:"-"`
+}
+
+// EffectiveMasterKeyFile is the configured path or the default under the data directory
+func (c *ServerConfig) EffectiveMasterKeyFile() string {
+	if c.Security.MasterKeyFile != "" {
+		return c.Security.MasterKeyFile
+	}
+	return filepath.Join(c.DataDir, "master.key")
 }
 
 // AgentConfig is the fallbck-agent configuration
@@ -303,6 +324,8 @@ func LoadServerConfig(filePath string) (*ServerConfig, error) {
 	envString("FALLBCK_PUBLIC_URL", &cfg.PublicURL)
 	envString("FALLBCK_JWT_SECRET", &cfg.JWTSecret)
 	envString("FALLBCK_DATA_DIR", &cfg.DataDir)
+	envString("FALLBCK_MASTER_KEY_FILE", &cfg.Security.MasterKeyFile)
+	envString("FALLBCK_MASTER_KEY", &cfg.Security.MasterKey)
 	envString("FALLBCK_AGENT_CA_BUNDLE", &cfg.AgentCABundlePath)
 	envString("FALLBCK_DB_URL", &cfg.Database.URL)
 	envString("FALLBCK_TIMEZONE", &cfg.Timezone)

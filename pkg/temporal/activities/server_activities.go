@@ -95,6 +95,12 @@ func (s *ServerActivities) PrepareBackupSession(ctx context.Context, jobID uuid.
 		return nil, sdktemporal.NewNonRetryableApplicationError(
 			fmt.Sprintf("job type %q cannot run on agent %s of type %q", jobType, agent.Hostname, agentType), "job_agent_mismatch", nil)
 	}
+	// The retired standalone database agent predates client-side encryption and would
+	// upload plaintext to an encrypted target; refuse rather than silently downgrade
+	if target.Encrypted() && agentType == db.AgentTypeDatabase {
+		return nil, sdktemporal.NewNonRetryableApplicationError(
+			fmt.Sprintf("target %s is encrypted but agent %s runs the retired database agent, which cannot encrypt; migrate it to fallbck-agent", target.Name, agent.Hostname), "job_agent_mismatch", nil)
+	}
 	var sessionSpec *dbbackup.Spec
 	var k8sSpec *k8sbackup.Spec
 	var pveSpec *pvebackup.Spec
@@ -184,6 +190,8 @@ func (s *ServerActivities) PrepareBackupSession(ctx context.Context, jobID uuid.
 		BackupTime:         claims.BackupTime,
 		PxarFormat:         target.PxarFormat,
 		DirectPBS:          job.DirectPBS,
+		Encrypted:          target.Encrypted(),
+		KeyFingerprint:     target.KeyFingerprint,
 		JobType:            jobType,
 		AgentType:          agentType,
 		JobName:            job.Name,
@@ -210,17 +218,18 @@ func (s *ServerActivities) FinalizeBackupRun(ctx context.Context, session *tempo
 
 	now := time.Now().UTC()
 	run := &db.BackupRun{
-		ID:            session.BackupRunID,
-		Status:        result.Status,
-		EndTime:       &now,
-		BytesScanned:  result.BytesScanned,
-		BytesUploaded: result.BytesUploaded,
-		DedupRatio:    result.DedupRatio,
-		ChunkCount:    result.ChunkCount,
-		ErrorMessage:  result.ErrorMessage,
-		PBSSnapshotID: result.SnapshotID,
-		LogTail:       truncateTail(result.LogTail, 16*1024),
-		Details:       result.Details,
+		ID:             session.BackupRunID,
+		Status:         result.Status,
+		EndTime:        &now,
+		BytesScanned:   result.BytesScanned,
+		BytesUploaded:  result.BytesUploaded,
+		DedupRatio:     result.DedupRatio,
+		ChunkCount:     result.ChunkCount,
+		ErrorMessage:   result.ErrorMessage,
+		PBSSnapshotID:  result.SnapshotID,
+		LogTail:        truncateTail(result.LogTail, 16*1024),
+		Details:        result.Details,
+		KeyFingerprint: result.KeyFingerprint,
 	}
 
 	if err := s.DB.UpdateRun(ctx, run); err != nil {

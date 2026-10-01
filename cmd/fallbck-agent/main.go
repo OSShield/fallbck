@@ -133,6 +133,7 @@ func main() {
 			acts := activities.NewAgentActivities()
 			acts.Tunnel = conns.Tunnel
 			acts.Credentials = runtime.PBSCredentialsFetcher(cfg, store)
+			acts.EncryptionKey = runtime.EncryptionKeyFetcher(cfg, store)
 			acts.RefreshTicket = runtime.TicketRefresher(cfg, store)
 			acts.LogTail = logging.Tail
 			acts.ReportProgress = runtime.ProgressReporter(cfg, store)
@@ -150,6 +151,7 @@ func main() {
 			dbActs := activities.NewDBAgentActivities()
 			dbActs.Tunnel = conns.Tunnel
 			dbActs.Credentials = runtime.PBSCredentialsFetcher(cfg, store)
+			dbActs.EncryptionKey = runtime.EncryptionKeyFetcher(cfg, store)
 			dbActs.RefreshTicket = runtime.TicketRefresher(cfg, store)
 			dbActs.DBPassword = runtime.DBPasswordFetcher(cfg, store)
 			dbActs.Config = dbCfg

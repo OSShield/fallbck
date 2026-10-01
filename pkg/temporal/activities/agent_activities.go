@@ -30,6 +30,9 @@ type AgentActivities struct {
 	// Credentials fetches PBS connection details for jobs in direct mode
 	// (GET /api/v1/agents/pbs-credentials with the run's ticket)
 	Credentials func(ctx context.Context, ticket string) (*backup.DirectOptions, error)
+	// EncryptionKey fetches the target's client-side encryption key for a run
+	// (GET /api/v1/agents/encryption-key with the run's ticket)
+	EncryptionKey KeyFetcher
 	// RefreshTicket re-issues the run's ticket with a fresh snapshot timestamp for
 	// retries (POST /api/v1/agents/ticket/refresh); nil keeps the session's timestamp
 	RefreshTicket TicketRefreshFunc
@@ -105,7 +108,7 @@ func (a *AgentActivities) ExecuteFilesystemBackup(ctx context.Context, session *
 		opts.Session = &s
 		opts.ReadPaths = mapped
 	}
-	tr, err := openTransport(ctx, session, a.Tunnel, a.Credentials, pt)
+	tr, err := openTransport(ctx, session, a.Tunnel, a.Credentials, a.EncryptionKey, pt)
 	if err != nil {
 		if isTransportConfigErr(err) {
 			// A misconfigured agent: plain error, as before (no phase or log tail to add)
@@ -115,7 +118,8 @@ func (a *AgentActivities) ExecuteFilesystemBackup(ctx context.Context, session *
 		return &temporal.BackupExecutionResult{Status: db.RunStatusFailed, ErrorMessage: err.Error()},
 			backupFailure(ctx, err, pt, a.LogTail)
 	}
-	opts.Dial, opts.Direct = tr.dial, tr.direct
+	defer tr.close()
+	opts = tr.options(opts)
 
 	result, err := backup.Run(ctx, opts)
 	if err != nil {
@@ -151,21 +155,21 @@ func (a *AgentActivities) ExecutePVEBackup(ctx context.Context, session *tempora
 			backupFailure(ctx, err, pt, a.LogTail)
 	}
 
-	tr, err := openTransport(ctx, session, a.Tunnel, a.Credentials, pt)
+	tr, err := openTransport(ctx, session, a.Tunnel, a.Credentials, a.EncryptionKey, pt)
 	if err != nil {
 		return failed(err)
 	}
-	dial, direct := tr.dial, tr.direct
+	defer tr.close()
 
 	upload := func(ctx context.Context, paths, excludes []string, blobs []gopbs.Blob) (*temporal.BackupExecutionResult, error) {
 		s := *session
 		s.BackupPaths = paths
 		s.ExcludePaths = excludes
-		return backup.Run(ctx, backup.Options{
-			Session: &s, Workers: a.Workers, Dial: dial, Direct: direct,
+		return backup.Run(ctx, tr.options(backup.Options{
+			Session: &s, Workers: a.Workers,
 			ArchiveName: pvespec.ArchiveName, Blobs: blobs, CacheDir: a.groupCacheDir(session),
 			OnPhase: func(p string) { pt.Set(p); reportPh() },
-		})
+		}))
 	}
 	result, err := pverun.Run(ctx, pverun.RunOptions{
 		Session: session, Spec: session.PVEConfig, SpoolDir: a.SpoolDir, Upload: upload,
@@ -206,21 +210,21 @@ func (a *AgentActivities) ExecuteDockerBackup(ctx context.Context, session *temp
 			backupFailure(ctx, err, pt, a.LogTail)
 	}
 
-	tr, err := openTransport(ctx, session, a.Tunnel, a.Credentials, pt)
+	tr, err := openTransport(ctx, session, a.Tunnel, a.Credentials, a.EncryptionKey, pt)
 	if err != nil {
 		return failed(err)
 	}
-	dial, direct := tr.dial, tr.direct
+	defer tr.close()
 
 	upload := func(ctx context.Context, paths, readPaths, excludes []string, blobs []gopbs.Blob) (*temporal.BackupExecutionResult, error) {
 		s := *session
 		s.BackupPaths = paths
 		s.ExcludePaths = excludes
-		return backup.Run(ctx, backup.Options{
-			Session: &s, Workers: a.Workers, Dial: dial, Direct: direct, ReadPaths: readPaths,
+		return backup.Run(ctx, tr.options(backup.Options{
+			Session: &s, Workers: a.Workers, ReadPaths: readPaths,
 			ArchiveName: dockerspec.ArchiveName, Blobs: blobs, CacheDir: a.groupCacheDir(session),
 			OnPhase: func(p string) { pt.Set(p); reportPh() },
-		})
+		}))
 	}
 	result, err := dockerrun.Run(ctx, dockerrun.RunOptions{
 		Session: session, Spec: session.DockerConfig, Settings: a.Docker, SpoolDir: a.SpoolDir, Upload: upload,

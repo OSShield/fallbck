@@ -363,6 +363,28 @@ func PBSCredentialsFetcher(cfg *config.AgentConfig, store *TokenStore) func(ctx 
 	}
 }
 
+// EncryptionKeyFetcher retrieves the target's client-side encryption key for a run
+// (GET /api/v1/agents/encryption-key with the run's ticket); nil when the target is
+// not encrypted. The key stays in memory for the run only.
+func EncryptionKeyFetcher(cfg *config.AgentConfig, store *TokenStore) func(ctx context.Context, ticket string) (*backup.Encryption, error) {
+	httpClient := ServerHTTPClient(cfg)
+	return func(ctx context.Context, ticket string) (*backup.Encryption, error) {
+		var resp api.AgentEncryptionKey
+		if err := TicketGet(ctx, httpClient, cfg, store, "/api/v1/agents/encryption-key", ticket, &resp); err != nil {
+			return nil, fmt.Errorf("fetching encryption key: %w", err)
+		}
+		if resp.Mode != "encrypt" {
+			return nil, nil
+		}
+		enc, err := backup.NewEncryption(resp.Key, resp.Fingerprint, resp.KeyCreatedAt, resp.MasterPublicKey)
+		if err != nil {
+			return nil, fmt.Errorf("encryption key from server: %w", err)
+		}
+		slog.Debug("Received encryption key for the run", "fingerprint", enc.Fingerprint)
+		return enc, nil
+	}
+}
+
 // DBPasswordFetcher retrieves the server-stored password of a database job
 // (GET /api/v1/agents/db-credentials with the run's ticket)
 func DBPasswordFetcher(cfg *config.AgentConfig, store *TokenStore) func(ctx context.Context, ticket string) (string, error) {

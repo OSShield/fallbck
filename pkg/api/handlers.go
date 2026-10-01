@@ -62,6 +62,7 @@ func (s *ServerAPI) RegisterRoutes(r chi.Router, admin, agent Middleware) {
 			r.Post("/agents/heartbeat", s.HandleAgentHeartbeat)
 			r.Post("/agents/token/rotate", s.HandleRotateAgentToken)
 			r.Get("/agents/pbs-credentials", s.HandlePBSCredentials)
+			r.Get("/agents/encryption-key", s.HandleAgentEncryptionKey)
 			r.Get("/agents/db-credentials", s.HandleDBCredentials)
 			r.Post("/agents/ticket/refresh", s.HandleRefreshTicket)
 			r.Post("/agents/volume-ticket", s.HandleVolumeTicket)
@@ -101,6 +102,11 @@ func (s *ServerAPI) RegisterRoutes(r chi.Router, admin, agent Middleware) {
 			r.Get("/targets/{id}/credentials", s.HandleTargetCredentials)
 			r.Put("/targets/{id}", s.HandleUpdateTarget)
 			r.Post("/targets/{id}/clone", s.HandleCloneTarget)
+			r.Get("/targets/{id}/encryption", s.HandleGetTargetEncryption)
+			r.Put("/targets/{id}/encryption", s.HandleSetTargetEncryption)
+			r.Post("/targets/{id}/encryption/rotate", s.HandleRotateTargetKey)
+			r.Post("/targets/{id}/encryption/export", s.HandleExportTargetKey)
+			r.Post("/targets/{id}/encryption/import", s.HandleImportTargetKey)
 			r.Delete("/targets/{id}", s.HandleDeleteTarget)
 
 			// Jobs
@@ -594,20 +600,46 @@ func (s *ServerAPI) HandleCreateTarget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	master := ""
+	if req.MasterPublicKey != nil {
+		master = strings.TrimSpace(*req.MasterPublicKey)
+	}
+	if master != "" {
+		normalised, err := pbs.ValidateMasterPublicKey(master)
+		if err != nil {
+			s.writeError(w, http.StatusBadRequest, "Master public key: "+err.Error())
+			return
+		}
+		master = normalised
+	}
+	switch req.EncryptionMode {
+	case "", db.EncryptionNone, db.EncryptionEncrypt:
+	default:
+		s.writeError(w, http.StatusBadRequest, "encryption_mode must be none or encrypt")
+		return
+	}
 	target := &db.BackupTarget{
-		Name:               req.Name,
-		TargetType:         req.TargetType,
-		Endpoint:           strings.TrimRight(req.Endpoint, "/"),
-		Datastore:          req.Datastore,
-		Namespace:          req.Namespace,
-		AuthTokenEncrypted: normalizedToken,
-		Fingerprint:        strings.TrimSpace(req.Fingerprint),
-		TLSVerify:          req.TLSVerify,
-		PxarFormat:         req.PxarFormat,
+		Name:            req.Name,
+		TargetType:      req.TargetType,
+		Endpoint:        strings.TrimRight(req.Endpoint, "/"),
+		Datastore:       req.Datastore,
+		Namespace:       req.Namespace,
+		AuthToken:       normalizedToken,
+		Fingerprint:     strings.TrimSpace(req.Fingerprint),
+		TLSVerify:       req.TLSVerify,
+		PxarFormat:      req.PxarFormat,
+		MasterPublicKey: master,
 	}
 	if err := s.DB.CreateTarget(r.Context(), target); err != nil {
 		s.writeError(w, http.StatusInternalServerError, "Failed to create target")
 		return
+	}
+	if req.EncryptionMode == db.EncryptionEncrypt {
+		if _, err := s.newTargetKey(r, target); err != nil {
+			slog.Error("Enabling encryption on new target failed", "target", target.ID, "error", err)
+			s.writeError(w, http.StatusInternalServerError, "Target created, but enabling encryption failed")
+			return
+		}
 	}
 
 	s.writeJSON(w, http.StatusCreated, target.Sanitize())
@@ -637,7 +669,7 @@ func (s *ServerAPI) HandleUpdateTarget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Token: keep the stored one when the field is blank, else normalise the new value
-	token := existing.AuthTokenEncrypted
+	token := existing.AuthToken
 	if strings.TrimSpace(req.AuthToken) != "" {
 		normalized, err := pbs.NormalizeAPIToken(req.AuthToken)
 		if err != nil {
@@ -657,17 +689,42 @@ func (s *ServerAPI) HandleUpdateTarget(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, "pxar_format must be v1 or v2")
 		return
 	}
+	// Master public key: the field is authoritative when sent ("" clears it); an
+	// older client that omits it keeps the stored one
+	master := existing.MasterPublicKey
+	if req.MasterPublicKey != nil {
+		master = strings.TrimSpace(*req.MasterPublicKey)
+		if master != "" {
+			normalised, err := pbs.ValidateMasterPublicKey(master)
+			if err != nil {
+				s.writeError(w, http.StatusBadRequest, "Master public key: "+err.Error())
+				return
+			}
+			master = normalised
+		}
+	}
+	switch req.EncryptionMode {
+	case "", db.EncryptionNone, db.EncryptionEncrypt:
+	default:
+		s.writeError(w, http.StatusBadRequest, "encryption_mode must be none or encrypt")
+		return
+	}
 	target := &db.BackupTarget{
-		ID:                 existing.ID,
-		Name:               req.Name,
-		TargetType:         req.TargetType,
-		Endpoint:           strings.TrimRight(req.Endpoint, "/"),
-		Datastore:          req.Datastore,
-		Namespace:          req.Namespace,
-		AuthTokenEncrypted: token,
-		Fingerprint:        strings.TrimSpace(req.Fingerprint),
-		TLSVerify:          req.TLSVerify,
-		PxarFormat:         req.PxarFormat,
+		ID:              existing.ID,
+		Name:            req.Name,
+		TargetType:      req.TargetType,
+		Endpoint:        strings.TrimRight(req.Endpoint, "/"),
+		Datastore:       req.Datastore,
+		Namespace:       req.Namespace,
+		AuthToken:       token,
+		Fingerprint:     strings.TrimSpace(req.Fingerprint),
+		TLSVerify:       req.TLSVerify,
+		PxarFormat:      req.PxarFormat,
+		EncryptionMode:  existing.EncryptionMode,
+		EncryptionKeyID: existing.EncryptionKeyID,
+		KeyFingerprint:  existing.KeyFingerprint,
+		KeyCreatedAt:    existing.KeyCreatedAt,
+		MasterPublicKey: master,
 	}
 	if err := s.DB.UpdateTarget(r.Context(), target); err != nil {
 		if errors.Is(err, db.ErrNotFound) {
@@ -678,7 +735,14 @@ func (s *ServerAPI) HandleUpdateTarget(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, "Failed to update target")
 		return
 	}
-	slog.Info("Backup target updated", "target_id", id, "name", target.Name, "namespace", target.Namespace)
+	if req.EncryptionMode != "" && req.EncryptionMode != existing.EncryptionMode {
+		if err := s.applyEncryptionMode(r, target, req.EncryptionMode); err != nil {
+			slog.Error("Changing target encryption failed", "target", target.ID, "error", err)
+			s.writeError(w, http.StatusInternalServerError, "Target updated, but changing encryption failed")
+			return
+		}
+	}
+	slog.Info("Backup target updated", "target_id", id, "name", target.Name, "namespace", target.Namespace, "encryption", target.EncryptionMode)
 	s.writeJSON(w, http.StatusOK, target.Sanitize())
 }
 
