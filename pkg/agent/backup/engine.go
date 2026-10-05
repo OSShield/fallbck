@@ -69,6 +69,11 @@ type Options struct {
 	// Windows job reads its paths through VSS shadow copies while the archive keeps
 	// the names of the configured paths
 	ReadPaths []string
+	// Tree, when set, is archived instead of any paths: a caller-built virtual
+	// directory (scan.KindDirectory nodes with scan.KindStream leaves, see
+	// archive.Archive.AddTree) whose leaves are read on demand. Microsoft 365 units
+	// present their mailbox and files this way. ArchiveName is required.
+	Tree *scan.Node
 }
 
 // Run executes the backup and maps the outcome to a BackupExecutionResult
@@ -89,21 +94,29 @@ func Run(ctx context.Context, opts Options) (*temporal.BackupExecutionResult, er
 	if s.Encrypted && (opts.Crypt == nil || opts.Crypt.Config == nil) {
 		return nil, errors.New("the target is encrypted but no encryption key was provided for the run; refusing to upload plaintext")
 	}
-	paths, err := db.ValidateLocalBackupPaths(s.BackupPaths)
-	if err != nil {
-		return nil, err
-	}
-	s.BackupPaths = paths
-	readPaths := paths
-	if len(opts.ReadPaths) > 0 {
-		if len(opts.ReadPaths) != len(paths) {
-			return nil, fmt.Errorf("read paths (%d) do not match the backup paths (%d)", len(opts.ReadPaths), len(paths))
+	var paths, readPaths []string
+	if opts.Tree != nil {
+		if opts.ArchiveName == "" {
+			return nil, errors.New("a virtual tree needs an archive name")
 		}
-		readPaths = opts.ReadPaths
-	}
-	for _, p := range readPaths {
-		if _, err := os.Lstat(p); err != nil {
-			return nil, fmt.Errorf("backup path %s: %w", p, err)
+		s.BackupPaths = nil
+	} else {
+		var err error
+		if paths, err = db.ValidateLocalBackupPaths(s.BackupPaths); err != nil {
+			return nil, err
+		}
+		s.BackupPaths = paths
+		readPaths = paths
+		if len(opts.ReadPaths) > 0 {
+			if len(opts.ReadPaths) != len(paths) {
+				return nil, fmt.Errorf("read paths (%d) do not match the backup paths (%d)", len(opts.ReadPaths), len(paths))
+			}
+			readPaths = opts.ReadPaths
+		}
+		for _, p := range readPaths {
+			if _, err := os.Lstat(p); err != nil {
+				return nil, fmt.Errorf("backup path %s: %w", p, err)
+			}
 		}
 	}
 
@@ -130,7 +143,7 @@ func Run(ctx context.Context, opts Options) (*temporal.BackupExecutionResult, er
 		for i, p := range paths {
 			names[readPaths[i]] = byPath[p]
 		}
-	} else if readPaths[0] != paths[0] {
+	} else if len(paths) == 1 && readPaths[0] != paths[0] {
 		if archiveName == "" {
 			archiveName = entryBase(paths[0])
 		}
@@ -196,7 +209,7 @@ func Run(ctx context.Context, opts Options) (*temporal.BackupExecutionResult, er
 	// the tree are honoured as well, matching proxmox-backup-client.
 	// No gopbs OnProgress: setting it would cost a full extra metadata scan of the
 	// tree just for progress totals; liveness comes from the caller's phase heartbeats.
-	result, err := runBackup(ctx, gopbs.BackupOptions{
+	gopts := gopbs.BackupOptions{
 		Client: clientCfg,
 		Archive: archive.Options{
 			Name: archiveName,
@@ -206,7 +219,11 @@ func Run(ctx context.Context, opts Options) (*temporal.BackupExecutionResult, er
 		Ref:    ref,
 		Format: format,
 		Paths:  readPaths,
-	}, names, cacheDir, opts.OnPhase)
+	}
+	if opts.Tree != nil {
+		gopts.Trees = []*scan.Node{opts.Tree}
+	}
+	result, err := runBackup(ctx, gopts, names, cacheDir, opts.OnPhase)
 	if err != nil {
 		return nil, err
 	}

@@ -47,7 +47,7 @@ func TestUIRenderRoutes(t *testing.T) {
 		{"/jobs", http.StatusOK, `id="k8s-job-form"`},
 		{"/jobs", http.StatusOK, `<option value="mssql">Microsoft SQL Server</option>`},
 		{"/onboarding", http.StatusOK, `name="ms_backup_dir"`},
-		{"/onboarding", http.StatusOK, `data-value="windows" data-types="files,database"`},
+		{"/onboarding", http.StatusOK, `data-value="windows" data-types="files,database,m365"`},
 		{"/jobs", http.StatusOK, `href="/onboarding"`},
 		{"/tokens", http.StatusOK, "Show used and expired"},
 		{"/tokens?all=1", http.StatusOK, "Hide used and expired"},

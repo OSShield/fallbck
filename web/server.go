@@ -17,6 +17,7 @@ import (
 	"github.com/osshield/fallbck/pkg/auth"
 	"github.com/osshield/fallbck/pkg/config"
 	"github.com/osshield/fallbck/pkg/db"
+	"github.com/osshield/fallbck/pkg/m365"
 	temporalui "github.com/osshield/fallbck/pkg/temporal/ui"
 )
 
@@ -426,9 +427,11 @@ func (u *UIHandler) HandleOnboarding(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var agents []*db.Agent
 	var targets []*db.BackupTarget
+	var tenants []*m365.Tenant
 	if u.DB != nil {
 		agents, _ = u.DB.ListAgents(ctx)
 		targets, _ = u.DB.ListTargets(ctx)
+		tenants, _ = u.DB.ListTenants(ctx)
 	}
 	u.renderPage(w, r, "onboarding.html", map[string]interface{}{
 		"Title":     "Set up a new server",
@@ -436,20 +439,24 @@ func (u *UIHandler) HandleOnboarding(w http.ResponseWriter, r *http.Request) {
 		"Timezone":  u.timezone(),
 		"Agents":    agents,
 		"Targets":   targets,
+		"Tenants":   tenants,
 	})
 }
 
 func (u *UIHandler) HandleTargets(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var targets []*db.BackupTarget
+	var tenants []*m365.Tenant
 	if u.DB != nil {
 		targets, _ = u.DB.ListTargets(ctx)
+		tenants, _ = u.DB.ListTenants(ctx)
 	}
 
 	u.renderPage(w, r, "targets.html", map[string]interface{}{
 		"Title":     "PBS Targets",
 		"ActiveNav": "targets",
 		"Targets":   targets,
+		"Tenants":   tenants,
 	})
 }
 
@@ -458,11 +465,13 @@ func (u *UIHandler) HandleJobs(w http.ResponseWriter, r *http.Request) {
 	var jobs []*db.BackupJob
 	var agents []*db.Agent
 	var targets []*db.BackupTarget
+	var tenants []*m365.Tenant
 
 	if u.DB != nil {
 		jobs, _ = u.DB.ListJobs(ctx)
 		agents, _ = u.DB.ListAgents(ctx)
 		targets, _ = u.DB.ListTargets(ctx)
+		tenants, _ = u.DB.ListTenants(ctx)
 	}
 	// Every job type is listed here (filtered client-side); the newest run per job feeds
 	// the last-run column and filter
@@ -482,6 +491,7 @@ func (u *UIHandler) HandleJobs(w http.ResponseWriter, r *http.Request) {
 		"Agents":        agents,
 		"AgentProfiles": agentProfiles(agents),
 		"Targets":       targets,
+		"Tenants":       tenants,
 	})
 }
 

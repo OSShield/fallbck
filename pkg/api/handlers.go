@@ -64,8 +64,11 @@ func (s *ServerAPI) RegisterRoutes(r chi.Router, admin, agent Middleware) {
 			r.Get("/agents/pbs-credentials", s.HandlePBSCredentials)
 			r.Get("/agents/encryption-key", s.HandleAgentEncryptionKey)
 			r.Get("/agents/db-credentials", s.HandleDBCredentials)
+			r.Get("/agents/m365-credentials", s.HandleM365Credentials)
 			r.Post("/agents/ticket/refresh", s.HandleRefreshTicket)
-			r.Post("/agents/volume-ticket", s.HandleVolumeTicket)
+			r.Post("/agents/sub-ticket", s.HandleSubTicket)
+			// older kubernetes agents post here
+			r.Post("/agents/volume-ticket", s.HandleSubTicket)
 			r.Post("/agents/token/worker", s.HandleWorkerToken)
 			r.Post("/agents/run-progress", s.HandleRunProgress)
 		})
@@ -108,6 +111,14 @@ func (s *ServerAPI) RegisterRoutes(r chi.Router, admin, agent Middleware) {
 			r.Post("/targets/{id}/encryption/export", s.HandleExportTargetKey)
 			r.Post("/targets/{id}/encryption/import", s.HandleImportTargetKey)
 			r.Delete("/targets/{id}", s.HandleDeleteTarget)
+
+			// Microsoft 365 tenants
+			r.Post("/m365/tenants", s.HandleCreateTenant)
+			r.Get("/m365/tenants", s.HandleListTenants)
+			r.Get("/m365/tenants/{id}", s.HandleGetTenant)
+			r.Put("/m365/tenants/{id}", s.HandleUpdateTenant)
+			r.Delete("/m365/tenants/{id}", s.HandleDeleteTenant)
+			r.Post("/m365/tenants/{id}/test", s.HandleTestTenant)
 
 			// Jobs
 			r.Post("/jobs", s.HandleCreateJob)

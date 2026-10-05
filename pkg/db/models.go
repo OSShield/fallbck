@@ -11,6 +11,7 @@ import (
 	"github.com/osshield/fallbck/pkg/dbbackup"
 	"github.com/osshield/fallbck/pkg/dockerbackup"
 	"github.com/osshield/fallbck/pkg/k8sbackup"
+	"github.com/osshield/fallbck/pkg/m365"
 	"github.com/osshield/fallbck/pkg/pvebackup"
 )
 
@@ -28,6 +29,9 @@ const (
 	// JobTypeDocker backs up a Docker host (definitions, compose files, volumes); it
 	// runs on the filesystem agent installed on the host
 	JobTypeDocker = "docker"
+	// JobTypeM365 backs up a Microsoft 365 tenant through Graph; it runs on any
+	// filesystem agent with outbound HTTPS (no host capability involved)
+	JobTypeM365 = "m365"
 )
 
 // NormalizeAgentType maps "" to filesystem and reports unknown values
@@ -43,13 +47,16 @@ func NormalizeAgentType(t string) (string, bool) {
 	return t, false
 }
 
-// NormalizeJobType maps "" to filesystem and accepts the job-only types pve and docker
+// NormalizeJobType maps "" to filesystem and accepts the job-only types pve, docker
+// and m365
 func NormalizeJobType(t string) (string, bool) {
 	switch t {
 	case JobTypePVE:
 		return JobTypePVE, true
 	case JobTypeDocker:
 		return JobTypeDocker, true
+	case JobTypeM365:
+		return JobTypeM365, true
 	}
 	return NormalizeAgentType(t)
 }
@@ -57,8 +64,9 @@ func NormalizeJobType(t string) (string, bool) {
 // JobAllowedOnAgent reports whether an agent of agentType may run a job of jobType.
 // Job types normally match the agent type; the exceptions are database jobs on a
 // kubernetes agent (dumped from a pod inside the cluster) or on a filesystem agent
-// (the combined agent, when it reports database client tools), and Proxmox VE /
-// Docker host jobs, which run on the filesystem agent installed on the host.
+// (the combined agent, when it reports database client tools), Proxmox VE / Docker
+// host jobs, which run on the filesystem agent installed on the host, and Microsoft
+// 365 jobs, which any filesystem agent runs.
 func JobAllowedOnAgent(jobType, agentType string) bool {
 	jobType, _ = NormalizeJobType(jobType)
 	agentType, _ = NormalizeAgentType(agentType)
@@ -68,7 +76,7 @@ func JobAllowedOnAgent(jobType, agentType string) bool {
 	switch jobType {
 	case JobTypeDatabase:
 		return agentType == AgentTypeKubernetes || agentType == AgentTypeFilesystem
-	case JobTypePVE, JobTypeDocker:
+	case JobTypePVE, JobTypeDocker, JobTypeM365:
 		return agentType == AgentTypeFilesystem
 	}
 	return false
@@ -297,8 +305,11 @@ type BackupJob struct {
 	PVEConfig *pvebackup.Spec `json:"pve_config,omitempty" db:"pve_config"`
 	// DockerConfig is the Docker host job specification
 	DockerConfig *dockerbackup.Spec `json:"docker_config,omitempty" db:"docker_config"`
-	CreatedAt    time.Time          `json:"created_at" db:"created_at"`
-	UpdatedAt    time.Time          `json:"updated_at" db:"updated_at"`
+	// M365Config is the Microsoft 365 job specification (its TenantID is also the
+	// m365_tenant_id column, so a tenant cannot be deleted while jobs use it)
+	M365Config *m365.Spec `json:"m365_config,omitempty" db:"m365_config"`
+	CreatedAt  time.Time  `json:"created_at" db:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at" db:"updated_at"`
 
 	// Joined fields for display
 	AgentName  string `json:"agent_name,omitempty"`
@@ -397,6 +408,9 @@ func (j *BackupJob) IsPVE() bool { return j.JobType == JobTypePVE }
 // IsDocker reports whether the job is a Docker host backup
 func (j *BackupJob) IsDocker() bool { return j.JobType == JobTypeDocker }
 
+// IsM365 reports whether the job is a Microsoft 365 backup
+func (j *BackupJob) IsM365() bool { return j.JobType == JobTypeM365 }
+
 // Sanitize redacts the stored database password (HasPassword tells whether one exists)
 func (j *BackupJob) Sanitize() *BackupJob {
 	if j.JobType == "" {
@@ -421,6 +435,9 @@ func (j *BackupJob) Summary() string {
 	}
 	if j.IsDocker() {
 		return j.DockerConfig.Summary()
+	}
+	if j.IsM365() {
+		return j.M365Config.Summary()
 	}
 	return strings.Join(j.BackupPaths, ", ")
 }

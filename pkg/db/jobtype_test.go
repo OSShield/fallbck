@@ -17,6 +17,9 @@ func TestJobAllowedOnAgent(t *testing.T) {
 		{"database", "filesystem", true}, // the combined agent, gated by Agent.DBTools
 		{"docker", "filesystem", true},
 		{"docker", "database", false},
+		{"m365", "filesystem", true},
+		{"m365", "kubernetes", false},
+		{"m365", "database", false},
 	}
 	for _, c := range cases {
 		if got := JobAllowedOnAgent(c.job, c.agent); got != c.want {
@@ -45,9 +48,19 @@ func TestAgentCanRunJob(t *testing.T) {
 	if fs.CanRunJob("database") || fs.CanRunJob("pve") || fs.CanRunJob("docker") || !fs.CanRunJob("filesystem") {
 		t.Error("filesystem agent without capabilities")
 	}
+	if !fs.CanRunJob("m365") {
+		t.Error("m365 jobs need no host capability")
+	}
 	fs.DBTools, fs.PVEHost, fs.DockerHost = true, true, true
 	if !fs.CanRunJob("database") || !fs.CanRunJob("pve") || !fs.CanRunJob("docker") || fs.CanRunJob("kubernetes") {
 		t.Error("filesystem agent with capabilities")
+	}
+	k8s := &Agent{AgentType: AgentTypeKubernetes}
+	if k8s.CanRunJob("m365") {
+		t.Error("kubernetes agents do not run m365 jobs")
+	}
+	if jt, ok := NormalizeJobType("m365"); !ok || jt != JobTypeM365 {
+		t.Errorf("m365 job type: %q %v", jt, ok)
 	}
 	dbAgent := &Agent{AgentType: AgentTypeDatabase}
 	if !dbAgent.CanRunJob("database") || dbAgent.CanRunJob("filesystem") {

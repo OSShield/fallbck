@@ -391,15 +391,17 @@ function setJobTypeIn(form, type) {
   const isDB = type === 'database';
   const isPVE = type === 'pve';
   const isDocker = type === 'docker';
+  const isM365 = type === 'm365';
   const isK8s = type === 'kubernetes'; // cluster jobs: only the onboarding form carries that fieldset
   const show = (id, on) => {
     const el = form.querySelector('#' + id);
     if (el) { el.hidden = !on; el.disabled = !on; }
   };
-  show('job-fs-fields', !isDB && !isPVE && !isDocker && !isK8s);
+  show('job-fs-fields', !isDB && !isPVE && !isDocker && !isK8s && !isM365);
   show('job-db-fields', isDB);
   show('job-pve-fields', isPVE);
   show('job-docker-fields', isDocker);
+  show('job-m365-fields', isM365);
   show('job-k8s-fields', isK8s);
   filterJobAgents(form, type);
   if (form.elements['db_engine']) setDBEngine(form.elements['db_engine'].value, form);
@@ -427,6 +429,7 @@ function filterJobAgents(form, type) {
     }
     if (type === 'pve') match = agentType === 'filesystem' && opt.dataset.pve === 'true';
     if (type === 'docker') match = agentType === 'filesystem' && opt.dataset.docker === 'true';
+    if (type === 'm365') match = agentType === 'filesystem'; // any agent with internet access
     opt.hidden = !match; opt.disabled = !match;
     if (match && opt.selected) keep = true;
   }
@@ -545,6 +548,27 @@ function loadJobIntoForm(form, job) {
     form.elements['docker_include_unused_volumes'].checked = dc.include_unused_volumes !== false;
     form.elements['docker_include_stopped'].checked = dc.include_stopped !== false;
   }
+  if (jobType === 'm365') {
+    const mc = job.m365_config || {};
+    const wl = mc.workloads || {};
+    form.elements['m365_tenant_id'].value = mc.tenant_id || '';
+    for (const k of ['mailboxes', 'onedrive', 'sites', 'teams', 'entra']) form.elements['m365_wl_' + k].checked = wl[k] !== false;
+    const users = mc.users || {}, sites = mc.sites || {}, teams = mc.teams || {};
+    form.elements['m365_user_groups'].value = (users.groups || []).join('\n');
+    form.elements['m365_user_include'].value = (users.include || []).join('\n');
+    form.elements['m365_user_exclude'].value = (users.exclude || []).join('\n');
+    form.elements['m365_user_shared'].checked = users.shared !== false;
+    form.elements['m365_user_unlicensed'].checked = !!users.unlicensed;
+    form.elements['m365_site_include'].value = (sites.include || []).join('\n');
+    form.elements['m365_site_exclude'].value = (sites.exclude || []).join('\n');
+    form.elements['m365_team_include'].value = (teams.include || []).join('\n');
+    form.elements['m365_team_exclude'].value = (teams.exclude || []).join('\n');
+    form.elements['m365_mail_folder_excludes'].value = (mc.mail_folder_excludes || ['Deleted Items', 'Junk Email', 'Conversation History']).join('\n');
+    form.elements['m365_exclude_types'].value = (mc.exclude_types || []).join('\n');
+    form.elements['m365_exclude_paths'].value = (mc.exclude_paths || []).join('\n');
+    form.elements['m365_concurrency'].value = mc.concurrency || '';
+    form.elements['m365_backup_id'].value = mc.backup_id || '';
+  }
   if (jobType === 'database' && job.db_config) {
     const dc = job.db_config;
     form.elements['db_engine'].value = dc.engine || 'postgres';
@@ -635,6 +659,24 @@ function buildJobPayload(form) {
       images: fd.get('docker_images') || 'refs',
       include_unused_volumes: fd.get('docker_include_unused_volumes') === 'on',
       include_stopped: fd.get('docker_include_stopped') === 'on'
+    };
+  }
+
+  if (payload.job_type === 'm365') {
+    payload.backup_paths = [];
+    payload.exclude_paths = [];
+    const on = (name) => fd.get(name) === 'on';
+    payload.m365_config = {
+      tenant_id: fd.get('m365_tenant_id') || '',
+      workloads: { mailboxes: on('m365_wl_mailboxes'), onedrive: on('m365_wl_onedrive'), sites: on('m365_wl_sites'), teams: on('m365_wl_teams'), entra: on('m365_wl_entra') },
+      users: { groups: formLines(fd, 'm365_user_groups'), include: formLines(fd, 'm365_user_include'), exclude: formLines(fd, 'm365_user_exclude'), shared: on('m365_user_shared'), unlicensed: on('m365_user_unlicensed') },
+      sites: { include: formLines(fd, 'm365_site_include'), exclude: formLines(fd, 'm365_site_exclude') },
+      teams: { include: formLines(fd, 'm365_team_include'), exclude: formLines(fd, 'm365_team_exclude') },
+      mail_folder_excludes: formLines(fd, 'm365_mail_folder_excludes'),
+      exclude_types: formLines(fd, 'm365_exclude_types'),
+      exclude_paths: formLines(fd, 'm365_exclude_paths'),
+      concurrency: parseInt(fd.get('m365_concurrency') || '0') || 0,
+      backup_id: (fd.get('m365_backup_id') || '').trim()
     };
   }
 
@@ -1097,7 +1139,7 @@ function renderRun(run) {
   }
   const d = run.details || {};
   const type = d.type || 'filesystem';
-  const typeLabel = { filesystem: 'Filesystem', database: 'Database', kubernetes: 'Kubernetes', pve: 'Proxmox VE host', docker: 'Docker host' }[type] || type;
+  const typeLabel = { filesystem: 'Filesystem', database: 'Database', kubernetes: 'Kubernetes', pve: 'Proxmox VE host', docker: 'Docker host', m365: 'Microsoft 365' }[type] || type;
 
   const active = RUN_ACTIVE.includes(run.status);
   let html = '';
@@ -1126,7 +1168,7 @@ function renderRun(run) {
   // Live progress while running; after a failed or cancelled run, the last reported
   // per-item statuses are what remains when the agent never produced a detail blob
   const m = d.manifest || {};
-  const hasItemDetail = (m.volumes && m.volumes.length) || (m.databases && m.databases.length) || d.archives;
+  const hasItemDetail = (m.volumes && m.volumes.length) || (m.databases && m.databases.length) || (m.units && m.units.length) || d.archives;
   const items = run.progress && run.progress.items ? Object.keys(run.progress.items).length : 0;
   if (active && run.progress) html += renderProgress(run.progress);
   else if (!active && items && !hasItemDetail) html += renderProgress(run.progress, true);
@@ -1135,6 +1177,7 @@ function renderRun(run) {
   else if (type === 'kubernetes') html += renderK8sDetail(d.manifest || {});
   else if (type === 'pve') html += renderPVEDetail(d.manifest || {});
   else if (type === 'docker') html += renderDockerDetail(d.manifest || {});
+  else if (type === 'm365') html += renderM365Detail(d.manifest || {});
   else if (d.archives || d.paths) html += renderFsDetail(d);
 
   if (run.log_tail) html += rdCard('Agent log (captured at the run)', rdPre(run.log_tail));
@@ -1311,6 +1354,41 @@ function renderDockerDetail(m) {
   return html;
 }
 
+// Microsoft 365: the tenant, one row per unit snapshot (user, site, team), warnings
+// and the restore notes
+function renderM365Detail(m) {
+  let html = '';
+  const t = m.tenant || {};
+  const units = m.units || [];
+  const counts = { completed: 0, failed: 0, skipped: 0, cancelled: 0 };
+  let downloaded = 0, items = 0;
+  units.forEach(u => { counts[u.status] = (counts[u.status] || 0) + 1; (u.archives || []).forEach(a => { downloaded += a.downloaded || 0; items += a.items || 0; }); });
+  html += rdCard('Microsoft 365 tenant', rdKV([
+    ['Tenant', rdEsc(t.display_name || '-') + (t.id ? ` <span style="color:var(--text-muted);font-size:12px;">${rdEsc(t.id)}</span>` : '')],
+    ['Agent', rdEsc((m.generator || {}).hostname || '-')],
+    ['Units', `${units.length} (${counts.completed} completed, ${counts.failed} failed, ${counts.skipped} skipped)`],
+    ['Items', String(items)],
+    ['Fetched from Graph', rdBytes(downloaded)],
+    ['Directory group', rdMono((m.job || {}).group || '-')],
+  ]));
+  if (units.length) {
+    const rows = units.map(u => {
+      const arch = (u.archives || []).map(a => `${rdEsc(a.name)}: ${a.items || 0}`).join(', ');
+      let snap = '-';
+      if (u.snapshot_time) snap = rdMono(new Date(u.snapshot_time * 1000).toISOString().replace(/\.\d+Z$/, 'Z'));
+      const note = [u.error, ...(u.warnings || [])].filter(Boolean).map(rdEsc).join('<br>');
+      return [rdEsc(u.kind), rdEsc(u.name), rdMono(u.group), rdStatus(u.status), arch || '-', snap, note || '-'];
+    });
+    html += rdCard('Units', rdTable(['Kind', 'Name', 'Group', 'Status', 'Items', 'Snapshot', 'Notes'], rows));
+  }
+  if (m.warnings && m.warnings.length) html += rdCard('Warnings', rdPre(m.warnings.join('\n')));
+  if (m.restore) {
+    const pairs = Object.keys(m.restore).sort().map(k => [rdEsc(k), rdEsc(m.restore[k])]);
+    html += rdCard('Restore', rdKV(pairs));
+  }
+  return html;
+}
+
 function renderK8sDetail(m) {
   const k = m.kubernetes || {};
   const res = m.resources || {};
@@ -1388,4 +1466,145 @@ function downloadRunDetails() {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+
+// ===== Microsoft 365 tenants ===================================================
+// The tenant fields live in a container with class tenant-fields: the Targets page
+// modal (a form) or the inline block of a Microsoft 365 job form (a div, since forms
+// do not nest). Every helper takes that container.
+
+function tenantField(box, name) { return box.querySelector(`[name="${name}"]`); }
+
+function updateTenantAuth(box) {
+  if (!box) return;
+  const cert = tenantField(box, 'tenant_auth_method').value === 'certificate';
+  box.querySelector('.tenant-secret-opts').hidden = cert;
+  box.querySelector('.tenant-certificate-opts').hidden = !cert;
+}
+
+function buildTenantPayload(box) {
+  const v = (name) => (tenantField(box, name).value || '').trim();
+  const payload = {
+    name: v('tenant_name'), tenant_id: v('tenant_tenant_id'), client_id: v('tenant_client_id'),
+    auth_method: v('tenant_auth_method') || 'secret',
+    secret: tenantField(box, 'tenant_secret').value || '',
+    certificate_pem: v('tenant_certificate_pem'), key_pem: v('tenant_key_pem')
+  };
+  const exp = v('tenant_secret_expires');
+  if (exp && payload.auth_method === 'secret') payload.secret_expires = new Date(exp + 'T00:00:00Z').toISOString();
+  return payload;
+}
+
+function resetTenantFields(box) {
+  for (const el of box.querySelectorAll('[name^="tenant_"]')) {
+    if (el.type === 'checkbox') el.checked = false; else el.value = el.tagName === 'SELECT' ? 'secret' : '';
+  }
+  tenantField(box, 'tenant_secret').placeholder = '';
+  updateTenantAuth(box);
+}
+
+function loadTenantIntoFields(box, t) {
+  resetTenantFields(box);
+  tenantField(box, 'tenant_name').value = t.name || '';
+  tenantField(box, 'tenant_tenant_id').value = t.tenant_id || '';
+  tenantField(box, 'tenant_client_id').value = t.client_id || '';
+  tenantField(box, 'tenant_auth_method').value = t.auth_method || 'secret';
+  tenantField(box, 'tenant_secret').placeholder = t.has_secret ? 'leave blank to keep the stored secret' : '';
+  tenantField(box, 'tenant_certificate_pem').placeholder = t.has_certificate ? 'leave blank to keep the stored certificate' : '-----BEGIN CERTIFICATE-----';
+  if (t.secret_expires) tenantField(box, 'tenant_secret_expires').value = t.secret_expires.slice(0, 10);
+  updateTenantAuth(box);
+}
+
+async function saveTenant(payload, id) {
+  const resp = await apiFetch(id ? `/api/v1/m365/tenants/${id}` : '/api/v1/m365/tenants', {
+    method: id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+  });
+  if (!resp.ok) {
+    const errData = await resp.json().catch(() => ({}));
+    throw new Error(errData.error || 'Failed to save tenant');
+  }
+  return resp.json();
+}
+
+function tenantForm() { return document.getElementById('tenant-form'); }
+
+function newTenant() {
+  const form = tenantForm();
+  form.dataset.tenantId = '';
+  resetTenantFields(form);
+  document.getElementById('tenant-modal-title').innerText = 'Add Microsoft 365 Tenant';
+  openModal('modal-tenant');
+}
+
+async function editTenant(id) {
+  try {
+    const resp = await apiFetch(`/api/v1/m365/tenants/${id}`);
+    if (!resp.ok) throw new Error('Failed to load tenant');
+    const form = tenantForm();
+    loadTenantIntoFields(form, await resp.json());
+    form.dataset.tenantId = id;
+    document.getElementById('tenant-modal-title').innerText = 'Edit Microsoft 365 Tenant';
+    openModal('modal-tenant');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function submitTenantForm(e) {
+  e.preventDefault();
+  const form = e.target;
+  try {
+    const t = await saveTenant(buildTenantPayload(form), form.dataset.tenantId || '');
+    showToast(`Tenant ${t.name} saved`, 'success');
+    closeModal('modal-tenant');
+    setTimeout(() => window.location.reload(), 600);
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+// testTenant asks the server to acquire a token and read the organization
+async function testTenant(id, btn) {
+  if (btn) { btn.disabled = true; btn.innerText = 'Testing…'; }
+  try {
+    const resp = await apiFetch(`/api/v1/m365/tenants/${id}/test`, { method: 'POST' });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.error || 'Test failed');
+    if (data.ok) showToast(`Connected: ${data.organization.display_name} (${(data.organization.domains || []).join(', ')})`, 'success');
+    else showToast(data.error || 'Test failed', 'error');
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerText = 'Test'; }
+  }
+}
+
+// Inline tenant registration inside a Microsoft 365 job form
+function toggleInlineTenant(btn) {
+  const fieldset = btn.closest('#job-m365-fields');
+  const box = fieldset.querySelector('.tenant-inline');
+  box.hidden = !box.hidden;
+  if (!box.hidden) resetTenantFields(box);
+}
+
+async function createInlineTenant(btn) {
+  const fieldset = btn.closest('#job-m365-fields');
+  const box = fieldset.querySelector('.tenant-inline');
+  const status = box.querySelector('.tenant-inline-status');
+  status.innerText = 'Saving…';
+  try {
+    const t = await saveTenant(buildTenantPayload(box), '');
+    const sel = fieldset.querySelector('[name="m365_tenant_id"]');
+    const opt = document.createElement('option');
+    opt.value = t.id; opt.dataset.name = t.name; opt.innerText = `${t.name} (${t.tenant_id}, ${t.auth_method})`;
+    sel.appendChild(opt);
+    sel.value = t.id;
+    box.hidden = true;
+    showToast(`Tenant ${t.name} registered; testing the connection…`, 'success');
+    testTenant(t.id, null);
+  } catch (err) {
+    status.innerText = err.message;
+    showToast(err.message, 'error');
+  }
 }

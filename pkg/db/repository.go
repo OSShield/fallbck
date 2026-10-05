@@ -9,6 +9,7 @@ import (
 	"github.com/osshield/fallbck/pkg/dbbackup"
 	"github.com/osshield/fallbck/pkg/dockerbackup"
 	"github.com/osshield/fallbck/pkg/k8sbackup"
+	"github.com/osshield/fallbck/pkg/m365"
 	"github.com/osshield/fallbck/pkg/pvebackup"
 	"time"
 
@@ -528,20 +529,20 @@ func (d *DB) CreateJob(ctx context.Context, job *BackupJob) error {
 	if err != nil {
 		return fmt.Errorf("failed to serialize exclude paths: %w", err)
 	}
-	jobType, dbConfigJSON, k8sConfigJSON, pveConfigJSON, dockerConfigJSON, err := jobTypeColumns(job)
+	cols, err := jobTypeColumns(job)
 	if err != nil {
 		return err
 	}
 
 	query := `
-		INSERT INTO backup_jobs (id, name, agent_id, target_id, schedule_cron, backup_paths, exclude_paths, enabled, direct_pbs, created_at, updated_at, job_type, db_config, k8s_config, pve_config, docker_config)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+		INSERT INTO backup_jobs (id, name, agent_id, target_id, schedule_cron, backup_paths, exclude_paths, enabled, direct_pbs, created_at, updated_at, job_type, db_config, k8s_config, pve_config, docker_config, m365_config, m365_tenant_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 		RETURNING id
 	`
 	return d.Pool.QueryRow(ctx, query,
 		job.ID, job.Name, job.AgentID, job.TargetID, job.ScheduleCron,
 		backupPathsJSON, excludePathsJSON, job.Enabled, job.DirectPBS,
-		job.CreatedAt, job.UpdatedAt, jobType, dbConfigJSON, k8sConfigJSON, pveConfigJSON, dockerConfigJSON,
+		job.CreatedAt, job.UpdatedAt, cols.jobType, cols.db, cols.k8s, cols.pve, cols.docker, cols.m365, cols.tenantID,
 	).Scan(&job.ID)
 }
 
@@ -549,7 +550,7 @@ func (d *DB) GetJobByID(ctx context.Context, id uuid.UUID) (*BackupJob, error) {
 	query := `
 		SELECT j.id, j.name, j.agent_id, j.target_id, j.schedule_cron, j.backup_paths, j.exclude_paths,
 		       j.enabled, j.direct_pbs, j.created_at, j.updated_at,
-		       j.job_type, j.db_config, j.k8s_config, j.pve_config, j.docker_config,
+		       j.job_type, j.db_config, j.k8s_config, j.pve_config, j.docker_config, j.m365_config,
 		       a.hostname as agent_name, t.name as target_name
 		FROM backup_jobs j
 		JOIN agents a ON j.agent_id = a.id
@@ -558,12 +559,12 @@ func (d *DB) GetJobByID(ctx context.Context, id uuid.UUID) (*BackupJob, error) {
 	`
 	row := d.Pool.QueryRow(ctx, query, id)
 	var j BackupJob
-	var backupPathsRaw, excludePathsRaw, dbConfigRaw, k8sConfigRaw, pveConfigRaw, dockerConfigRaw []byte
+	var backupPathsRaw, excludePathsRaw, dbConfigRaw, k8sConfigRaw, pveConfigRaw, dockerConfigRaw, m365ConfigRaw []byte
 	err := row.Scan(
 		&j.ID, &j.Name, &j.AgentID, &j.TargetID, &j.ScheduleCron,
 		&backupPathsRaw, &excludePathsRaw,
 		&j.Enabled, &j.DirectPBS, &j.CreatedAt, &j.UpdatedAt,
-		&j.JobType, &dbConfigRaw, &k8sConfigRaw, &pveConfigRaw, &dockerConfigRaw,
+		&j.JobType, &dbConfigRaw, &k8sConfigRaw, &pveConfigRaw, &dockerConfigRaw, &m365ConfigRaw,
 		&j.AgentName, &j.TargetName,
 	)
 	if err != nil {
@@ -579,6 +580,7 @@ func (d *DB) GetJobByID(ctx context.Context, id uuid.UUID) (*BackupJob, error) {
 	j.K8sConfig = parseK8sConfig(j.JobType, k8sConfigRaw)
 	j.PVEConfig = parsePVEConfig(j.JobType, pveConfigRaw)
 	j.DockerConfig = parseDockerConfig(j.JobType, dockerConfigRaw)
+	j.M365Config = parseM365Config(j.JobType, m365ConfigRaw)
 
 	return &j, nil
 }
@@ -587,7 +589,7 @@ func (d *DB) ListJobs(ctx context.Context) ([]*BackupJob, error) {
 	query := `
 		SELECT j.id, j.name, j.agent_id, j.target_id, j.schedule_cron, j.backup_paths, j.exclude_paths,
 		       j.enabled, j.direct_pbs, j.created_at, j.updated_at,
-		       j.job_type, j.db_config, j.k8s_config, j.pve_config, j.docker_config,
+		       j.job_type, j.db_config, j.k8s_config, j.pve_config, j.docker_config, j.m365_config,
 		       a.hostname as agent_name, t.name as target_name
 		FROM backup_jobs j
 		JOIN agents a ON j.agent_id = a.id
@@ -603,12 +605,12 @@ func (d *DB) ListJobs(ctx context.Context) ([]*BackupJob, error) {
 	var jobs []*BackupJob
 	for rows.Next() {
 		var j BackupJob
-		var backupPathsRaw, excludePathsRaw, dbConfigRaw, k8sConfigRaw, pveConfigRaw, dockerConfigRaw []byte
+		var backupPathsRaw, excludePathsRaw, dbConfigRaw, k8sConfigRaw, pveConfigRaw, dockerConfigRaw, m365ConfigRaw []byte
 		if err := rows.Scan(
 			&j.ID, &j.Name, &j.AgentID, &j.TargetID, &j.ScheduleCron,
 			&backupPathsRaw, &excludePathsRaw,
 			&j.Enabled, &j.DirectPBS, &j.CreatedAt, &j.UpdatedAt,
-			&j.JobType, &dbConfigRaw, &k8sConfigRaw, &pveConfigRaw, &dockerConfigRaw,
+			&j.JobType, &dbConfigRaw, &k8sConfigRaw, &pveConfigRaw, &dockerConfigRaw, &m365ConfigRaw,
 			&j.AgentName, &j.TargetName,
 		); err != nil {
 			return nil, err
@@ -619,49 +621,67 @@ func (d *DB) ListJobs(ctx context.Context) ([]*BackupJob, error) {
 		j.K8sConfig = parseK8sConfig(j.JobType, k8sConfigRaw)
 		j.PVEConfig = parsePVEConfig(j.JobType, pveConfigRaw)
 		j.DockerConfig = parseDockerConfig(j.JobType, dockerConfigRaw)
+		j.M365Config = parseM365Config(j.JobType, m365ConfigRaw)
 		jobs = append(jobs, &j)
 	}
 	return jobs, rows.Err()
 }
 
-// jobTypeColumns returns the job_type, db_config, k8s_config, pve_config and
-// docker_config column values
-func jobTypeColumns(job *BackupJob) (string, []byte, []byte, []byte, []byte, error) {
+// jobColumns are the type-specific column values of a job row
+type jobColumns struct {
+	jobType                    string
+	db, k8s, pve, docker, m365 []byte
+	// tenantID is the m365_tenant_id foreign key (nil for every other type)
+	tenantID *uuid.UUID
+}
+
+// jobTypeColumns normalises the job type and serialises the configuration of that
+// type; the other configuration columns are written as empty objects
+func jobTypeColumns(job *BackupJob) (jobColumns, error) {
 	jobType, ok := NormalizeJobType(job.JobType)
 	if !ok {
-		return "", nil, nil, nil, nil, fmt.Errorf("unknown job type %q", job.JobType)
+		return jobColumns{}, fmt.Errorf("unknown job type %q", job.JobType)
 	}
 	job.JobType = jobType
-	dbJSON, k8sJSON, pveJSON, dockerJSON := []byte("{}"), []byte("{}"), []byte("{}"), []byte("{}")
-	if jobType == JobTypeDatabase && job.DBConfig != nil {
-		raw, err := json.Marshal(job.DBConfig)
+	empty := []byte("{}")
+	cols := jobColumns{jobType: jobType, db: empty, k8s: empty, pve: empty, docker: empty, m365: empty}
+	marshal := func(what string, v any) ([]byte, error) {
+		raw, err := json.Marshal(v)
 		if err != nil {
-			return "", nil, nil, nil, nil, fmt.Errorf("failed to serialize database configuration: %w", err)
+			return nil, fmt.Errorf("failed to serialize %s configuration: %w", what, err)
 		}
-		dbJSON = raw
+		return raw, nil
 	}
-	if jobType == JobTypeKubernetes && job.K8sConfig != nil {
-		raw, err := json.Marshal(job.K8sConfig)
-		if err != nil {
-			return "", nil, nil, nil, nil, fmt.Errorf("failed to serialize kubernetes configuration: %w", err)
+	var err error
+	switch {
+	case jobType == JobTypeDatabase && job.DBConfig != nil:
+		cols.db, err = marshal("database", job.DBConfig)
+	case jobType == JobTypeKubernetes && job.K8sConfig != nil:
+		cols.k8s, err = marshal("kubernetes", job.K8sConfig)
+	case jobType == JobTypePVE && job.PVEConfig != nil:
+		cols.pve, err = marshal("Proxmox VE", job.PVEConfig)
+	case jobType == JobTypeDocker && job.DockerConfig != nil:
+		cols.docker, err = marshal("Docker", job.DockerConfig)
+	case jobType == JobTypeM365 && job.M365Config != nil:
+		cols.m365, err = marshal("Microsoft 365", job.M365Config)
+		if job.M365Config.TenantID != uuid.Nil {
+			id := job.M365Config.TenantID
+			cols.tenantID = &id
 		}
-		k8sJSON = raw
 	}
-	if jobType == JobTypePVE && job.PVEConfig != nil {
-		raw, err := json.Marshal(job.PVEConfig)
-		if err != nil {
-			return "", nil, nil, nil, nil, fmt.Errorf("failed to serialize Proxmox VE configuration: %w", err)
-		}
-		pveJSON = raw
+	return cols, err
+}
+
+// parseM365Config decodes the m365_config column for Microsoft 365 jobs
+func parseM365Config(jobType string, raw []byte) *m365.Spec {
+	if jobType != JobTypeM365 {
+		return nil
 	}
-	if jobType == JobTypeDocker && job.DockerConfig != nil {
-		raw, err := json.Marshal(job.DockerConfig)
-		if err != nil {
-			return "", nil, nil, nil, nil, fmt.Errorf("failed to serialize Docker configuration: %w", err)
-		}
-		dockerJSON = raw
+	spec := &m365.Spec{}
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, spec)
 	}
-	return jobType, dbJSON, k8sJSON, pveJSON, dockerJSON, nil
+	return spec
 }
 
 // parseDockerConfig decodes the docker_config column for Docker host jobs

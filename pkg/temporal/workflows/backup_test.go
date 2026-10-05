@@ -12,6 +12,7 @@ import (
 	"github.com/osshield/fallbck/pkg/db"
 	"github.com/osshield/fallbck/pkg/dbbackup"
 	"github.com/osshield/fallbck/pkg/k8sbackup"
+	"github.com/osshield/fallbck/pkg/m365"
 	"github.com/osshield/fallbck/pkg/temporal"
 	"github.com/osshield/fallbck/pkg/temporal/activities"
 	"github.com/stretchr/testify/mock"
@@ -135,6 +136,39 @@ func TestBackupJobWorkflowDatabase(t *testing.T) {
 	var dbActs *activities.DBAgentActivities
 	env.OnActivity(serverActs.PrepareBackupSession, mock.Anything, jobID).Return(session, nil)
 	env.OnActivity(dbActs.ExecuteDatabaseBackup, mock.Anything, session).Return(execResult, nil)
+	env.OnActivity(agentActs.ExecuteFilesystemBackup, mock.Anything, mock.Anything).Return(nil, nil)
+	env.OnActivity(serverActs.FinalizeBackupRun, mock.Anything, session, execResult).Return(nil)
+
+	env.ExecuteWorkflow(BackupJobWorkflow, jobID)
+	if !env.IsWorkflowCompleted() {
+		t.Fatal("Workflow did not complete")
+	}
+	var result temporal.BackupExecutionResult
+	if err := env.GetWorkflowResult(&result); err != nil {
+		t.Fatalf("Workflow failed: %v", err)
+	}
+	if result.SnapshotID != execResult.SnapshotID {
+		t.Errorf("result %+v", result)
+	}
+	env.AssertNotCalled(t, "ExecuteFilesystemBackup", mock.Anything, mock.Anything)
+}
+
+func TestBackupJobWorkflowM365(t *testing.T) {
+	testSuite := &testsuite.WorkflowTestSuite{}
+	env := testSuite.NewTestWorkflowEnvironment()
+
+	jobID := uuid.New()
+	session := &temporal.BackupSessionInfo{
+		JobID: jobID, AgentTaskQueue: "fallbck-agent-m365", BackupRunID: uuid.New(),
+		JobType: db.JobTypeM365, BackupID: "m365-contoso",
+		M365Config: &m365.Spec{TenantID: uuid.New()},
+	}
+	execResult := &temporal.BackupExecutionResult{Status: db.RunStatusCompleted, SnapshotID: "host/m365-contoso/2026-10-10T01:00:00Z"}
+
+	var serverActs *activities.ServerActivities
+	var agentActs *activities.AgentActivities
+	env.OnActivity(serverActs.PrepareBackupSession, mock.Anything, jobID).Return(session, nil)
+	env.OnActivity(agentActs.ExecuteM365Backup, mock.Anything, session).Return(execResult, nil)
 	env.OnActivity(agentActs.ExecuteFilesystemBackup, mock.Anything, mock.Anything).Return(nil, nil)
 	env.OnActivity(serverActs.FinalizeBackupRun, mock.Anything, session, execResult).Return(nil)
 

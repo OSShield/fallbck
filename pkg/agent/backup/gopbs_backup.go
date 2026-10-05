@@ -26,7 +26,7 @@ func runBackup(ctx context.Context, opts gopbs.BackupOptions, names map[string]s
 	if opts.Format != gopbs.FormatV1 && opts.Format != gopbs.FormatV2 {
 		return nil, fmt.Errorf("unknown archive format %d", opts.Format)
 	}
-	if len(opts.Paths) == 0 {
+	if len(opts.Paths) == 0 && len(opts.Trees) == 0 {
 		return nil, errors.New("nothing to back up")
 	}
 	if len(opts.Streams) > 0 {
@@ -111,6 +111,11 @@ func runBackup(ctx context.Context, opts gopbs.BackupOptions, names map[string]s
 			err = arch.AddFile(path)
 		}
 		if err != nil {
+			return nil, err
+		}
+	}
+	for _, tr := range opts.Trees {
+		if err := arch.AddTree(tr); err != nil {
 			return nil, err
 		}
 	}

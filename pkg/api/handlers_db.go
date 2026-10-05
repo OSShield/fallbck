@@ -50,6 +50,24 @@ func (s *ServerAPI) validateJob(ctx context.Context, job *db.BackupJob, existing
 	}
 
 	switch jobType {
+	case db.JobTypeM365:
+		if len(job.BackupPaths) > 0 {
+			return "Microsoft 365 jobs do not take backup paths", errors.New("paths on m365 job")
+		}
+		if job.DBConfig != nil || job.K8sConfig != nil || job.PVEConfig != nil || job.DockerConfig != nil {
+			return "Microsoft 365 jobs take m365_config only", errors.New("foreign config on m365 job")
+		}
+		if job.M365Config == nil {
+			return "Microsoft 365 jobs require m365_config", errors.New("missing m365_config")
+		}
+		if err := job.M365Config.Validate(); err != nil {
+			return err.Error(), err
+		}
+		if s.DB != nil {
+			if _, err := s.DB.GetTenantByID(ctx, job.M365Config.TenantID); err != nil {
+				return "Microsoft 365 tenant not found", err
+			}
+		}
 	case db.JobTypeDocker:
 		if len(job.BackupPaths) > 0 {
 			return "Docker host jobs do not take backup paths", errors.New("paths on docker job")
@@ -138,6 +156,9 @@ func (s *ServerAPI) validateJob(ctx context.Context, job *db.BackupJob, existing
 		}
 		if job.DockerConfig != nil {
 			return "Filesystem jobs do not take docker_config", errors.New("docker_config on filesystem job")
+		}
+		if job.M365Config != nil {
+			return "Filesystem jobs do not take m365_config", errors.New("m365_config on filesystem job")
 		}
 		agentOS := ""
 		if agent != nil {

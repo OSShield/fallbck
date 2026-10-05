@@ -6,6 +6,7 @@ import (
 	"github.com/osshield/fallbck/pkg/dbbackup"
 	"github.com/osshield/fallbck/pkg/dockerbackup"
 	"github.com/osshield/fallbck/pkg/k8sbackup"
+	"github.com/osshield/fallbck/pkg/m365"
 	"github.com/osshield/fallbck/pkg/pvebackup"
 	sdktemporal "go.temporal.io/sdk/temporal"
 	"log/slog"
@@ -105,7 +106,25 @@ func (s *ServerActivities) PrepareBackupSession(ctx context.Context, jobID uuid.
 	var k8sSpec *k8sbackup.Spec
 	var pveSpec *pvebackup.Spec
 	var dockerSpec *dockerbackup.Spec
+	var m365Spec *m365.Spec
 	passwordOnServer := false
+	if jobType == db.JobTypeM365 {
+		if job.M365Config == nil {
+			return nil, sdktemporal.NewNonRetryableApplicationError("Microsoft 365 job has no configuration", "job_invalid", nil)
+		}
+		m365Spec = job.M365Config
+		tenant, err := s.DB.GetTenantByID(ctx, m365Spec.TenantID)
+		if err != nil {
+			return nil, sdktemporal.NewNonRetryableApplicationError(
+				fmt.Sprintf("the Microsoft 365 tenant of job %s no longer exists", job.Name), "job_invalid", nil)
+		}
+		// The job's own group holds the directory archive and the run manifest and is
+		// the prefix every unit group (user, site, team) must extend (sub-tickets)
+		claims.BackupID = m365Spec.BackupID
+		if claims.BackupID == "" {
+			claims.BackupID = m365.DefaultBackupID(tenant.Name)
+		}
+	}
 	if jobType == db.JobTypeDocker {
 		dockerSpec = job.DockerConfig
 		if dockerSpec == nil {
@@ -200,6 +219,7 @@ func (s *ServerActivities) PrepareBackupSession(ctx context.Context, jobID uuid.
 		K8sConfig:          k8sSpec,
 		PVEConfig:          pveSpec,
 		DockerConfig:       dockerSpec,
+		M365Config:         m365Spec,
 		BackupPaths:        job.BackupPaths,
 		ExcludePaths:       job.ExcludePaths,
 		WorkflowID:         info.WorkflowExecution.ID,

@@ -6,6 +6,7 @@ import (
 	"github.com/osshield/fallbck/pkg/dockerbackup"
 	"github.com/osshield/fallbck/pkg/inventory"
 	"github.com/osshield/fallbck/pkg/k8sbackup"
+	"github.com/osshield/fallbck/pkg/m365"
 	"github.com/osshield/fallbck/pkg/pvebackup"
 	"time"
 
@@ -59,6 +60,10 @@ type BackupSessionInfo struct {
 	PVEConfig *pvebackup.Spec `json:"pve_config,omitempty"`
 	// DockerConfig is the Docker host job specification (job_type docker)
 	DockerConfig *dockerbackup.Spec `json:"docker_config,omitempty"`
+	// M365Config is the Microsoft 365 job specification (job_type m365); the tenant
+	// credentials never travel through Temporal, the agent fetches them with its
+	// ticket (GET /api/v1/agents/m365-credentials)
+	M365Config *m365.Spec `json:"m365_config,omitempty"`
 	// JobName is informational (manifest)
 	JobName      string    `json:"job_name,omitempty"`
 	BackupPaths  []string  `json:"backup_paths"`
