@@ -16,7 +16,7 @@ require (
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/microsoft/go-mssqldb v1.11.0
 	github.com/mxk/go-vss v1.2.1
-	github.com/osshield/gopbs v0.3.0-rc.2
+	github.com/osshield/gopbs v0.3.0-rc.3
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/stretchr/testify v1.12.1
 	github.com/temporalio/ui-server/v2 v2.54.1
@@ -237,4 +237,4 @@ require (
 
 // Local gopbs checkout (branch virtual-tree: AddTree + stream reuse for Microsoft 365); drop
 // once the change is released and the require line bumped
-replace github.com/osshield/gopbs => ./.local/gopbs
+// replace github.com/osshield/gopbs => ./.local/gopbs
