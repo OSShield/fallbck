@@ -117,7 +117,7 @@ func (t *BackupTunnel) Session(ss grpc.ServerStream) error {
 		t.logger.Error("Failed to load backup target", "target_id", claims.TargetID, "error", err)
 		return status.Error(codes.Internal, "failed to load backup target")
 	}
-	if target.AuthTokenEncrypted == "" {
+	if target.AuthToken == "" {
 		return status.Error(codes.FailedPrecondition, "backup target has no PBS API token configured")
 	}
 

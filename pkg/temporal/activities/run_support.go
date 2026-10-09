@@ -27,24 +27,42 @@ import (
 var (
 	errNoCredentialsFetcher = errors.New("job requires direct PBS access but the agent has no credentials fetcher")
 	errNoTunnel             = errors.New("agent tunnel connection is not configured")
+	errNoKeyFetcher         = errors.New("the target is encrypted but this agent has no encryption key fetcher (agent too old?)")
+	errNoKey                = errors.New("the target is encrypted but the server handed out no key for the run")
 )
 
 // isTransportConfigErr tells a misconfigured agent from a failed credentials fetch
 func isTransportConfigErr(err error) bool {
-	return errors.Is(err, errNoCredentialsFetcher) || errors.Is(err, errNoTunnel)
+	return errors.Is(err, errNoCredentialsFetcher) || errors.Is(err, errNoTunnel) || errors.Is(err, errNoKeyFetcher) || errors.Is(err, errNoKey)
 }
 
+// KeyFetcher retrieves the run's client-side encryption key with its ticket
+type KeyFetcher = func(ctx context.Context, ticket string) (*backup.Encryption, error)
+
 // pbsTransport is how one run reaches PBS: a dialer through the server tunnel, or
-// direct credentials for jobs with direct_pbs. Exactly one is set.
+// direct credentials for jobs with direct_pbs. Exactly one is set. crypt is the
+// run's encryption (nil for a plaintext target).
 type pbsTransport struct {
 	dial   func(ctx context.Context, ref pbs.SnapshotRef) (net.Conn, error)
 	direct *backup.DirectOptions
+	crypt  *backup.Encryption
 }
 
-// openTransport picks the transport for the session. pt, when non-nil, shows
-// "fetching PBS credentials" while direct credentials are requested.
+// options applies the transport to upload options
+func (t pbsTransport) options(o backup.Options) backup.Options {
+	o.Dial, o.Direct, o.Crypt = t.dial, t.direct, t.crypt
+	return o
+}
+
+// close wipes the key material after the run
+func (t pbsTransport) close() { t.crypt.Wipe() }
+
+// openTransport picks the transport for the session and, for an encrypted target,
+// fetches the key. pt, when non-nil, shows what is being fetched. A missing key is a
+// configuration error: the run must not fall back to plaintext.
 func openTransport(ctx context.Context, session *temporal.BackupSessionInfo, tunnel grpc.ClientConnInterface,
-	credentials func(ctx context.Context, ticket string) (*backup.DirectOptions, error), pt *phaseTracker) (pbsTransport, error) {
+	credentials func(ctx context.Context, ticket string) (*backup.DirectOptions, error), keys KeyFetcher, pt *phaseTracker) (pbsTransport, error) {
+	var tr pbsTransport
 	if session.DirectPBS {
 		if credentials == nil {
 			return pbsTransport{}, errNoCredentialsFetcher
@@ -56,14 +74,32 @@ func openTransport(ctx context.Context, session *temporal.BackupSessionInfo, tun
 		if err != nil {
 			return pbsTransport{}, err
 		}
-		return pbsTransport{direct: direct}, nil
+		tr.direct = direct
+	} else {
+		if tunnel == nil {
+			return pbsTransport{}, errNoTunnel
+		}
+		tr.dial = func(ctx context.Context, _ pbs.SnapshotRef) (net.Conn, error) {
+			return proxy.Dial(ctx, tunnel, session.Ticket)
+		}
 	}
-	if tunnel == nil {
-		return pbsTransport{}, errNoTunnel
+	if session.Encrypted {
+		if keys == nil {
+			return pbsTransport{}, errNoKeyFetcher
+		}
+		if pt != nil {
+			pt.Set("fetching encryption key")
+		}
+		enc, err := keys(ctx, session.Ticket)
+		if err != nil {
+			return pbsTransport{}, err
+		}
+		if enc == nil {
+			return pbsTransport{}, errNoKey
+		}
+		tr.crypt = enc
 	}
-	return pbsTransport{dial: func(ctx context.Context, _ pbs.SnapshotRef) (net.Conn, error) {
-		return proxy.Dial(ctx, tunnel, session.Ticket)
-	}}, nil
+	return tr, nil
 }
 
 // runTracking is the phase tracker of one activity run with its tickers

@@ -22,6 +22,7 @@ import (
 	"github.com/osshield/fallbck/pkg/db"
 	"github.com/osshield/fallbck/pkg/gateway"
 	"github.com/osshield/fallbck/pkg/proxy"
+	"github.com/osshield/fallbck/pkg/secrets"
 	"github.com/osshield/fallbck/pkg/temporal"
 	"github.com/osshield/fallbck/pkg/temporal/activities"
 	"github.com/osshield/fallbck/pkg/temporal/embedded"
@@ -67,6 +68,16 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// ---------------------------------------------------------------- Master key
+	// Seals stored secrets (PBS API tokens, backup encryption keys). Generated on the
+	// first start; from then on the database is useless without it, so it is backed
+	// up together with the database.
+	sealer, err := loadSealer(cfg)
+	if err != nil {
+		slog.Error("Master key unavailable", "error", err)
+		os.Exit(1)
+	}
+
 	// ---------------------------------------------------------------- Database
 	database, err := db.New(ctx, cfg.Database)
 	if err != nil {
@@ -78,7 +89,14 @@ func main() {
 		database = nil
 	} else {
 		defer database.Close()
+		database.Sealer = sealer
 		slog.Info("Connected to PostgreSQL database successfully")
+		if n, err := database.SealLegacySecrets(ctx); err != nil {
+			slog.Error("Sealing stored secrets with the master key failed", "error", err)
+			os.Exit(1)
+		} else if n > 0 {
+			slog.Info("Sealed secrets that were stored in clear by earlier versions", "rows", n)
+		}
 	}
 
 	tokenManager := auth.NewTokenManager(cfg.JWTSecret)
@@ -329,4 +347,28 @@ func main() {
 	}
 	// Deferred: gateway → UI → worker → SDK client → embedded Temporal → database
 	slog.Info("FallBCK Server stopped gracefully")
+}
+
+// loadSealer builds the secrets sealer from FALLBCK_MASTER_KEY / security.master_key,
+// else from the key file (created on first start)
+func loadSealer(cfg *config.ServerConfig) (*secrets.Sealer, error) {
+	if cfg.Security.MasterKey != "" {
+		key, err := secrets.ParseKey(cfg.Security.MasterKey)
+		if err != nil {
+			return nil, err
+		}
+		slog.Info("Master key taken from configuration/environment")
+		return secrets.New(key)
+	}
+	path := cfg.EffectiveMasterKeyFile()
+	key, created, err := secrets.LoadOrCreateKeyFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if created {
+		slog.Warn("Generated a new master key; back it up together with the database, stored secrets cannot be recovered without it", "path", path)
+	} else {
+		slog.Info("Master key loaded", "path", path)
+	}
+	return secrets.New(key)
 }

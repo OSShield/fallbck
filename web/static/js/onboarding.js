@@ -464,7 +464,7 @@ function obUpdateFooter() {
     case '3': label = 'I ran the commands'; break;
     case '4': label = 'Continue'; ok = !!ob.agentId; break;
     case '5': ok = !!ob.backupType; break;
-    case '6': ok = !!ob.targetId; break;
+    case '6': ok = !!ob.targetId && !(ob.pendingKeyTarget && ob.pendingKeyTarget === ob.targetId); break;
     case '9': label = 'Create backup job'; break;
   }
   next.innerText = label;
@@ -716,9 +716,22 @@ function obAddTargetCard(t) {
   title.innerText = t.name;
   const desc = document.createElement('div');
   desc.className = 'wizard-option-desc';
-  desc.innerText = `${t.endpoint}, datastore ${t.datastore}, ${t.namespace ? 'namespace ' + t.namespace : 'root namespace'}, pxar ${t.pxar_format || 'v1'}`;
+  desc.innerText = `${t.endpoint}, datastore ${t.datastore}, ${t.namespace ? 'namespace ' + t.namespace : 'root namespace'}, pxar ${t.pxar_format || 'v1'}${t.encryption_mode === 'encrypt' ? ', encrypted' : ''}`;
   card.appendChild(title);
   card.appendChild(desc);
+  if (t.encryption_mode === 'encrypt' && t.key_fingerprint) {
+    // The key was just generated: nothing on this target is restorable without it,
+    // so the flow does not continue until the key file has been downloaded
+    ob.pendingKeyTarget = t.id;
+    const gate = document.createElement('div');
+    gate.className = 'ob-key-gate';
+    gate.style.cssText = 'margin-top:10px;padding:10px 12px;border:1px solid var(--danger-text);border-radius:var(--radius-sm);font-size:13px;';
+    gate.onclick = (e) => e.stopPropagation();
+    gate.innerHTML = `<strong>Export the encryption key before continuing.</strong> Key <code style="font-family:var(--font-mono);font-size:11px;">${t.key_fingerprint}</code>.<div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;"><input type="password" class="form-control" placeholder="passphrase for the key file (min 5)" style="max-width:280px;" autocomplete="new-password"><button type="button" class="btn btn-primary btn-sm">Export key file</button></div>`;
+    const pass = gate.querySelector('input');
+    gate.querySelector('button').onclick = () => exportTargetKey({ _target: t, elements: { key_passphrase: pass }, dataset: {}, querySelector: () => null, querySelectorAll: () => [] });
+    card.appendChild(gate);
+  }
   const newCard = document.querySelector('#ob-target-options .wizard-option[data-value="__new"]');
   newCard.parentElement.insertBefore(card, newCard);
   ob.targetId = t.id;
@@ -934,4 +947,12 @@ function obAddAnother() {
   ob.backupType = '';
   ob.step = '5';
   obRender();
+}
+
+// obKeyExported lifts the key gate once the key file of the new target is downloaded
+function obKeyExported(t) {
+  if (ob.pendingKeyTarget !== t.id) return;
+  ob.pendingKeyTarget = '';
+  document.querySelectorAll('.ob-key-gate').forEach(g => { g.innerHTML = '<strong>Key file downloaded.</strong> Keep it and its passphrase away from the server.'; g.style.borderColor = 'var(--border)'; });
+  obUpdateFooter();
 }

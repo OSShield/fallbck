@@ -60,7 +60,7 @@ func TestEndToEndBackupFlow(t *testing.T) {
 	agentID, targetID, jobID := uuid.New(), uuid.New(), uuid.New()
 	target := &db.BackupTarget{
 		ID: targetID, Name: "fake-pbs", Endpoint: fake.URL(), Datastore: "backup-store", Namespace: "prod",
-		AuthTokenEncrypted: "PBSAPIToken=backup@pbs!fallbck=secret", Fingerprint: fake.Fingerprint(), PxarFormat: db.PxarFormatV1,
+		AuthToken: "PBSAPIToken=backup@pbs!fallbck=secret", Fingerprint: fake.Fingerprint(), PxarFormat: db.PxarFormatV1,
 	}
 
 	// Server: gateway (agent auth) + tunnel on an h2c listener

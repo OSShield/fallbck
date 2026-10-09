@@ -211,26 +211,65 @@ const (
 
 // BackupTarget represents a remote backup repository such as Proxmox Backup Server
 type BackupTarget struct {
-	ID                 uuid.UUID `json:"id" db:"id"`
-	Name               string    `json:"name" db:"name"`
-	TargetType         string    `json:"target_type" db:"target_type"` // "pbs"
-	Endpoint           string    `json:"endpoint" db:"endpoint"`
-	Datastore          string    `json:"datastore" db:"datastore"`
-	Namespace          string    `json:"namespace" db:"namespace"`
-	AuthTokenEncrypted string    `json:"-" db:"auth_token_encrypted"`
-	Fingerprint        string    `json:"fingerprint" db:"fingerprint"`
-	TLSVerify          bool      `json:"tls_verify" db:"tls_verify"`
-	PxarFormat         string    `json:"pxar_format" db:"pxar_format"`
-	CreatedAt          time.Time `json:"created_at" db:"created_at"`
-	UpdatedAt          time.Time `json:"updated_at" db:"updated_at"`
+	ID         uuid.UUID `json:"id" db:"id"`
+	Name       string    `json:"name" db:"name"`
+	TargetType string    `json:"target_type" db:"target_type"` // "pbs"
+	Endpoint   string    `json:"endpoint" db:"endpoint"`
+	Datastore  string    `json:"datastore" db:"datastore"`
+	Namespace  string    `json:"namespace" db:"namespace"`
+	// AuthToken is the PBS API token in clear in memory; the repository seals it with
+	// the server master key on write and opens it on read (column auth_token_encrypted)
+	AuthToken   string    `json:"-" db:"auth_token_encrypted"`
+	Fingerprint string    `json:"fingerprint" db:"fingerprint"`
+	TLSVerify   bool      `json:"tls_verify" db:"tls_verify"`
+	PxarFormat  string    `json:"pxar_format" db:"pxar_format"`
+	CreatedAt   time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at" db:"updated_at"`
+
+	// Client-side encryption: EncryptionNone or EncryptionEncrypt; the active key is
+	// EncryptionKeyID (a target_keys row), MasterPublicKey an optional RSA public key
+	// (PEM) every snapshot wraps the encryption key with, for recovery
+	EncryptionMode  string     `json:"encryption_mode" db:"encryption_mode"`
+	EncryptionKeyID *uuid.UUID `json:"encryption_key_id,omitempty" db:"encryption_key_id"`
+	MasterPublicKey string     `json:"master_public_key,omitempty" db:"master_public_key"`
+	// KeyFingerprint / KeyCreatedAt describe the active key (joined on read)
+	KeyFingerprint string     `json:"key_fingerprint,omitempty" db:"-"`
+	KeyCreatedAt   *time.Time `json:"key_created_at,omitempty" db:"-"`
 
 	// HasToken reports whether an API token is stored (the token itself is never returned)
 	HasToken bool `json:"has_token" db:"-"`
 }
 
+// Encryption modes of a target
+const (
+	EncryptionNone    = "none"
+	EncryptionEncrypt = "encrypt"
+)
+
+// Encrypted reports whether runs to this target encrypt client-side
+func (t *BackupTarget) Encrypted() bool {
+	return t != nil && t.EncryptionMode == EncryptionEncrypt && t.EncryptionKeyID != nil
+}
+
+// TargetKey is one encryption key of a target. Key is in clear in memory only; the
+// repository seals it with the server master key (column key_sealed). A retired key
+// is kept because the snapshots written with it still need it.
+type TargetKey struct {
+	ID          uuid.UUID  `json:"id"`
+	TargetID    uuid.UUID  `json:"target_id"`
+	Key         [32]byte   `json:"-"`
+	Fingerprint string     `json:"fingerprint"`
+	CreatedAt   time.Time  `json:"created_at"`
+	RetiredAt   *time.Time `json:"retired_at,omitempty"`
+	CreatedBy   string     `json:"created_by,omitempty"`
+}
+
 // Sanitize fills derived, API-safe fields
 func (t *BackupTarget) Sanitize() *BackupTarget {
-	t.HasToken = t.AuthTokenEncrypted != ""
+	t.HasToken = t.AuthToken != ""
+	if t.EncryptionMode == "" {
+		t.EncryptionMode = EncryptionNone
+	}
 	return t
 }
 
@@ -312,6 +351,8 @@ type BackupRun struct {
 	PBSSnapshotID string     `json:"pbs_snapshot_id" db:"pbs_snapshot_id"`
 	// LogTail is the agent's recent log output captured when the run failed
 	LogTail string `json:"log_tail,omitempty" db:"log_tail"`
+	// KeyFingerprint names the encryption key the snapshot was written with ("" = plaintext)
+	KeyFingerprint string `json:"key_fingerprint,omitempty" db:"key_fingerprint"`
 	// Details is a type-specific JSON blob (archives / databases / PVCs) for the run
 	// detail page; carries a top-level "type" discriminator. Empty for older runs.
 	Details json.RawMessage `json:"details,omitempty" db:"details"`

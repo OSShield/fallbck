@@ -44,4 +44,39 @@
   <input type="checkbox" id="tls_verify" name="tls_verify" checked>
   <label for="tls_verify" style="font-size: 13px; font-weight: 500;">Verify TLS Certificates</label>
 </div>
+
+<div class="form-group" style="margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border);">
+  <label>Client-side encryption</label>
+  <select name="encryption_mode" class="form-control" onchange="updateTargetEncryption(this.form)">
+    <option value="none" selected>Off — snapshots are stored as uploaded</option>
+    <option value="encrypt">Encrypt on the agent (AES-256-GCM; PBS never sees plaintext)</option>
+  </select>
+  <span class="form-text">One key per target, generated and kept on the server (sealed with its master key) and handed to agents per run. Export the key file after saving: without it, or the server database plus master key, the backups cannot be restored.</span>
+</div>
+<div class="target-encryption-opts" hidden>
+  <div class="form-group">
+    <label>Master public key for recovery (RSA, PEM, optional)</label>
+    <textarea name="master_public_key" class="form-control" rows="3" placeholder="-----BEGIN PUBLIC KEY-----" style="font-family: var(--font-mono); font-size: 11px;"></textarea>
+    <span class="form-text">Each snapshot then also carries the encryption key wrapped with this key, so the private key can recover the data if the key file is lost (proxmox-backup-client key import-with-master-key).</span>
+  </div>
+  <div class="target-key-status" hidden style="font-size: 13px; background: var(--bg-subtle); padding: 10px 12px; border-radius: var(--radius-sm); margin-bottom: 10px;"></div>
+  <div class="target-key-actions" hidden>
+    <div style="display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: end; margin-bottom: 8px;">
+      <div class="form-group" style="margin: 0;">
+        <label style="font-size: 12px; color: var(--text-muted);">Passphrase for the exported key file (at least 5 characters)</label>
+        <input type="password" name="key_passphrase" class="form-control" autocomplete="new-password">
+      </div>
+      <button type="button" class="btn btn-primary btn-sm" onclick="exportTargetKey(this.form)">Export key file</button>
+    </div>
+    <details style="font-size: 13px;">
+      <summary style="cursor: pointer; color: var(--text-muted);">Rotate or import a key</summary>
+      <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px;">
+        <button type="button" class="btn btn-secondary btn-sm" onclick="rotateTargetKey(this.form)">Rotate key</button>
+        <input type="file" name="key_file" accept=".json,application/json" style="font-size: 12px;">
+        <button type="button" class="btn btn-secondary btn-sm" onclick="importTargetKey(this.form)">Import key file (uses the passphrase above)</button>
+      </div>
+      <span class="form-text">Rotation starts a new chunk history (nothing deduplicates against the old key) and keeps the old key for the snapshots written with it. Import adopts a key from another FallBCK target or proxmox-backup-client.</span>
+    </details>
+  </div>
+</div>
 {{end}}

@@ -11,8 +11,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/osshield/fallbck/pkg/config"
+	"github.com/osshield/fallbck/pkg/secrets"
 )
 
 //go:embed migrations/*.sql
@@ -21,6 +23,61 @@ var migrationFS embed.FS
 // DB wraps the pgx connection pool and exposes repository operations
 type DB struct {
 	Pool *pgxpool.Pool
+	// Sealer protects stored secrets (target API tokens, encryption keys) at rest.
+	// nil (tests) stores them in clear.
+	Sealer *secrets.Sealer
+}
+
+// seal / open apply the Sealer when one is configured. open accepts legacy plaintext
+// values (rows written before the master key existed) until SealLegacySecrets has
+// rewritten them.
+func (d *DB) seal(plain string) string {
+	if d.Sealer == nil || plain == "" {
+		return plain
+	}
+	return d.Sealer.SealString(plain)
+}
+
+func (d *DB) open(stored string) (string, error) {
+	if d.Sealer == nil || !secrets.IsSealed(stored) {
+		return stored, nil
+	}
+	return d.Sealer.OpenString(stored)
+}
+
+// SealLegacySecrets rewrites secrets stored in clear before the master key existed.
+// It returns how many rows were sealed. Safe to run at every start.
+func (d *DB) SealLegacySecrets(ctx context.Context) (int, error) {
+	if d.Sealer == nil {
+		return 0, nil
+	}
+	rows, err := d.Pool.Query(ctx, `SELECT id, auth_token_encrypted FROM backup_targets WHERE auth_token_encrypted <> '' AND auth_token_encrypted NOT LIKE 'v1:%'`)
+	if err != nil {
+		return 0, err
+	}
+	type row struct {
+		id    uuid.UUID
+		token string
+	}
+	var pending []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.token); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		pending = append(pending, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	for _, r := range pending {
+		if _, err := d.Pool.Exec(ctx, `UPDATE backup_targets SET auth_token_encrypted = $2 WHERE id = $1`, r.id, d.seal(r.token)); err != nil {
+			return 0, err
+		}
+	}
+	return len(pending), nil
 }
 
 // New creates a new database connection pool and applies migrations if enabled

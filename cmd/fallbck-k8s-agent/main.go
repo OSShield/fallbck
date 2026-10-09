@@ -228,6 +228,7 @@ func runAgent(logging *runtime.Logging) {
 		acts.LogTail = logging.Tail
 		acts.ReportProgress = runtime.ProgressReporter(cfg, store)
 		acts.Credentials = runtime.PBSCredentialsFetcher(cfg, store)
+		acts.EncryptionKey = runtime.EncryptionKeyFetcher(cfg, store)
 		acts.RefreshTicket = runtime.TicketRefresher(cfg, store)
 		acts.VolumeTicket = func(ctx context.Context, sessionTicket, volumeBackupID string) (string, int64, error) {
 			var resp api.VolumeTicketResponse

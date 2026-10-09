@@ -40,7 +40,7 @@ func (s *ServerAPI) HandleTargetCredentials(w http.ResponseWriter, r *http.Reque
 		s.writeError(w, http.StatusNotFound, "Target not found")
 		return
 	}
-	token, err := pbs.NormalizeAPIToken(target.AuthTokenEncrypted)
+	token, err := pbs.NormalizeAPIToken(target.AuthToken)
 	if err != nil {
 		s.writeError(w, http.StatusFailedDependency, "backup target has no usable PBS API token")
 		return

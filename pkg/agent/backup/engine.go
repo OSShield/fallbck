@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"path/filepath"
 	goruntime "runtime"
 	"strings"
 	"time"
@@ -53,6 +54,10 @@ type Options struct {
 	ArchiveName string
 	// Blobs are small extra files stored in the snapshot as <name>.blob (manifests)
 	Blobs []gopbs.Blob
+	// Crypt encrypts the upload client-side (per-target key fetched for the run).
+	// Required when Session.Encrypted is set: the run refuses to upload plaintext to
+	// an encrypted target.
+	Crypt *Encryption
 	// OnPhase is told what the engine is doing (opening the session, uploading an
 	// archive, finalizing); used for activity heartbeats and failure reporting
 	OnPhase func(phase string)
@@ -80,6 +85,9 @@ func Run(ctx context.Context, opts Options) (*temporal.BackupExecutionResult, er
 	}
 	if opts.Dial == nil && opts.Direct == nil {
 		return nil, errors.New("backup session dialer or direct PBS options are required")
+	}
+	if s.Encrypted && (opts.Crypt == nil || opts.Crypt.Config == nil) {
+		return nil, errors.New("the target is encrypted but no encryption key was provided for the run; refusing to upload plaintext")
 	}
 	paths, err := db.ValidateLocalBackupPaths(s.BackupPaths)
 	if err != nil {
@@ -152,6 +160,18 @@ func Run(ctx context.Context, opts Options) (*temporal.BackupExecutionResult, er
 		Datastore:   s.Datastore,
 		Workers:     opts.Workers,
 	}
+	cacheDir := opts.CacheDir
+	keyFingerprint := ""
+	if opts.Crypt != nil && opts.Crypt.Config != nil {
+		clientCfg.Crypt = opts.Crypt.Config
+		keyFingerprint = opts.Crypt.Fingerprint
+		// Chunk digests depend on the key: keep one metadata cache per key so a
+		// rotation misses the cache instead of producing rejected runs
+		if cacheDir != "" {
+			cacheDir = filepath.Join(cacheDir, "key-"+shortFingerprint(keyFingerprint))
+		}
+		slog.Info("Client-side encryption enabled for this run", "fingerprint", keyFingerprint, "master_key", len(opts.Crypt.Config.MasterPublicKey) > 0)
+	}
 	namespace := "(server-controlled)"
 	if d := opts.Direct; d != nil {
 		authID, secret, err := fbpbs.SplitAPIToken(d.APIToken)
@@ -186,7 +206,7 @@ func Run(ctx context.Context, opts Options) (*temporal.BackupExecutionResult, er
 		Ref:    ref,
 		Format: format,
 		Paths:  readPaths,
-	}, names, opts.CacheDir, opts.OnPhase)
+	}, names, cacheDir, opts.OnPhase)
 	if err != nil {
 		return nil, err
 	}
@@ -217,7 +237,7 @@ func Run(ctx context.Context, opts Options) (*temporal.BackupExecutionResult, er
 	snapshot := fmt.Sprintf("%s/%s/%s", result.Ref.Type, result.Ref.ID, result.Ref.Time.UTC().Format("2006-01-02T15:04:05Z"))
 	duration := time.Since(start)
 	slog.Info("PBS backup completed", "snapshot", snapshot, "archive", result.ArchiveName, "size", size, "chunks", chunks, "new_chunks", newChunks, "duration", duration)
-	if r := result.Reuse; r.Files > 0 && opts.CacheDir != "" {
+	if r := result.Reuse; r.Files > 0 && cacheDir != "" {
 		slog.Info("Change detection", "files", r.Files, "unchanged", r.ReusedFiles, "reused_bytes", r.ReusedBytes, "injected_bytes", r.InjectedBytes, "rejected_runs", r.RejectedRuns)
 	}
 
@@ -226,21 +246,22 @@ func Run(ctx context.Context, opts Options) (*temporal.BackupExecutionResult, er
 		Paths: s.BackupPaths, ExcludePaths: s.ExcludePaths,
 		Archives: archiveStats(result),
 	}
-	if opts.CacheDir != "" && format == gopbs.FormatV2 {
+	if cacheDir != "" && format == gopbs.FormatV2 {
 		r := result.Reuse
 		detail.Reuse = &rundetail.ReuseStats{Files: r.Files, ReusedFiles: r.ReusedFiles, ReusedBytes: r.ReusedBytes, InjectedBytes: r.InjectedBytes, RejectedRuns: r.RejectedRuns}
 	}
 	detail.Warnings = detailWarnings(result.Warnings)
 
 	return &temporal.BackupExecutionResult{
-		Status:        db.RunStatusCompleted,
-		BytesScanned:  int64(size),
-		BytesUploaded: int64(uploaded),
-		DedupRatio:    dedup,
-		ChunkCount:    int(chunks),
-		SnapshotID:    snapshot,
-		Duration:      duration,
-		Details:       rundetail.Marshal(detail),
+		KeyFingerprint: keyFingerprint,
+		Status:         db.RunStatusCompleted,
+		BytesScanned:   int64(size),
+		BytesUploaded:  int64(uploaded),
+		DedupRatio:     dedup,
+		ChunkCount:     int(chunks),
+		SnapshotID:     snapshot,
+		Duration:       duration,
+		Details:        rundetail.Marshal(detail),
 	}, nil
 }
 

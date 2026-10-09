@@ -43,21 +43,21 @@ func runDBWorker(ctx context.Context) workerOutcome {
 		}
 	}
 
-	dial, direct, closeFn, err := workerTransport(ticket)
+	tr, err := openWorkerTransport(ctx, session, ticket)
 	if err != nil {
 		return fail("connect", err)
 	}
-	defer closeFn()
+	defer tr.close()
 
 	upload := func(ctx context.Context, spoolDir string, blobs []gopbs.Blob) (*temporal.BackupExecutionResult, error) {
 		s := *session
 		s.BackupPaths = []string{spoolDir}
 		s.ExcludePaths = nil
-		return backup.Run(ctx, backup.Options{
-			Session: &s, Dial: dial, Direct: direct,
+		return backup.Run(ctx, tr.options(backup.Options{
+			Session:     &s,
 			ArchiveName: dbspec.ArchiveName, Blobs: blobs,
 			OnPhase: func(p string) { slog.Info("Upload phase", "phase", p) },
-		})
+		}))
 	}
 
 	store := &dbrun.MemoryStateStore{Prev: prev}

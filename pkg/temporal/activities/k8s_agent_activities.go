@@ -44,6 +44,9 @@ type K8sAgentActivities struct {
 	WorkerMaxProcs int
 	// Credentials fetches PBS connection details for jobs in direct mode
 	Credentials func(ctx context.Context, ticket string) (*backup.DirectOptions, error)
+	// EncryptionKey fetches the target's client-side encryption key for a run
+	// (GET /api/v1/agents/encryption-key with the run's ticket)
+	EncryptionKey KeyFetcher
 	// VolumeTicket mints a per-volume backup ticket from the session ticket; the
 	// returned snapshot timestamp is the one embedded in the ticket (fresh per attempt)
 	VolumeTicket func(ctx context.Context, sessionTicket, volumeBackupID string) (ticket string, backupTime int64, err error)
@@ -410,14 +413,15 @@ func (a *K8sAgentActivities) BackupKubernetesResources(ctx context.Context, sess
 	uploadSession.ExcludePaths = nil
 	opts := backup.Options{Session: &uploadSession, ArchiveName: spec.ResourcesArchiveName, OnPhase: pt.Set,
 		Blobs: []gopbs.Blob{{Name: spec.ManifestBlobName, Data: data}}}
-	tr, err := openTransport(ctx, session, a.Tunnel, a.Credentials, nil)
+	tr, err := openTransport(ctx, session, a.Tunnel, a.Credentials, a.EncryptionKey, nil)
 	if err != nil {
 		if isTransportConfigErr(err) {
 			return nil, err
 		}
 		return nil, backupFailure(ctx, err, pt, a.LogTail)
 	}
-	opts.Dial, opts.Direct = tr.dial, tr.direct
+	defer tr.close()
+	opts = tr.options(opts)
 	result, err := backup.Run(ctx, opts)
 	if err != nil {
 		slog.Error("Kubernetes resource backup failed", "error", err, "phase", pt.Current())

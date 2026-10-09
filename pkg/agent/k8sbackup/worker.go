@@ -135,43 +135,92 @@ func workerSession() (*temporal.BackupSessionInfo, string, error) {
 	return &session, ticket, nil
 }
 
-// workerTransport resolves how the worker reaches PBS: directly (credentials in the
-// environment) or through the server tunnel with the worker token. The returned close
-// function releases the tunnel connection.
-func workerTransport(ticket string) (dial func(ctx context.Context, ref pbs.SnapshotRef) (net.Conn, error), direct *backup.DirectOptions, closeFn func(), err error) {
-	closeFn = func() {}
+// workerTransport is how the worker reaches PBS (directly with credentials from the
+// environment, or through the server tunnel with the worker token) plus, for an
+// encrypted target, the run's key. The key is fetched here with the ticket, never
+// passed through the pod spec, and wiped by the returned close function together
+// with the tunnel connection.
+type workerTransport struct {
+	dial   func(ctx context.Context, ref pbs.SnapshotRef) (net.Conn, error)
+	direct *backup.DirectOptions
+	crypt  *backup.Encryption
+	close  func()
+}
+
+// options applies the transport to upload options
+func (t *workerTransport) options(o backup.Options) backup.Options {
+	o.Dial, o.Direct, o.Crypt = t.dial, t.direct, t.crypt
+	return o
+}
+
+func openWorkerTransport(ctx context.Context, session *temporal.BackupSessionInfo, ticket string) (*workerTransport, error) {
+	// The server connection serves the tunnel and the key fetch; a direct-mode
+	// worker on a plaintext target needs neither
+	var cfg *config.AgentConfig
+	var store *runtime.TokenStore
+	serverConn := func() error {
+		if cfg != nil {
+			return nil
+		}
+		serverURL := os.Getenv(EnvWorkerServerURL)
+		token := os.Getenv(EnvWorkerToken)
+		if serverURL == "" || token == "" {
+			return fmt.Errorf("worker environment is incomplete (server URL/token missing)")
+		}
+		cfg = &config.AgentConfig{ServerURL: serverURL, AuthToken: token}
+		if os.Getenv(EnvWorkerInsecure) == "true" {
+			cfg.InsecureSkipVerify = true
+		}
+		if pem := os.Getenv(EnvWorkerServerCA); pem != "" {
+			caPath := filepath.Join(os.TempDir(), "fallbck-server-ca.crt")
+			if err := os.WriteFile(caPath, []byte(pem), 0o600); err != nil {
+				return fmt.Errorf("writing server CA: %w", err)
+			}
+			cfg.ServerCACertPath = caPath
+		}
+		store = runtime.NewTokenStore(cfg, "")
+		return nil
+	}
+	tr := &workerTransport{close: func() {}}
+
 	if directJSON := os.Getenv(EnvWorkerPBSDirect); directJSON != "" {
 		var d backup.DirectOptions
 		if err := json.Unmarshal([]byte(directJSON), &d); err != nil {
-			return nil, nil, closeFn, fmt.Errorf("parsing %s: %w", EnvWorkerPBSDirect, err)
+			return nil, fmt.Errorf("parsing %s: %w", EnvWorkerPBSDirect, err)
 		}
-		return nil, &d, closeFn, nil
-	}
-	serverURL := os.Getenv(EnvWorkerServerURL)
-	token := os.Getenv(EnvWorkerToken)
-	if serverURL == "" || token == "" {
-		return nil, nil, closeFn, fmt.Errorf("worker environment is incomplete (server URL/token missing)")
-	}
-	cfg := &config.AgentConfig{ServerURL: serverURL, AuthToken: token}
-	if os.Getenv(EnvWorkerInsecure) == "true" {
-		cfg.InsecureSkipVerify = true
-	}
-	if pem := os.Getenv(EnvWorkerServerCA); pem != "" {
-		caPath := filepath.Join(os.TempDir(), "fallbck-server-ca.crt")
-		if err := os.WriteFile(caPath, []byte(pem), 0o600); err != nil {
-			return nil, nil, closeFn, fmt.Errorf("writing server CA: %w", err)
+		tr.direct = &d
+	} else {
+		if err := serverConn(); err != nil {
+			return nil, err
 		}
-		cfg.ServerCACertPath = caPath
+		conn, err := runtime.DialTunnel(cfg, store)
+		if err != nil {
+			return nil, err
+		}
+		tr.dial = func(ctx context.Context, _ pbs.SnapshotRef) (net.Conn, error) {
+			return proxy.Dial(ctx, conn, ticket)
+		}
+		tr.close = func() { _ = conn.Close() }
 	}
-	store := runtime.NewTokenStore(cfg, "")
-	conn, err := runtime.DialTunnel(cfg, store)
-	if err != nil {
-		return nil, nil, closeFn, err
+	if session != nil && session.Encrypted {
+		if err := serverConn(); err != nil {
+			tr.close()
+			return nil, fmt.Errorf("fetching the encryption key: %w", err)
+		}
+		enc, err := runtime.EncryptionKeyFetcher(cfg, store)(ctx, ticket)
+		if err != nil {
+			tr.close()
+			return nil, err
+		}
+		if enc == nil {
+			tr.close()
+			return nil, fmt.Errorf("the target is encrypted but the server handed out no key for the run")
+		}
+		tr.crypt = enc
+		closeConn := tr.close
+		tr.close = func() { enc.Wipe(); closeConn() }
 	}
-	dial = func(ctx context.Context, _ pbs.SnapshotRef) (net.Conn, error) {
-		return proxy.Dial(ctx, conn, ticket)
-	}
-	return dial, nil, func() { _ = conn.Close() }, nil
+	return tr, nil
 }
 
 func runWorker(ctx context.Context) workerOutcome {
@@ -183,13 +232,12 @@ func runWorker(ctx context.Context) workerOutcome {
 	session.BackupPaths = []string{dataPath}
 	session.ExcludePaths = nil
 
-	opts := backup.Options{Session: session, ArchiveName: spec.VolumeArchiveName}
-	dial, direct, closeFn, err := workerTransport(ticket)
+	tr, err := openWorkerTransport(ctx, session, ticket)
 	if err != nil {
 		return fail("connect", err)
 	}
-	defer closeFn()
-	opts.Dial, opts.Direct = dial, direct
+	defer tr.close()
+	opts := tr.options(backup.Options{Session: session, ArchiveName: spec.VolumeArchiveName})
 
 	runCtx, cancel := context.WithTimeout(ctx, workerUploadTimeout)
 	defer cancel()
