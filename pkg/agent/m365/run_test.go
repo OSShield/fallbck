@@ -300,7 +300,11 @@ func (g *fakeGraph) handler(t *testing.T) http.Handler {
 				Modified string `json:"lastModifiedDateTime"`
 			}
 			_ = json.Unmarshal(m, &mm)
-			if filter == "" || mm.Modified > strings.TrimPrefix(filter, "lastModifiedDateTime gt ") {
+			since := ""
+			if f := strings.Fields(filter); len(f) >= 3 {
+				since = f[2]
+			}
+			if filter == "" || mm.Modified > since {
 				out = append(out, m)
 			}
 		}

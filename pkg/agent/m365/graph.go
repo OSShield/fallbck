@@ -125,7 +125,8 @@ func encodeQuery(raw string) string {
 		if dec, err := url.QueryUnescape(v); err == nil && dec != v {
 			continue // already escaped
 		}
-		parts[i] = k + "=" + url.QueryEscape(v)
+		// Graph wants %20 for spaces inside OData expressions, not '+'
+		parts[i] = k + "=" + strings.ReplaceAll(url.QueryEscape(v), "+", "%20")
 	}
 	return strings.Join(parts, "&")
 }

@@ -56,7 +56,12 @@ func collectDirectory(ctx context.Context, c *Client, now time.Time) ([]Entry, [
 					continue
 				}
 				var members []json.RawMessage
-				_, err := c.Each(ctx, fmt.Sprintf("%s/%s/members?$select=id,displayName,userPrincipalName,mail&$top=999", apiCollection(col.name), obj.ID), nil, func(m json.RawMessage) error {
+				// directoryRoles/{id}/members rejects a page size; groups accept one
+				page := "&$top=999"
+				if col.name == "directory-roles" {
+					page = ""
+				}
+				_, err := c.Each(ctx, fmt.Sprintf("%s/%s/members?$select=id,displayName,userPrincipalName,mail%s", apiCollection(col.name), obj.ID, page), nil, func(m json.RawMessage) error {
 					members = append(members, m)
 					return nil
 				})
