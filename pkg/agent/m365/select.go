@@ -74,7 +74,7 @@ func SelectUsers(ctx context.Context, c *Client, sel spec.UserSelection) ([]Prin
 		if members != nil && !members[p.ID] {
 			continue
 		}
-		if !sel.Unlicensed && !p.Licensed() && !(sel.EffShared() && p.Mail != "") {
+		if !sel.Unlicensed && !p.Licensed() && (!sel.EffShared() || p.Mail == "") {
 			continue
 		}
 		if !spec.Selected(p.UPN, sel.Include, sel.Exclude) {

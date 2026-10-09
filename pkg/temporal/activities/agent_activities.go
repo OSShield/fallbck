@@ -1,3 +1,4 @@
+// Package activities defines the activities executed by the client backup agent.
 package activities
 
 import (

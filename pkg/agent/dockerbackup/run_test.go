@@ -329,7 +329,7 @@ func TestRunHelperMode(t *testing.T) {
 	// Pause bracket around the volume copy, helper removed afterwards
 	calls := strings.Join(f.recorded(), "\n")
 	pause, archive, unpause := strings.Index(calls, "pause c1"), strings.Index(calls, "archive /vol"), strings.Index(calls, "unpause c1")
-	if pause < 0 || archive < 0 || unpause < 0 || !(pause < archive && archive < unpause) {
+	if pause < 0 || archive < 0 || unpause < 0 || (pause >= archive || archive >= unpause) {
 		t.Errorf("pause ordering wrong:\n%s", calls)
 	}
 	if !strings.Contains(calls, "create data:/vol:ro") || !strings.Contains(calls, "create /srv/app:/src:ro") || !strings.Contains(calls, "remove helper1") {

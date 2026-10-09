@@ -76,15 +76,6 @@ func hasArg(args []string, want string) bool {
 	return false
 }
 
-func argValue(args []string, prefix string) string {
-	for _, a := range args {
-		if strings.HasPrefix(a, prefix) {
-			return strings.TrimPrefix(a, prefix)
-		}
-	}
-	return ""
-}
-
 // fakeQuerier answers queries by substring match, first match wins
 type fakeQuerier struct {
 	single [][2]any // {substring, []string values}

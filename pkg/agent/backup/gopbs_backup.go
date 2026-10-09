@@ -70,7 +70,8 @@ func runBackup(ctx context.Context, opts gopbs.BackupOptions, names map[string]s
 	if err != nil {
 		return nil, err
 	}
-	defer sess.Abort() // no-op after a successful Finish
+	// no-op after a successful Finish
+	defer sess.Abort() //nolint:errcheck
 	result.Ref = sess.Ref()
 
 	var cache *reuseCache

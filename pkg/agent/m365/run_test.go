@@ -368,7 +368,7 @@ type uploaded struct {
 }
 
 // runOnce executes Run against the fake; the upload reads every stream when read is set
-func runOnce(t *testing.T, g *fakeGraph, srv *httptest.Server, stateDir, spoolDir string, runID uuid.UUID, read bool, s *spec.Spec) (*temporal.BackupExecutionResult, map[string]uploaded, error) {
+func runOnce(t *testing.T, _ *fakeGraph, srv *httptest.Server, stateDir, spoolDir string, runID uuid.UUID, read bool, s *spec.Spec) (*temporal.BackupExecutionResult, map[string]uploaded, error) {
 	t.Helper()
 	var mu sync.Mutex
 	ups := map[string]uploaded{}

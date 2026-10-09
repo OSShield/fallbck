@@ -25,7 +25,7 @@ var osUserExists = func(name string) error {
 }
 
 // localMSSQLCredentials: SQL Server on Linux only has SQL logins
-func localMSSQLCredentials(spec *dbspec.Spec, creds dbspec.Credentials) (dbspec.Credentials, error) {
+func localMSSQLCredentials(_ *dbspec.Spec, creds dbspec.Credentials) (dbspec.Credentials, error) {
 	return creds, fmt.Errorf("SQL Server on Linux has no passwordless local login; store a SQL login on the job or in a credential profile")
 }
 

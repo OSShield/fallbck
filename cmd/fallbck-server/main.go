@@ -32,8 +32,6 @@ import (
 	"github.com/osshield/fallbck/web"
 	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 )
 
 var ServerVersion = "0.1.0"
@@ -265,7 +263,7 @@ func main() {
 	// ---------------------------------------------------------------- HTTP router
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
-	r.Use(middleware.RealIP)
+	r.Use(web.ClientIP(cfg.TrustedProxies))
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(web.SecurityHeaders)
@@ -314,7 +312,6 @@ func main() {
 	if agentGateway != nil {
 		root = agentGateway.Handler(r)
 	}
-	root = h2c.NewHandler(root, &http2.Server{})
 
 	bindAddr := fmt.Sprintf("%s:%d", cfg.HTTPBind, cfg.HTTPPort)
 	httpServer := &http.Server{
@@ -323,7 +320,10 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 		// No ReadTimeout/WriteTimeout: gRPC long polls (70s) and chunk uploads are long-lived
 		IdleTimeout: 120 * time.Second,
+		Protocols:   new(http.Protocols),
 	}
+	httpServer.Protocols.SetHTTP1(true)
+	httpServer.Protocols.SetUnencryptedHTTP2(true)
 
 	stopChan := make(chan os.Signal, 1)
 	signal.Notify(stopChan, os.Interrupt, syscall.SIGTERM)
