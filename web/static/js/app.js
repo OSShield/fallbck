@@ -1470,9 +1470,8 @@ function downloadRunDetails() {
 
 
 // ===== Microsoft 365 tenants ===================================================
-// The tenant fields live in a container with class tenant-fields: the Targets page
-// modal (a form) or the inline block of a Microsoft 365 job form (a div, since forms
-// do not nest). Every helper takes that container.
+// The tenant fields live in the Tenants page modal form (class tenant-fields); every
+// helper takes that container.
 
 function tenantField(box, name) { return box.querySelector(`[name="${name}"]`); }
 
@@ -1580,31 +1579,3 @@ async function testTenant(id, btn) {
   }
 }
 
-// Inline tenant registration inside a Microsoft 365 job form
-function toggleInlineTenant(btn) {
-  const fieldset = btn.closest('#job-m365-fields');
-  const box = fieldset.querySelector('.tenant-inline');
-  box.hidden = !box.hidden;
-  if (!box.hidden) resetTenantFields(box);
-}
-
-async function createInlineTenant(btn) {
-  const fieldset = btn.closest('#job-m365-fields');
-  const box = fieldset.querySelector('.tenant-inline');
-  const status = box.querySelector('.tenant-inline-status');
-  status.innerText = 'Saving…';
-  try {
-    const t = await saveTenant(buildTenantPayload(box), '');
-    const sel = fieldset.querySelector('[name="m365_tenant_id"]');
-    const opt = document.createElement('option');
-    opt.value = t.id; opt.dataset.name = t.name; opt.innerText = `${t.name} (${t.tenant_id}, ${t.auth_method})`;
-    sel.appendChild(opt);
-    sel.value = t.id;
-    box.hidden = true;
-    showToast(`Tenant ${t.name} registered; testing the connection…`, 'success');
-    testTenant(t.id, null);
-  } catch (err) {
-    status.innerText = err.message;
-    showToast(err.message, 'error');
-  }
-}

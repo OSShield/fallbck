@@ -1,0 +1,12 @@
+version: "2"
+linters:
+  exclusions:
+    rules:
+      # Ignore errcheck for fmt.Fprint(ln|f) functions
+      - linters:
+          - errcheck
+        text: ".*fmt.Fprint(ln|f)?.*"
+      # Ignore errcheck for .*\.(Flush|Close)
+      - linters:
+          - errcheck
+        text: ".*\\.(Flush|Close).*"

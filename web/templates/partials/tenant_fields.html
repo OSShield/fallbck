@@ -1,5 +1,4 @@
-{{/* Microsoft 365 tenant fields. Shared by the Targets page modal and the onboarding
-     page (inside the job form, so every name is prefixed tenant_). */}}
+{{/* Microsoft 365 tenant fields (the Tenants page modal). */}}
 {{define "tenant-fields"}}
 <div style="background-color: var(--bg-subtle); padding: 14px; border-radius: var(--radius-sm); margin-bottom: 16px; font-size: 13px;">
   Register an app in <a href="https://entra.microsoft.com" target="_blank" rel="noopener">Microsoft Entra</a> (<em>App registrations → New registration</em>, single tenant, no redirect URI), add the <strong>application</strong> permissions below under <em>API permissions → Microsoft Graph</em> and press <em>Grant admin consent</em>, then create a client secret or upload a certificate under <em>Certificates &amp; secrets</em>. The app only reads.
