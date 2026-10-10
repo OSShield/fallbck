@@ -56,7 +56,8 @@ func collectTeam(ctx context.Context, c *Client, teamID string, idx *TeamsIndex,
 
 	path := "teams/" + teamID + "/channels/getAllMessages"
 	if idx.Since != "" {
-		path += "?$filter=lastModifiedDateTime gt " + idx.Since
+		// The export API wants a closed range: both bounds, upper one in the future
+		path += "?$filter=lastModifiedDateTime gt " + idx.Since + " and lastModifiedDateTime lt " + now.Add(24*time.Hour).UTC().Format("2006-01-02T15:04:05Z")
 	}
 	newest := idx.Since
 	hosted := map[string][]byte{}

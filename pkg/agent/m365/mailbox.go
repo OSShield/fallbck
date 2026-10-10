@@ -176,6 +176,9 @@ func (m *mailboxCollector) syncFolders(ctx context.Context, base string) error {
 		delta, err = m.c.Each(ctx, base+"/folders/delta?$select=id,displayName,parentFolderId,type", maxPage, apply)
 	}
 	if err != nil {
+		if IsStatus(err, http.StatusForbidden) {
+			return fmt.Errorf("folders delta: %w (the app needs the MailboxFolder.Read.All application permission with admin consent)", err)
+		}
 		return fmt.Errorf("folders delta: %w", err)
 	}
 	if fresh {
