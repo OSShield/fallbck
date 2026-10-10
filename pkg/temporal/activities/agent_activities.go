@@ -2,19 +2,25 @@ package activities
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 
 	"github.com/osshield/fallbck/pkg/agent/backup"
 	dbrun "github.com/osshield/fallbck/pkg/agent/dbbackup"
 	dockerrun "github.com/osshield/fallbck/pkg/agent/dockerbackup"
+	m365run "github.com/osshield/fallbck/pkg/agent/m365"
 	pverun "github.com/osshield/fallbck/pkg/agent/pvebackup"
 	"github.com/osshield/fallbck/pkg/agent/vss"
 	"github.com/osshield/fallbck/pkg/db"
 	dockerspec "github.com/osshield/fallbck/pkg/dockerbackup"
+	"github.com/osshield/fallbck/pkg/m365"
 	pvespec "github.com/osshield/fallbck/pkg/pvebackup"
+	"github.com/osshield/fallbck/pkg/rundetail"
 	"github.com/osshield/fallbck/pkg/temporal"
 	"github.com/osshield/gopbs"
+	"github.com/osshield/gopbs/scan"
 	"go.temporal.io/sdk/activity"
 	sdktemporal "go.temporal.io/sdk/temporal"
 	"google.golang.org/grpc"
@@ -44,6 +50,14 @@ type AgentActivities struct {
 	SpoolDir string
 	// Docker is the agent's docker_backup settings block (socket, volume access, helper image)
 	Docker dockerspec.Config
+	// M365Credentials fetches the tenant credentials of a Microsoft 365 job
+	// (GET /api/v1/agents/m365-credentials with the run's ticket)
+	M365Credentials func(ctx context.Context, ticket string) (*m365.Credentials, error)
+	// SubTicket mints the ticket of one unit snapshot of a run (POST
+	// /api/v1/agents/sub-ticket): the unit's group must extend the run's group
+	SubTicket func(ctx context.Context, sessionTicket, group string) (ticket string, backupTime int64, err error)
+	// M365StateDir holds the per-job unit indexes of Microsoft 365 jobs (<data dir>/m365-state)
+	M365StateDir string
 	// CacheDir holds the per-group metadata caches for change detection
 	// (<data dir>/pxar-cache); empty disables change detection
 	CacheDir string
@@ -236,6 +250,84 @@ func (a *AgentActivities) ExecuteDockerBackup(ctx context.Context, session *temp
 			return precheckFailed("Docker host backup", err, pt, a.LogTail)
 		}
 		return failed(err)
+	}
+	return result, nil
+}
+
+// ExecuteM365Backup backs up a Microsoft 365 tenant: one snapshot per user, site and
+// team (each with its own sub-ticket and PBS session) plus the directory snapshot in
+// the job's own group, which carries the run manifest.
+func (a *AgentActivities) ExecuteM365Backup(ctx context.Context, session *temporal.BackupSessionInfo) (*temporal.BackupExecutionResult, error) {
+	info := activity.GetInfo(ctx)
+	if session.JobType != db.JobTypeM365 || session.M365Config == nil {
+		return nil, sdktemporal.NewNonRetryableApplicationError("session is not a Microsoft 365 backup", ErrTypeDBPrecheckFailed, nil)
+	}
+	session = sessionForAttempt(ctx, session, a.RefreshTicket)
+	slog.Info("Agent activity started: ExecuteM365Backup", "activity_id", info.ActivityID, "attempt", info.Attempt,
+		"job_id", session.JobID, "group", session.BackupID, "datastore", session.Datastore, "direct_pbs", session.DirectPBS)
+	if a.M365Credentials == nil || a.SubTicket == nil {
+		return nil, errors.New("this agent has no Microsoft 365 credential or sub-ticket fetcher (agent too old?)")
+	}
+
+	rt := startRunTracking(ctx, session.Ticket, session.BackupRunID, a.ReportProgress)
+	defer rt.stop()
+	pt, reportPh := rt.pt, rt.report
+
+	failed := func(result *temporal.BackupExecutionResult, err error) (*temporal.BackupExecutionResult, error) {
+		slog.Error("Microsoft 365 backup failed", "error", err, "phase", pt.Current())
+		if result == nil {
+			result = &temporal.BackupExecutionResult{}
+		}
+		result.Status, result.ErrorMessage = db.RunStatusFailed, err.Error()
+		return result, backupFailure(ctx, err, pt, a.LogTail)
+	}
+
+	pt.Set("fetching tenant credentials")
+	reportPh()
+	creds, err := a.M365Credentials(ctx, session.Ticket)
+	if err != nil {
+		return failed(nil, fmt.Errorf("fetching tenant credentials: %w", err))
+	}
+
+	upload := func(ctx context.Context, unit *m365run.Unit, tree *scan.Node, blobs []gopbs.Blob) (*temporal.BackupExecutionResult, error) {
+		us := *session
+		us.BackupPaths, us.ExcludePaths = nil, nil
+		if unit.Group != session.BackupID {
+			ticket, backupTime, err := a.SubTicket(ctx, session.Ticket, unit.Group)
+			if err != nil {
+				return nil, fmt.Errorf("minting the snapshot ticket: %w", err)
+			}
+			us.Ticket, us.BackupID, us.BackupTime = ticket, unit.Group, backupTime
+		}
+		tr, err := openTransport(ctx, &us, a.Tunnel, a.Credentials, a.EncryptionKey, nil)
+		if err != nil {
+			return nil, err
+		}
+		defer tr.close()
+		return backup.Run(ctx, tr.options(backup.Options{
+			Session: &us, Workers: a.Workers, Tree: tree, ArchiveName: unit.Archive, Blobs: blobs,
+			CacheDir: a.groupCacheDir(&us),
+			OnPhase:  func(p string) { pt.Set(unit.Name + ": " + p); reportPh() },
+		}))
+	}
+	result, err := m365run.Run(ctx, m365run.RunOptions{
+		Session: session, Spec: session.M365Config, Credentials: *creds,
+		StateDir: filepath.Join(a.M365StateDir, session.JobID.String()), SpoolDir: a.SpoolDir,
+		Upload:   upload,
+		Progress: func(p string) { pt.Set(p); reportPh() },
+		Items: func(items map[string]rundetail.ProgressItem) {
+			reportItems(a.ReportProgress, ctx, session.Ticket, session.BackupRunID, items)
+		},
+		Hostname: a.Hostname, Version: a.Version,
+	})
+	if err != nil {
+		if dbrun.IsPrecheck(err) {
+			return precheckFailed("Microsoft 365 backup", err, pt, a.LogTail)
+		}
+		if isTransportConfigErr(err) {
+			return nil, err
+		}
+		return failed(result, err)
 	}
 	return result, nil
 }

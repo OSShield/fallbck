@@ -1,0 +1,97 @@
+{{/* Microsoft 365 job fields. */}}
+{{define "job-fields-m365"}}
+<fieldset id="job-m365-fields" style="border: 0; padding: 0; margin: 0;" hidden disabled>
+  <div style="background-color: var(--bg-subtle); padding: 14px; border-radius: var(--radius-sm); margin-bottom: 16px; font-size: 13px;">
+    Every user, SharePoint site and team becomes its own snapshot group (<code>&lt;job group&gt;-user-&lt;upn&gt;</code>, <code>-site-&lt;url&gt;</code>, <code>-team-&lt;name&gt;</code>); the job's own group holds the Entra ID directory and the run manifest. Use a PBS target whose namespace is dedicated to the tenant and give it a prune job. Mailbox items are stored in Exchange's export format (<code>.exoitem</code>, restorable only through an Exchange Online import) with an <code>index.json</code> per folder; files and Teams messages are stored as they are. After the first run only changed items are fetched.
+  </div>
+  <div class="form-group">
+    <label>Tenant</label>
+    <div style="display: flex; gap: 8px; align-items: center;">
+      <select name="m365_tenant_id" class="form-control" required>
+        <option value="">-- Choose tenant --</option>
+        {{range .Tenants}}<option value="{{.ID}}" data-name="{{.Name}}">{{.Name}} ({{.TenantID}}, {{.AuthMethod}})</option>{{end}}
+      </select>
+      <button type="button" class="btn btn-secondary btn-sm" onclick="toggleInlineTenant(this)">New tenant</button>
+    </div>
+  </div>
+  <div class="tenant-fields tenant-inline" hidden style="border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 14px; margin-bottom: 16px;">
+    <h4 style="font-size: 14px; margin-bottom: 10px;">Register a tenant</h4>
+    {{template "tenant-fields" .}}
+    <div style="display: flex; gap: 8px; align-items: center;">
+      <button type="button" class="btn btn-primary btn-sm" onclick="createInlineTenant(this)">Save tenant</button>
+      <button type="button" class="btn btn-secondary btn-sm" onclick="toggleInlineTenant(this)">Cancel</button>
+      <span class="form-text tenant-inline-status"></span>
+    </div>
+  </div>
+  <div class="form-group">
+    <label>Workloads</label>
+    <div style="display: flex; flex-wrap: wrap; gap: 16px; font-size: 13px;">
+      <label style="display: flex; align-items: center; gap: 6px;"><input type="checkbox" name="m365_wl_mailboxes" checked> Mailboxes (mail, calendars, contacts, tasks)</label>
+      <label style="display: flex; align-items: center; gap: 6px;"><input type="checkbox" name="m365_wl_onedrive" checked> OneDrive</label>
+      <label style="display: flex; align-items: center; gap: 6px;"><input type="checkbox" name="m365_wl_sites" checked> SharePoint sites</label>
+      <label style="display: flex; align-items: center; gap: 6px;"><input type="checkbox" name="m365_wl_teams" checked> Teams channel messages and files</label>
+      <label style="display: flex; align-items: center; gap: 6px;"><input type="checkbox" name="m365_wl_entra" checked> Entra ID directory</label>
+    </div>
+  </div>
+  <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px;">
+    <div class="form-group">
+      <label>Users: members of these groups (optional, one per line)</label>
+      <textarea name="m365_user_groups" class="form-control" rows="2" placeholder="Backup users&#10;or a group object id"></textarea>
+    </div>
+    <div class="form-group">
+      <label>Users: include (UPN patterns, optional)</label>
+      <textarea name="m365_user_include" class="form-control" rows="2" placeholder="*@contoso.com"></textarea>
+    </div>
+    <div class="form-group">
+      <label>Users: exclude (UPN patterns, optional)</label>
+      <textarea name="m365_user_exclude" class="form-control" rows="2" placeholder="svc-*@contoso.com"></textarea>
+    </div>
+  </div>
+  <div style="display: flex; gap: 16px; margin-bottom: 16px; font-size: 13px; flex-wrap: wrap;">
+    <label style="display: flex; align-items: center; gap: 6px;"><input type="checkbox" name="m365_user_shared" checked> Include shared mailboxes (accounts with a mailbox but no licence)</label>
+    <label style="display: flex; align-items: center; gap: 6px;"><input type="checkbox" name="m365_user_unlicensed"> Include every unlicensed account</label>
+  </div>
+  <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 16px;">
+    <div class="form-group">
+      <label>Sites: include (URL patterns, optional)</label>
+      <textarea name="m365_site_include" class="form-control" rows="2" placeholder="contoso.sharepoint.com/sites/*"></textarea>
+    </div>
+    <div class="form-group">
+      <label>Sites: exclude</label>
+      <textarea name="m365_site_exclude" class="form-control" rows="2" placeholder="*/sites/archive-*"></textarea>
+    </div>
+    <div class="form-group">
+      <label>Teams: include (name patterns, optional)</label>
+      <textarea name="m365_team_include" class="form-control" rows="2"></textarea>
+    </div>
+    <div class="form-group">
+      <label>Teams: exclude</label>
+      <textarea name="m365_team_exclude" class="form-control" rows="2"></textarea>
+    </div>
+  </div>
+  <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px;">
+    <div class="form-group">
+      <label>Mail folders left out (one per line)</label>
+      <textarea name="m365_mail_folder_excludes" class="form-control" rows="3">Deleted Items&#10;Junk Email&#10;Conversation History</textarea>
+    </div>
+    <div class="form-group">
+      <label>Item classes left out (optional, e.g. IPM.Appointment)</label>
+      <textarea name="m365_exclude_types" class="form-control" rows="3" placeholder="IPM.Appointment&#10;IPM.Contact"></textarea>
+    </div>
+    <div class="form-group">
+      <label>File exclude patterns (optional, proxmox-backup-client syntax, against drive paths)</label>
+      <textarea name="m365_exclude_paths" class="form-control" rows="3" placeholder="/Recordings/**&#10;*.tmp"></textarea>
+    </div>
+  </div>
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+    <div class="form-group">
+      <label>Units in flight (users, sites, teams backed up in parallel)</label>
+      <input type="number" name="m365_concurrency" class="form-control" min="1" max="32" placeholder="4">
+    </div>
+    <div class="form-group">
+      <label>Snapshot group prefix (optional, default m365-&lt;tenant name&gt;)</label>
+      <input type="text" name="m365_backup_id" class="form-control" placeholder="m365-contoso">
+    </div>
+  </div>
+</fieldset>
+{{end}}

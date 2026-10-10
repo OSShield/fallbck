@@ -8,6 +8,7 @@ const AGENT_WIZARD_TYPES = {
   files:      { label: 'filesystem agent', pkg: 'fallbck-agent',    service: 'fallbck-agent' },
   proxmox:    { label: 'filesystem agent', pkg: 'fallbck-agent',    service: 'fallbck-agent' },
   docker:     { label: 'filesystem agent', pkg: 'fallbck-agent',    service: 'fallbck-agent' },
+  m365:       { label: 'filesystem agent', pkg: 'fallbck-agent',    service: 'fallbck-agent' },
   database:   { label: 'database agent',   pkg: 'fallbck-agent',    service: 'fallbck-agent' },
   kubernetes: { label: 'Kubernetes agent' }
 };
@@ -274,7 +275,7 @@ const ob = {
 // Capability the onboarding type needs before backups of that kind can be created
 const OB_TYPE_NEEDS = { database: 'db_tools', proxmox: 'pve_host', docker: 'docker_host' };
 // Default backup type per onboarding type
-const OB_TYPE_BACKUP = { files: 'filesystem', database: 'database', proxmox: 'pve', docker: 'docker', kubernetes: 'kubernetes' };
+const OB_TYPE_BACKUP = { files: 'filesystem', database: 'database', proxmox: 'pve', docker: 'docker', m365: 'm365', kubernetes: 'kubernetes' };
 
 document.addEventListener('DOMContentLoaded', obInit);
 
@@ -635,6 +636,7 @@ function obBackupAvailable(kind) {
     case 'database': return t === 'kubernetes' || (t === 'filesystem' && ((a.db_engines || []).length > 0 || a.db_tools));
     case 'pve': return t === 'filesystem' && a.pve_host;
     case 'docker': return t === 'filesystem' && a.docker_host;
+    case 'm365': return t === 'filesystem'; // any agent with internet access
     case 'kubernetes': return t === 'kubernetes';
   }
   return false;
@@ -783,8 +785,8 @@ function obRenderDetails() {
     form.elements['k8s_ns_exclude'].value = K8S_DEFAULT_NS_EXCLUDES.join('\n');
   }
   if (!form.elements['name'].value) {
-    const label = { filesystem: 'files', database: 'databases', pve: 'PVE host', docker: 'Docker host', kubernetes: 'cluster' }[ob.backupType] || 'backup';
-    form.elements['name'].value = `${a.hostname || 'host'} ${label}`;
+    const label = { filesystem: 'files', database: 'databases', pve: 'PVE host', docker: 'Docker host', m365: 'Microsoft 365', kubernetes: 'cluster' }[ob.backupType] || 'backup';
+    form.elements['name'].value = ob.backupType === 'm365' ? 'Microsoft 365' : `${a.hostname || 'host'} ${label}`;
   }
 }
 
@@ -819,7 +821,7 @@ function obRenderReview() {
   const target = obTargetCards().find(c => c.dataset.value === ob.targetId);
   const rows = [
     ['Agent', (ob.agent || {}).hostname || ob.agentId],
-    ['Backup type', { filesystem: 'Files', database: 'Database', pve: 'Proxmox VE host', docker: 'Docker host', kubernetes: 'Kubernetes cluster' }[p.job_type] || p.job_type],
+    ['Backup type', { filesystem: 'Files', database: 'Database', pve: 'Proxmox VE host', docker: 'Docker host', m365: 'Microsoft 365 tenant', kubernetes: 'Kubernetes cluster' }[p.job_type] || p.job_type],
     ['Job name', p.name],
     ['Target', target ? `${target.dataset.name} (${target.dataset.datastore}${target.dataset.namespace ? ', ' + target.dataset.namespace : ''})` : ob.targetId, ob.targetAutoPicked ? 'change' : ''],
   ];
@@ -828,6 +830,14 @@ function obRenderReview() {
   if (p.job_type === 'database') rows.push(['Engine', p.db_config.engine], ['Host', p.db_config.host || (p.db_config.kubernetes ? p.db_config.kubernetes.service : '') || '-'], ['Databases', (p.db_config.databases || []).join(', ') || 'all']);
   if (p.job_type === 'pve') rows.push(['Data paths', (p.pve_config.data_paths || []).join(', ') || 'none']);
   if (p.job_type === 'docker') rows.push(['Host paths', (p.docker_config.host_paths || []).join(', ') || 'none'], ['Images', p.docker_config.images]);
+  if (p.job_type === 'm365') {
+    const mc = p.m365_config;
+    const sel = document.getElementById('job-form').elements['m365_tenant_id'];
+    const tenant = sel && sel.selectedOptions[0] ? sel.selectedOptions[0].dataset.name : mc.tenant_id;
+    const wl = Object.keys(mc.workloads).filter(k => mc.workloads[k]);
+    rows.push(['Tenant', tenant || '-'], ['Workloads', wl.join(', ') || 'none'],
+      ['Users', mc.users.groups.length ? 'members of ' + mc.users.groups.join(', ') : (mc.users.include.length ? mc.users.include.join(', ') : 'all licensed' + (mc.users.shared ? ' + shared mailboxes' : ''))]);
+  }
   if (p.job_type === 'kubernetes') rows.push(['Volumes', p.k8s_config.volumes.mode], ['Namespaces', (p.k8s_config.namespaces.include || []).join(', ') || 'all']);
   rows.push(['Schedule', p.schedule_cron ? `${p.schedule_cron} (${document.getElementById('onboarding').dataset.timezone})` : 'manual only'],
     ['Enabled', p.enabled ? 'yes' : 'no'], ['Direct PBS', p.direct_pbs ? 'yes' : 'no'], ['Retention', 'PBS datastore prune job']);

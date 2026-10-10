@@ -1,0 +1,64 @@
+{{/* Microsoft 365 tenant fields. Shared by the Targets page modal and the onboarding
+     page (inside the job form, so every name is prefixed tenant_). */}}
+{{define "tenant-fields"}}
+<div style="background-color: var(--bg-subtle); padding: 14px; border-radius: var(--radius-sm); margin-bottom: 16px; font-size: 13px;">
+  Register an app in <a href="https://entra.microsoft.com" target="_blank" rel="noopener">Microsoft Entra</a> (<em>App registrations → New registration</em>, single tenant, no redirect URI), add the <strong>application</strong> permissions below under <em>API permissions → Microsoft Graph</em> and press <em>Grant admin consent</em>, then create a client secret or upload a certificate under <em>Certificates &amp; secrets</em>. The app only reads.
+  <details style="margin-top: 8px;">
+    <summary style="cursor: pointer;">Required application permissions</summary>
+    <code style="display: block; margin-top: 6px; white-space: pre-wrap; font-size: 12px;">User.Read.All  Group.Read.All  Directory.Read.All  Policy.Read.All  Application.Read.All  Organization.Read.All
+MailboxItem.Read.All  MailboxItem.Export.All  MailboxSettings.Read  Mail.Read  Calendars.Read  Contacts.Read
+Files.Read.All  Sites.Read.All  ChannelMessage.Read.All  Team.ReadBasic.All  Channel.ReadBasic.All</code>
+  </details>
+</div>
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+  <div class="form-group">
+    <label>Display name</label>
+    <input type="text" name="tenant_name" class="form-control" placeholder="Contoso" required>
+    <span class="form-text">Also the default snapshot group prefix: m365-&lt;name&gt;.</span>
+  </div>
+  <div class="form-group">
+    <label>Directory (tenant) ID or verified domain</label>
+    <input type="text" name="tenant_tenant_id" class="form-control" placeholder="72f988bf-… or contoso.onmicrosoft.com" required>
+  </div>
+</div>
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+  <div class="form-group">
+    <label>Application (client) ID</label>
+    <input type="text" name="tenant_client_id" class="form-control" placeholder="11111111-2222-3333-4444-555555555555" required>
+  </div>
+  <div class="form-group">
+    <label>Authentication</label>
+    <select name="tenant_auth_method" class="form-control" onchange="updateTenantAuth(this.closest('.tenant-fields'))">
+      <option value="secret" selected>Client secret</option>
+      <option value="certificate">Certificate (recommended by Microsoft)</option>
+    </select>
+  </div>
+</div>
+<div class="tenant-secret-opts">
+  <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 16px;">
+    <div class="form-group">
+      <label>Client secret value</label>
+      <input type="password" name="tenant_secret" class="form-control" autocomplete="new-password">
+      <span class="form-text tenant-secret-hint">Sealed on the server with its master key; handed to the agent per run, never shown again.</span>
+    </div>
+    <div class="form-group">
+      <label>Secret expires</label>
+      <input type="date" name="tenant_secret_expires" class="form-control">
+      <span class="form-text">Shown on the tenant list; warning 30 days before.</span>
+    </div>
+  </div>
+</div>
+<div class="tenant-certificate-opts" hidden>
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+    <div class="form-group">
+      <label>Certificate (PEM, the public certificate uploaded to the app)</label>
+      <textarea name="tenant_certificate_pem" class="form-control" rows="4" placeholder="-----BEGIN CERTIFICATE-----" style="font-family: var(--font-mono); font-size: 11px;"></textarea>
+    </div>
+    <div class="form-group">
+      <label>Private key (PEM, RSA, unencrypted)</label>
+      <textarea name="tenant_key_pem" class="form-control" rows="4" placeholder="-----BEGIN PRIVATE KEY-----" style="font-family: var(--font-mono); font-size: 11px;"></textarea>
+      <span class="form-text">Sealed on the server. The expiry is read from the certificate.</span>
+    </div>
+  </div>
+</div>
+{{end}}

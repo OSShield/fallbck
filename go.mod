@@ -235,6 +235,6 @@ require (
 	sigs.k8s.io/structured-merge-diff/v6 v6.4.2 // indirect
 )
 
-// Local gopbs checkout with metadata change detection (item 3 of the roadmap); drop
+// Local gopbs checkout (branch virtual-tree: AddTree + stream reuse for Microsoft 365); drop
 // once the change is released and the require line bumped
-// replace github.com/osshield/gopbs => ./.local/gopbs
+replace github.com/osshield/gopbs => ./.local/gopbs

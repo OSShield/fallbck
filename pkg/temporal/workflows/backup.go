@@ -76,6 +76,14 @@ func BackupJobWorkflow(ctx workflow.Context, jobID uuid.UUID) (*fbtemporal.Backu
 		execErr = workflow.ExecuteActivity(agentCtx, agentActs.ExecutePVEBackup, &session).Get(agentCtx, &execResult)
 	case db.JobTypeDocker:
 		execErr = workflow.ExecuteActivity(agentCtx, agentActs.ExecuteDockerBackup, &session).Get(agentCtx, &execResult)
+	case db.JobTypeM365:
+		// A tenant's first run downloads everything and writes one snapshot per
+		// user, site and team; give it days, not hours (liveness is the heartbeat)
+		m365Opts := agentActivityOpts
+		m365Opts.StartToCloseTimeout = 48 * time.Hour
+		m365Opts.ScheduleToCloseTimeout = 72 * time.Hour
+		m365Ctx := workflow.WithActivityOptions(ctx, m365Opts)
+		execErr = workflow.ExecuteActivity(m365Ctx, agentActs.ExecuteM365Backup, &session).Get(m365Ctx, &execResult)
 	case db.JobTypeDatabase:
 		if session.AgentType == db.AgentTypeKubernetes {
 			// A kubernetes agent dumps the database from a pod inside the cluster

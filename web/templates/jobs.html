@@ -1,7 +1,7 @@
 {{define "content"}}
 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
   <div>
-    <p style="color: var(--text-muted); font-size: 14px;">Every backup job — files, databases, Proxmox VE and Docker hosts, Kubernetes clusters — with its schedule and last run. New jobs are set up through the onboarding flow; retention is a Proxmox Backup Server prune job.</p>
+    <p style="color: var(--text-muted); font-size: 14px;">Every backup job — files, databases, Proxmox VE and Docker hosts, Microsoft 365 tenants, Kubernetes clusters — with its schedule and last run. New jobs are set up through the onboarding flow; retention is a Proxmox Backup Server prune job.</p>
   </div>
   <a class="btn btn-primary" href="/onboarding">
     <svg style="width: 16px; height: 16px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
@@ -21,6 +21,7 @@
       <option value="database">Database</option>
       <option value="pve">Proxmox VE host</option>
       <option value="docker">Docker host</option>
+      <option value="m365">Microsoft 365</option>
       <option value="kubernetes">Kubernetes</option>
     </select>
     <select name="f_enabled" class="form-control" aria-label="Filter by state">
@@ -75,6 +76,7 @@
             <td>
               {{if .IsKubernetes}}<span class="badge badge-info">Kubernetes</span>
               {{else if .IsDocker}}<span class="badge badge-info">Docker host</span>
+              {{else if .IsM365}}<span class="badge badge-info">Microsoft 365</span>
               {{else if .IsPVE}}<span class="badge badge-info">Proxmox VE</span>
               {{else if .IsDatabase}}<span class="badge badge-info">Database</span>
               {{else}}<span class="badge badge-neutral">Files</span>{{end}}
@@ -86,6 +88,8 @@
                 <span style="font-size: 12px; color: var(--text-muted);">{{if .K8sConfig}}{{.K8sConfig.Summary}}{{end}}</span>
               {{else if .IsDocker}}
                 <span style="font-size: 12px; color: var(--text-muted);">{{with .DockerConfig}}{{.Summary}}{{end}}</span>
+              {{else if .IsM365}}
+                <span style="font-size: 12px; color: var(--text-muted);">{{with .M365Config}}{{.Summary}}{{end}}</span>
               {{else if .IsPVE}}
                 <code style="display: inline-block; margin-right: 4px; font-size: 12px;">/etc</code>
                 {{with .PVEConfig}}{{range .DataPaths}}<code style="display: inline-block; margin-right: 4px; font-size: 12px;">{{.}}</code>{{end}}{{end}}
@@ -176,6 +180,7 @@
             <option value="database">Database (PostgreSQL / MySQL / MongoDB; fallbck-agent with the client tools, or a Kubernetes agent)</option>
             <option value="pve">Proxmox VE host (configuration, package list, optional data paths; fallbck-agent on the node)</option>
             <option value="docker">Docker host (container, network and volume definitions, compose files, named volumes; fallbck-agent on the host)</option>
+            <option value="m365">Microsoft 365 (mailboxes, OneDrive, SharePoint, Teams, Entra ID through Graph; any fallbck-agent with internet access)</option>
           </select>
         </div>
 
@@ -203,6 +208,7 @@
         {{template "job-fields-filesystem" .}}
         {{template "job-fields-pve" .}}
         {{template "job-fields-docker" .}}
+        {{template "job-fields-m365" .}}
         {{template "job-fields-database" .}}
         {{template "job-schedule" .}}
       </div>

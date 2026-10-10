@@ -31,6 +31,7 @@ import (
 	"github.com/osshield/fallbck/pkg/config"
 	"github.com/osshield/fallbck/pkg/dockerbackup"
 	"github.com/osshield/fallbck/pkg/inventory"
+	"github.com/osshield/fallbck/pkg/m365"
 	"github.com/osshield/fallbck/pkg/pvebackup"
 	"github.com/osshield/fallbck/pkg/rundetail"
 	"go.temporal.io/sdk/client"
@@ -395,6 +396,35 @@ func DBPasswordFetcher(cfg *config.AgentConfig, store *TokenStore) func(ctx cont
 			return "", err
 		}
 		return creds.Password, nil
+	}
+}
+
+// M365CredentialsFetcher retrieves the tenant credentials of a Microsoft 365 job
+// (GET /api/v1/agents/m365-credentials with the run's ticket)
+func M365CredentialsFetcher(cfg *config.AgentConfig, store *TokenStore) func(ctx context.Context, ticket string) (*m365.Credentials, error) {
+	httpClient := ServerHTTPClient(cfg)
+	return func(ctx context.Context, ticket string) (*m365.Credentials, error) {
+		var creds m365.Credentials
+		if err := TicketGet(ctx, httpClient, cfg, store, "/api/v1/agents/m365-credentials", ticket, &creds); err != nil {
+			return nil, err
+		}
+		return &creds, nil
+	}
+}
+
+// SubTicketFetcher mints the ticket of one unit snapshot of a run (POST
+// /api/v1/agents/sub-ticket); the group must extend the run's own group
+func SubTicketFetcher(cfg *config.AgentConfig, store *TokenStore) func(ctx context.Context, sessionTicket, group string) (string, int64, error) {
+	httpClient := ServerHTTPClient(cfg)
+	return func(ctx context.Context, sessionTicket, group string) (string, int64, error) {
+		var resp api.SubTicketResponse
+		if err := TicketPost(ctx, httpClient, cfg, store, "/api/v1/agents/sub-ticket", sessionTicket, api.SubTicketRequest{BackupID: group}, &resp); err != nil {
+			return "", 0, fmt.Errorf("sub-ticket for %s: %w", group, err)
+		}
+		if resp.Ticket == "" || resp.BackupTime <= 0 {
+			return "", 0, errors.New("sub-ticket: server returned no ticket")
+		}
+		return resp.Ticket, resp.BackupTime, nil
 	}
 }
 
