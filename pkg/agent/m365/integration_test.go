@@ -362,7 +362,29 @@ func TestRealTenantRun(t *testing.T) {
 	}
 	stateDir, spoolDir := t.TempDir(), t.TempDir()
 	var total, files int64
+	shown := map[string]bool{}
 	upload := func(ctx context.Context, u *Unit, tree *scan.Node, blobs []gopbs.Blob) (*temporal.BackupExecutionResult, error) {
+		if !shown[u.Kind] {
+			shown[u.Kind] = true
+			var paths []string
+			var list func(n *scan.Node, prefix string)
+			list = func(n *scan.Node, prefix string) {
+				for _, c := range n.Children {
+					p := prefix + "/" + c.Name
+					if c.Kind == scan.KindDirectory {
+						list(c, p)
+					} else {
+						paths = append(paths, p)
+					}
+				}
+			}
+			list(tree, "")
+			sort.Strings(paths)
+			if len(paths) > 12 {
+				paths = append(paths[:6], append([]string{"…"}, paths[len(paths)-6:]...)...)
+			}
+			t.Logf("  %s %s tree (%s.pxar): %s", u.Kind, u.Name, u.Archive, strings.Join(paths, " | "))
+		}
 		var walk func(n *scan.Node, prefix string) error
 		walk = func(n *scan.Node, prefix string) error {
 			for _, c := range n.Children {
@@ -404,7 +426,11 @@ func TestRealTenantRun(t *testing.T) {
 		}{&m})
 		t.Logf("run %d: status=%s error=%q units=%d files read=%d bytes read=%d warnings=%d", run, res.Status, res.ErrorMessage, len(m.Units), files, total-before, len(m.Warnings))
 		for _, u := range m.Units {
-			t.Logf("  %s %s → %s %s %v", u.Kind, u.Name, u.Status, u.Error, u.Warnings)
+			var arch []string
+			for _, a := range u.Archives {
+				arch = append(arch, fmt.Sprintf("%s=%d items/%d B fetched", a.Name, a.Items, a.Downloaded))
+			}
+			t.Logf("  %s %s → %s %s %v %s", u.Kind, u.Name, u.Status, u.Error, u.Warnings, strings.Join(arch, ", "))
 		}
 		for _, w := range m.Warnings {
 			t.Logf("  warning: %s", w)

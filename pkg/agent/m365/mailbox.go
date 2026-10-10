@@ -27,8 +27,9 @@ const (
 	mailboxPrefix = "mailbox"
 )
 
-// Mail folder display names of the mailbox root that are not part of the archive path
-var rootFolderNames = map[string]bool{"Top of Information Store": true, "Root": true, "IPM_SUBTREE": true, "MsgFolderRoot": true}
+// Mail folder display names of the mailbox root that are not part of the archive path.
+// Exchange Online lists the root with an empty display name (verified on a tenant).
+var rootFolderNames = map[string]bool{"": true, "Top of Information Store": true, "Root": true, "IPM_SUBTREE": true, "MsgFolderRoot": true}
 
 // mailboxFolder is what folders/delta returns
 type mailboxFolder struct {
