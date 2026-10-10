@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"log/slog"
+
 	"github.com/osshield/fallbck/pkg/agent/backup"
 	k8sagent "github.com/osshield/fallbck/pkg/agent/k8sbackup"
 	"github.com/osshield/fallbck/pkg/config"
@@ -17,7 +19,6 @@ import (
 	"github.com/osshield/fallbck/pkg/temporal"
 	"github.com/osshield/gopbs"
 	corev1 "k8s.io/api/core/v1"
-	"log/slog"
 
 	sdktemporal "go.temporal.io/sdk/temporal"
 	"google.golang.org/grpc"
@@ -365,7 +366,7 @@ func (a *K8sAgentActivities) BackupKubernetesResources(ctx context.Context, sess
 	if err := os.MkdirAll(resourcesDir, 0o700); err != nil {
 		return nil, fmt.Errorf("creating spool: %w", err)
 	}
-	defer os.RemoveAll(runDir)
+	defer os.RemoveAll(runDir) //nolint:errcheck
 
 	dumpedAt := time.Now().UTC()
 	stats, err := k8sagent.DumpResources(ctx, a.Clients, s, resourcesDir, pt.Set)

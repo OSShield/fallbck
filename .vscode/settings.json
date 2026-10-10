@@ -1,0 +1,22 @@
+{
+    "go.diagnostic.vulncheck": "Imports",
+    "go.lintTool": "golangci-lint-v2",
+    "go.lintOnSave": "workspace",
+    "go.lintFlags": [
+        "--path-mode=abs",
+        "--allow-parallel-runners",
+        "--max-issues-per-linter=0",
+        "--max-same-issues=0"
+    ],
+    "gopls": {
+        "ui.diagnostic.staticcheck": true
+    },
+    "go.formatTool": "custom",
+    "go.alternateTools": {
+        "customFormatter": "golangci-lint-v2"
+    },
+    "go.formatFlags": [
+        "fmt",
+        "--stdin"
+    ]
+}

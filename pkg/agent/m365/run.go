@@ -487,7 +487,11 @@ func restoreReadme(m *spec.Manifest) string {
 	var b strings.Builder
 	b.WriteString("# Restoring this Microsoft 365 backup\n\n")
 	for _, k := range sortedKeys(m.Restore) {
-		b.WriteString("## " + k + "\n\n" + m.Restore[k] + "\n\n")
+		b.WriteString("## ")
+		b.WriteString(k)
+		b.WriteString("\n\n")
+		b.WriteString(m.Restore[k])
+		b.WriteString("\n\n")
 	}
 	b.WriteString("## Units\n\n")
 	for _, u := range m.Units {

@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
 	"github.com/osshield/fallbck/pkg/auth"
 	"github.com/osshield/fallbck/pkg/config"
@@ -178,13 +180,13 @@ func (s *ServerAPI) HandleAgentEnroll(w http.ResponseWriter, r *http.Request) {
 	agentID := uuid.New()
 	taskQueue := fmt.Sprintf("fallbck-agent-%s", agentID.String())
 
-	// Client IP detection (RealIP middleware already applied X-Forwarded-For)
+	// Client IP: agent-reported, else the proxy-forwarded address, else the peer
 	ip := req.IPAddress
 	if ip == "" {
-		ip = r.RemoteAddr
-		if colonIdx := strings.LastIndex(ip, ":"); colonIdx != -1 {
-			ip = ip[:colonIdx]
-		}
+		ip = middleware.GetClientIP(r.Context())
+	}
+	if ip == "" {
+		ip, _, _ = net.SplitHostPort(r.RemoteAddr)
 	}
 
 	agent := &db.Agent{

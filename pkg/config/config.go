@@ -8,6 +8,7 @@ import (
 	"github.com/osshield/fallbck/pkg/dbbackup"
 	"github.com/osshield/fallbck/pkg/dockerbackup"
 	"log/slog"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -128,8 +129,11 @@ type ServerConfig struct {
 	// PublicURL is the reverse proxy's externally reachable URL (OIDC redirect,
 	// install script, enrollment response)
 	PublicURL string `yaml:"public_url" json:"public_url"`
-	JWTSecret string `yaml:"jwt_secret" json:"jwt_secret"`
-	DataDir   string `yaml:"data_dir" json:"data_dir"`
+	// TrustedProxies are the CIDRs of reverse proxies whose X-Forwarded-For entries are
+	// believed when determining a client's IP (default: loopback and private ranges)
+	TrustedProxies []string `yaml:"trusted_proxies" json:"trusted_proxies"`
+	JWTSecret      string   `yaml:"jwt_secret" json:"jwt_secret"`
+	DataDir        string   `yaml:"data_dir" json:"data_dir"`
 	// AgentCABundlePath optionally points at a PEM bundle agents should trust for the
 	// public URL (private CAs); it is handed out at enrollment
 	AgentCABundlePath string `yaml:"agent_ca_bundle_path" json:"agent_ca_bundle_path"`
@@ -223,6 +227,10 @@ func DefaultServerConfig() *ServerConfig {
 		HTTPPort:  8080,
 		HTTPBind:  "0.0.0.0",
 		PublicURL: "http://localhost:8080",
+		TrustedProxies: []string{
+			"127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+			"::1/128", "fc00::/7",
+		},
 		JWTSecret: "change-me-in-production-fallbck-secret-key-32bytes",
 		DataDir:   "/var/lib/fallbck/server",
 		Auth: AuthConfig{
@@ -322,6 +330,7 @@ func LoadServerConfig(filePath string) (*ServerConfig, error) {
 	envInt("FALLBCK_HTTP_PORT", &cfg.HTTPPort)
 	envString("FALLBCK_HTTP_BIND", &cfg.HTTPBind)
 	envString("FALLBCK_PUBLIC_URL", &cfg.PublicURL)
+	envList("FALLBCK_TRUSTED_PROXIES", &cfg.TrustedProxies)
 	envString("FALLBCK_JWT_SECRET", &cfg.JWTSecret)
 	envString("FALLBCK_DATA_DIR", &cfg.DataDir)
 	envString("FALLBCK_MASTER_KEY_FILE", &cfg.Security.MasterKeyFile)
@@ -373,6 +382,11 @@ func (c *ServerConfig) Validate(dev bool) error {
 	}
 	if u, err := url.Parse(c.PublicURL); err != nil || u.Scheme == "" || u.Host == "" {
 		return fmt.Errorf("public_url %q must be an absolute URL", c.PublicURL)
+	}
+	for _, p := range c.TrustedProxies {
+		if _, err := netip.ParsePrefix(p); err != nil {
+			return fmt.Errorf("trusted_proxies: %q is not a CIDR: %v", p, err)
+		}
 	}
 	if len(c.JWTSecret) < 32 {
 		return errors.New("jwt_secret must be at least 32 characters")

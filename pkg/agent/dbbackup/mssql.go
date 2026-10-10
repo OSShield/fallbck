@@ -204,12 +204,14 @@ func mssqlBackupSQL(opts *dbspec.MSSQLOptions, t mssqlTask, serverPaths []string
 	} else {
 		b.WriteString("BACKUP DATABASE ")
 	}
-	b.WriteString(mssqlIdent(t.DB) + " TO ")
+	b.WriteString(mssqlIdent(t.DB))
+	b.WriteString(" TO ")
 	for i, p := range serverPaths {
 		if i > 0 {
 			b.WriteString(", ")
 		}
-		b.WriteString("DISK = " + mssqlNString(p))
+		b.WriteString("DISK = ")
+		b.WriteString(mssqlNString(p))
 	}
 	with := []string{}
 	if t.Kind == mssqlDiff {
@@ -230,7 +232,8 @@ func mssqlBackupSQL(opts *dbspec.MSSQLOptions, t mssqlTask, serverPaths []string
 		with = append(with, fmt.Sprintf("MAXTRANSFERSIZE = %d", opts.MaxTransferSize))
 	}
 	with = append(with, "FORMAT", "INIT", "NAME = "+mssqlNString(label), "STATS = 10")
-	b.WriteString(" WITH " + strings.Join(with, ", "))
+	b.WriteString(" WITH ")
+	b.WriteString(strings.Join(with, ", "))
 	return b.String()
 }
 
@@ -385,7 +388,7 @@ func mssqlProbeDir(ctx context.Context, conn mssqlConn, plan mssqlPlan, runID st
 		}
 		return "", &PrecheckError{Msg: "backup directory " + plan.AgentDir + " is not usable by the agent", Err: err, Hint: hint}
 	}
-	defer os.Remove(agentPath)
+	defer os.Remove(agentPath) //nolint:errcheck
 	rows, err := conn.queryRows(ctx, `EXEC master.dbo.xp_fileexist `+mssqlNString(mssqlServerJoin(plan.BackupDir, name)))
 	if err != nil || len(rows) != 1 || len(rows[0]) < 1 {
 		return "could not verify that SQL Server sees the backup directory (xp_fileexist is not available to this login)", nil

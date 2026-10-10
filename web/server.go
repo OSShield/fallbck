@@ -7,11 +7,13 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httputil"
+	"net/netip"
 	"net/url"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
 	"github.com/osshield/fallbck/pkg/agenthealth"
 	"github.com/osshield/fallbck/pkg/auth"
@@ -111,6 +113,31 @@ func (u *UIHandler) RegisterRoutes(r chi.Router) {
 			r.Handle(temporalui.PublicPath+"/*", u.temporalProxy)
 		}
 	})
+}
+
+// ClientIP stores the client IP for middleware.GetClientIP. X-Forwarded-For is only
+// believed when the peer is a trusted proxy; the chain is then walked right-to-left,
+// skipping trusted hops. Prefixes must already be validated (config.Validate).
+func ClientIP(trustedProxies []string) func(http.Handler) http.Handler {
+	prefixes := make([]netip.Prefix, len(trustedProxies))
+	for i, p := range trustedProxies {
+		prefixes[i] = netip.MustParsePrefix(p)
+	}
+	fromXFF := middleware.ClientIPFromXFF(trustedProxies...)
+	return func(next http.Handler) http.Handler {
+		viaProxy, direct := fromXFF(next), middleware.ClientIPFromRemoteAddr(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if peer, err := netip.ParseAddrPort(r.RemoteAddr); err == nil {
+				for _, p := range prefixes {
+					if p.Contains(peer.Addr().Unmap()) {
+						viaProxy.ServeHTTP(w, r)
+						return
+					}
+				}
+			}
+			direct.ServeHTTP(w, r)
+		})
+	}
 }
 
 // SecurityHeaders sets a conservative set of browser security headers. The embedded

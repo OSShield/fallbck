@@ -62,7 +62,7 @@ func driveRoot(p string) (string, bool) {
 		return "", false
 	}
 	c := p[0]
-	if !((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) {
+	if (c < 'A' || c > 'Z') && (c < 'a' || c > 'z') {
 		return "", false
 	}
 	if len(p) == 3 && p[2] != '\\' && p[2] != '/' {

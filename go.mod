@@ -1,6 +1,6 @@
 module github.com/osshield/fallbck
 
-go 1.27.0
+go 1.27.2
 
 // Temporal: server, api, sdk and ui-server move together (the embedded server compiles
 // only against the api it was released with); the set here is Temporal 1.32.
@@ -23,7 +23,7 @@ require (
 	go.temporal.io/api v1.63.6
 	go.temporal.io/sdk v1.49.0
 	go.temporal.io/server v1.32.0
-	golang.org/x/net v0.59.0
+	golang.org/x/net v0.60.0
 	golang.org/x/oauth2 v0.37.0
 	golang.org/x/sys v0.48.0
 	golang.org/x/term v0.46.0
