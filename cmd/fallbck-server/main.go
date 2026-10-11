@@ -16,6 +16,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/osshield/fallbck/pkg/agentupdate"
 	"github.com/osshield/fallbck/pkg/api"
 	"github.com/osshield/fallbck/pkg/auth"
 	"github.com/osshield/fallbck/pkg/config"
@@ -269,6 +270,8 @@ func main() {
 	r.Use(web.SecurityHeaders)
 
 	serverAPI := api.NewServerAPI(database, temporalClient, cfg, tokenManager, agentVerifier)
+	agentUpdates := agentupdate.New(ServerVersion, cfg.DataDir)
+	serverAPI.Updates = agentUpdates
 	if temporalClient != nil {
 		db.SetScheduleLocation(cfg.ScheduleLocation())
 		slog.Info("Cron schedules run in timezone", "timezone", cfg.Timezone)
@@ -303,6 +306,7 @@ func main() {
 		Admin:        adminAuth,
 		TemporalUI:   uiServer,
 		Version:      ServerVersion,
+		Updates:      agentUpdates,
 	})
 	uiHandler.RegisterRoutes(r)
 

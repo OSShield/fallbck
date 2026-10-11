@@ -994,6 +994,32 @@ async function loadAgentLogs(agentId) {
   }
 }
 
+// Self-update: per-agent auto-update opt-in and a one-off "update now"
+async function toggleAgentAutoUpdate(agentId, enable) {
+  try {
+    const resp = await apiFetch(`/api/v1/agents/${agentId}/auto-update`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: enable })
+    });
+    if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).error || 'Failed to toggle auto-update');
+    showToast(enable ? 'Auto-update enabled — the agent updates on its next heartbeat when the server is newer' : 'Auto-update disabled', 'success');
+    setTimeout(() => window.location.reload(), 700);
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function requestAgentUpdate(agentId) {
+  try {
+    const resp = await apiFetch(`/api/v1/agents/${agentId}/update`, { method: 'POST' });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.error || 'Failed to request the update');
+    showToast(`Update to v${data.version} requested — applied on the agent's next heartbeat (~30s) once no backup is running`, 'success');
+    setTimeout(() => window.location.reload(), 700);
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
 async function toggleAgentDebug(agentId, enable) {
   try {
     const resp = await apiFetch(`/api/v1/agents/${agentId}/debug`, {

@@ -9,6 +9,11 @@
   </a>
 </div>
 
+{{range $platform, $err := .UpdateErrors}}
+<div style="padding: 10px 14px; margin-bottom: 12px; border-radius: var(--radius-sm); border: 1px solid var(--danger-border); background: var(--danger-bg); font-size: 13px;">
+  <strong>Agent release for {{$platform}} could not be mirrored</strong> from GitHub (retried every 10 minutes): {{$err}}
+</div>
+{{end}}
 <div class="card">
   <div class="card-header">
     <h3 class="card-title">Enrolled Agents ({{len .Agents}})</h3>
@@ -30,6 +35,8 @@
       <tbody>
         {{if .Agents}}
           {{$stale := .Stale}}
+          {{$behind := .Behind}}
+          {{$updatesOn := .UpdatesOn}}
           {{range .Agents}}
           <tr>
             <td>
@@ -49,6 +56,9 @@
             <td>
               <span class="badge badge-neutral">{{.OS}}/{{.Arch}}</span>
               <span style="font-size: 11px; color: var(--text-muted); margin-left: 4px;">{{.Version}}</span>
+              {{if index $behind .ID}}<span class="badge badge-warning" title="{{if .SelfUpdate}}The agent can update itself: press Update now, or turn auto-update on{{else}}Behind the server; this agent cannot update itself (container, Kubernetes or Windows): update its image or package{{end}}">v{{$.Version}} available</span>{{end}}
+              {{if .UpdateError}}<span class="badge badge-danger" title="{{.UpdateError}}">update failed</span>{{end}}
+              {{if .UpdateRequestedAt}}<span class="badge badge-info" title="Requested {{formatTime .UpdateRequestedAt}}; applied on the agent's next heartbeat with no backup running">updating…</span>{{end}}
             </td>
             <td style="font-family: var(--font-mono); font-size: 12px; color: var(--text-muted);">{{.TaskQueue}}</td>
             <td style="color: var(--text-muted); font-size: 13px;">
@@ -59,6 +69,14 @@
                 <button class="btn btn-secondary btn-sm" title="Debug logging is on; the agent logs at debug level. Click to return to its configured level." onclick="toggleAgentDebug('{{.ID}}', false)">Debug: on</button>
               {{else}}
                 <button class="btn btn-secondary btn-sm" title="Raise this agent's log level to debug from here — applied on its next heartbeat (~30s), no restart." onclick="toggleAgentDebug('{{.ID}}', true)">Debug: off</button>
+              {{end}}
+              {{if and .SelfUpdate $updatesOn}}
+                {{if .AutoUpdate}}
+                  <button class="btn btn-secondary btn-sm" title="The agent follows the server's version on its own. Click to stop." onclick="toggleAgentAutoUpdate('{{.ID}}', false)">Auto-update: on</button>
+                {{else}}
+                  <button class="btn btn-secondary btn-sm" title="Let the agent update itself whenever the server is newer (never while a backup runs)" onclick="toggleAgentAutoUpdate('{{.ID}}', true)">Auto-update: off</button>
+                {{end}}
+                {{if and (index $behind .ID) (not .UpdateRequestedAt)}}<button class="btn btn-primary btn-sm" title="Update this agent to v{{$.Version}} on its next heartbeat" onclick="requestAgentUpdate('{{.ID}}')">Update now</button>{{end}}
               {{end}}
               <a class="btn btn-secondary btn-sm" href="/agents/{{.ID}}" title="Status, alerts, credential profiles, inventory and logs">Status</a>
               <a class="btn btn-secondary btn-sm" href="/onboarding?agent={{.ID}}" title="Guided setup of backup jobs for this agent">Set up backups</a>

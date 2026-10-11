@@ -34,5 +34,6 @@ COPY --from=builder /bin/fallbck-k8s-agent /usr/local/bin/fallbck-k8s-agent
 RUN addgroup -S fallbck && adduser -S -G fallbck -u 10004 fallbck
 USER fallbck
 
+ENV FALLBCK_IN_CONTAINER=1
 ENTRYPOINT ["/usr/local/bin/fallbck-k8s-agent"]
 CMD ["run"]

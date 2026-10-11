@@ -79,6 +79,18 @@ type HeartbeatRequest struct {
 	// Inventory is the compact inventory summary (inventory.Summary), attached every
 	// few minutes rather than with every heartbeat
 	Inventory json.RawMessage `json:"inventory,omitempty"`
+	// SelfUpdate reports that the agent can replace its own binary
+	SelfUpdate bool `json:"self_update,omitempty"`
+	// UpdateError is the agent's last self-update failure, repeated until it restarts
+	UpdateError string `json:"update_error,omitempty"`
+}
+
+// AgentUpdate tells an agent to replace its binary: URL is the server path of the
+// binary (agent token auth), SHA256 its digest
+type AgentUpdate struct {
+	Version string `json:"version"`
+	URL     string `json:"url"`
+	SHA256  string `json:"sha256"`
 }
 
 // MergeAgentRequest moves the jobs and runs of one agent onto another and deletes
@@ -102,9 +114,12 @@ type HeartbeatResponse struct {
 	Status string `json:"status"`
 	// DebugLogging tells the agent to raise its log level to debug (web UI toggle)
 	DebugLogging bool `json:"debug_logging"`
+	// Update is set when the agent should update itself to the server's version
+	Update *AgentUpdate `json:"update,omitempty"`
 }
 
-// SetAgentDebugRequest toggles an agent's remote debug logging
+// SetAgentDebugRequest toggles an agent's remote debug logging; the same shape
+// toggles auto-update
 type SetAgentDebugRequest struct {
 	Enabled bool `json:"enabled"`
 }

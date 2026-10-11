@@ -23,6 +23,14 @@
     {{else}}
       <button class="btn btn-secondary btn-sm" title="Raise this agent's log level to debug — applied on its next heartbeat (~30s)" onclick="toggleAgentDebug('{{$a.ID}}', true)">Debug: off</button>
     {{end}}
+    {{if and $a.SelfUpdate .UpdatesOn}}
+      {{if $a.AutoUpdate}}
+        <button class="btn btn-secondary btn-sm" title="The agent follows the server's version on its own. Click to stop." onclick="toggleAgentAutoUpdate('{{$a.ID}}', false)">Auto-update: on</button>
+      {{else}}
+        <button class="btn btn-secondary btn-sm" title="Let the agent update itself whenever the server is newer (never while a backup runs)" onclick="toggleAgentAutoUpdate('{{$a.ID}}', true)">Auto-update: off</button>
+      {{end}}
+      {{if and .Behind (not $a.UpdateRequestedAt)}}<button class="btn btn-primary btn-sm" title="Update this agent to v{{.Version}} on its next heartbeat" onclick="requestAgentUpdate('{{$a.ID}}')">Update now</button>{{end}}
+    {{end}}
     <a class="btn btn-primary btn-sm" href="/onboarding?agent={{$a.ID}}">Set up backups</a>
     <button class="btn btn-secondary btn-sm" style="color: var(--danger-text);" onclick="deleteResource('agents', '{{$a.ID}}')">Delete</button>
   </div>
@@ -57,7 +65,11 @@
     <div class="card-header"><h3 class="card-title">Connectivity</h3></div>
     <div style="padding: 16px; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; font-size: 14px;">
       <div><div class="kv-label">Last heartbeat</div><div title="{{formatTime $a.LastSeenAt}}">{{since $a.LastSeenAt}}</div></div>
-      <div><div class="kv-label">Agent version</div><div>{{if $a.Version}}{{$a.Version}}{{else}}-{{end}} <span style="color: var(--text-muted); font-size: 12px;">(server {{.Version}})</span></div></div>
+      <div><div class="kv-label">Agent version</div><div>{{if $a.Version}}{{$a.Version}}{{else}}-{{end}} <span style="color: var(--text-muted); font-size: 12px;">(server {{.Version}})</span>
+        {{if $a.UpdateRequestedAt}}<span class="badge badge-info" title="Requested {{formatTime $a.UpdateRequestedAt}}">updating…</span>{{end}}
+        {{if $a.UpdateError}}<div style="color: var(--danger-text); font-size: 12px; margin-top: 4px;">{{$a.UpdateError}}</div>{{end}}
+        {{if and .Behind (not $a.SelfUpdate)}}<div style="color: var(--text-muted); font-size: 12px; margin-top: 4px;">Cannot update itself (container, Kubernetes or Windows): update its image or package.</div>{{end}}
+      </div></div>
       <div><div class="kv-label">Platform</div><div>{{$a.OS}}/{{$a.Arch}}</div></div>
       <div><div class="kv-label">IP address</div><div style="font-family: var(--font-mono); font-size: 13px;">{{if $a.IPAddress}}{{$a.IPAddress}}{{else}}-{{end}}</div></div>
       <div><div class="kv-label">Task queue</div><div style="font-family: var(--font-mono); font-size: 12px; word-break: break-all;">{{$a.TaskQueue}}</div></div>

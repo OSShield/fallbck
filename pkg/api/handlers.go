@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
+	"github.com/osshield/fallbck/pkg/agenthealth"
+	"github.com/osshield/fallbck/pkg/agentupdate"
 	"github.com/osshield/fallbck/pkg/auth"
 	"github.com/osshield/fallbck/pkg/config"
 	"github.com/osshield/fallbck/pkg/db"
@@ -34,6 +37,9 @@ type ServerAPI struct {
 	// server started without Temporal). A concrete pointer on purpose: a nil
 	// *scheduler.Scheduler stored in an interface field would not compare equal to nil.
 	Scheduler *scheduler.Scheduler
+	// Updates mirrors the agent binary of the server's release for self-updating
+	// agents (nil: feature off)
+	Updates *agentupdate.Cache
 }
 
 // NewServerAPI initializes the API service
@@ -73,6 +79,7 @@ func (s *ServerAPI) RegisterRoutes(r chi.Router, admin, agent Middleware) {
 			r.Post("/agents/volume-ticket", s.HandleSubTicket)
 			r.Post("/agents/token/worker", s.HandleWorkerToken)
 			r.Post("/agents/run-progress", s.HandleRunProgress)
+			r.Get("/agents/update/{os}/{arch}", s.HandleAgentUpdateBinary)
 		})
 
 		// Administrative
@@ -85,6 +92,8 @@ func (s *ServerAPI) RegisterRoutes(r chi.Router, admin, agent Middleware) {
 			r.Get("/agents/{id}", s.HandleGetAgent)
 			r.Delete("/agents/{id}", s.HandleDeleteAgent)
 			r.Post("/agents/{id}/debug", s.HandleSetAgentDebug)
+			r.Post("/agents/{id}/auto-update", s.HandleSetAgentAutoUpdate)
+			r.Post("/agents/{id}/update", s.HandleRequestAgentUpdate)
 			r.Post("/agents/{id}/merge", s.HandleMergeAgent)
 			r.Post("/agents/{id}/logs", s.HandleAgentLogs)
 			r.Post("/agents/{id}/inventory", s.HandleAgentInventory)
@@ -274,7 +283,8 @@ func (s *ServerAPI) HandleAgentHeartbeat(w http.ResponseWriter, r *http.Request)
 		status = db.AgentStatus(req.Status)
 	}
 
-	debug, err := s.DB.UpdateAgentHeartbeat(r.Context(), claims.AgentID, status, db.AgentCapabilities{PVEHost: req.PVEHost, DockerHost: req.DockerHost, DBTools: req.DBTools || len(req.DBEngines) > 0, DBEngines: db.CleanDBEngines(req.DBEngines), Inventory: req.Inventory})
+	st, err := s.DB.UpdateAgentHeartbeat(r.Context(), claims.AgentID, status, db.AgentCapabilities{PVEHost: req.PVEHost, DockerHost: req.DockerHost, DBTools: req.DBTools || len(req.DBEngines) > 0, DBEngines: db.CleanDBEngines(req.DBEngines), Inventory: req.Inventory,
+		Version: req.Version, SelfUpdate: req.SelfUpdate, UpdateError: req.UpdateError})
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			s.writeError(w, http.StatusUnauthorized, "agent no longer exists")
@@ -284,7 +294,52 @@ func (s *ServerAPI) HandleAgentHeartbeat(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	s.writeJSON(w, http.StatusOK, HeartbeatResponse{Status: "ok", DebugLogging: debug})
+	resp := HeartbeatResponse{Status: "ok", DebugLogging: st.DebugLogging}
+	if req.SelfUpdate {
+		resp.Update = s.agentUpdate(r.Context(), claims.AgentID, req.Version, st)
+	}
+	s.writeJSON(w, http.StatusOK, resp)
+}
+
+// agentUpdate decides whether the heartbeat answer carries an update: the agent is
+// behind the server's release and either opted in or an administrator pressed
+// "Update now". A request the agent has satisfied is cleared here.
+func (s *ServerAPI) agentUpdate(ctx context.Context, id uuid.UUID, agentVersion string, st db.HeartbeatState) *AgentUpdate {
+	if s.Updates == nil {
+		return nil
+	}
+	behind, ok := agenthealth.VersionBehind(agentVersion, s.Updates.Version)
+	switch {
+	case !ok:
+		return nil
+	case !behind:
+		if st.UpdateRequested {
+			_ = s.DB.ClearAgentUpdateRequest(ctx, id)
+		}
+		return nil
+	case !st.AutoUpdate && !st.UpdateRequested:
+		return nil
+	}
+	sha, ready := s.Updates.Binary(st.OS, st.Arch)
+	if !ready {
+		return nil
+	}
+	return &AgentUpdate{Version: s.Updates.Version, URL: "/api/v1/agents/update/" + st.OS + "/" + st.Arch, SHA256: sha}
+}
+
+// HandleAgentUpdateBinary serves the mirrored agent binary for an OS/arch
+func (s *ServerAPI) HandleAgentUpdateBinary(w http.ResponseWriter, r *http.Request) {
+	goos, goarch := chi.URLParam(r, "os"), chi.URLParam(r, "arch")
+	if s.Updates == nil {
+		s.writeError(w, http.StatusNotFound, "agent updates are disabled")
+		return
+	}
+	if _, ready := s.Updates.Binary(goos, goarch); !ready {
+		s.writeError(w, http.StatusNotFound, "no agent binary mirrored for "+goos+"/"+goarch)
+		return
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	http.ServeFile(w, r, s.Updates.Path(goos, goarch))
 }
 
 // HandleListAgents returns all registered agents
@@ -478,6 +533,55 @@ func (s *ServerAPI) HandleSetAgentDebug(w http.ResponseWriter, r *http.Request) 
 	}
 	slog.Info("Agent debug logging toggled", "agent_id", id, "enabled", req.Enabled)
 	s.writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "debug_logging": req.Enabled})
+}
+
+// HandleSetAgentAutoUpdate toggles the per-agent auto-update opt-in
+func (s *ServerAPI) HandleSetAgentAutoUpdate(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "Invalid agent ID")
+		return
+	}
+	var req SetAgentDebugRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	if err := s.DB.SetAgentAutoUpdate(r.Context(), id, req.Enabled); err != nil {
+		s.agentWriteErr(w, err, "Failed to update agent")
+		return
+	}
+	slog.Info("Agent auto-update toggled", "agent_id", id, "enabled", req.Enabled)
+	s.writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "auto_update": req.Enabled})
+}
+
+// HandleRequestAgentUpdate asks an agent to update to the server's version on its
+// next heartbeat
+func (s *ServerAPI) HandleRequestAgentUpdate(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "Invalid agent ID")
+		return
+	}
+	if s.Updates == nil || !s.Updates.Enabled() {
+		s.writeError(w, http.StatusConflict, "This server is not a release build; agents cannot be updated from it")
+		return
+	}
+	if err := s.DB.RequestAgentUpdate(r.Context(), id); err != nil {
+		s.agentWriteErr(w, err, "Failed to update agent")
+		return
+	}
+	slog.Info("Agent update requested", "agent_id", id, "version", s.Updates.Version)
+	s.writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "version": s.Updates.Version})
+}
+
+func (s *ServerAPI) agentWriteErr(w http.ResponseWriter, err error, msg string) {
+	if errors.Is(err, db.ErrNotFound) {
+		s.writeError(w, http.StatusNotFound, "Agent not found")
+		return
+	}
+	slog.Error(msg, "error", err)
+	s.writeError(w, http.StatusInternalServerError, msg)
 }
 
 // HandleDeleteToken invalidates an enrollment token immediately

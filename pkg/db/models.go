@@ -88,8 +88,21 @@ type AgentCapabilities struct {
 	DockerHost bool
 	DBTools    bool
 	DBEngines  []string
+	// Version is the running binary's version (empty keeps the stored one)
+	Version string
+	// SelfUpdate / UpdateError: see Agent
+	SelfUpdate  bool
+	UpdateError string
 	// Inventory is the summary attached to this heartbeat (nil: none this time)
 	Inventory json.RawMessage
+}
+
+// HeartbeatState is what the heartbeat response needs from the agent row
+type HeartbeatState struct {
+	DebugLogging    bool
+	AutoUpdate      bool
+	UpdateRequested bool
+	OS, Arch        string
 }
 
 // CleanDBEngines keeps the known engine names, canonical and without duplicates
@@ -164,6 +177,16 @@ type Agent struct {
 	TaskQueue string    `json:"task_queue" db:"task_queue"`
 	// DebugLogging raises the agent's log level to debug (applied via heartbeats)
 	DebugLogging bool `json:"debug_logging" db:"debug_logging"`
+	// AutoUpdate lets the agent update itself to the server's version (per-agent opt-in)
+	AutoUpdate bool `json:"auto_update" db:"auto_update"`
+	// SelfUpdate is reported by the agent when it can replace its own binary (Linux
+	// package or manual install; not containers, not Windows)
+	SelfUpdate bool `json:"self_update" db:"self_update"`
+	// UpdateRequestedAt is set by "Update now" in the web UI; cleared when the agent
+	// reports the server's version or an update error
+	UpdateRequestedAt *time.Time `json:"update_requested_at,omitempty" db:"update_requested_at"`
+	// UpdateError is the agent's last self-update failure (empty: none)
+	UpdateError string `json:"update_error,omitempty" db:"update_error"`
 	// PVEHost is reported by the agent when it runs on a Proxmox VE node
 	PVEHost bool `json:"pve_host" db:"pve_host"`
 	// DockerHost is reported by the agent when a Docker daemon answers on its host

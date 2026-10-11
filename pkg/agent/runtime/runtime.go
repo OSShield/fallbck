@@ -35,6 +35,7 @@ import (
 	"github.com/osshield/fallbck/pkg/pvebackup"
 	"github.com/osshield/fallbck/pkg/rundetail"
 	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/worker"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -65,6 +66,10 @@ type Agent struct {
 	DBEngines func() []string
 	// Inventory builds the periodic summary attached to heartbeats (nil: none)
 	Inventory *Inventory
+
+	// update is set by RunUntil; the heartbeat loop reports the capability and
+	// applies update instructions through it
+	update *selfUpdater
 }
 
 // dbEngines evaluates the DBEngines probe when set
@@ -495,8 +500,14 @@ func StartHeartbeat(ctx context.Context, cfg *config.AgentConfig, store *TokenSt
 	}
 
 	var lastSummary time.Time
+	// Only the combined fallbck-agent is mirrored by the server (the kubernetes agent
+	// lives in an image)
+	selfUpdate := a.update != nil && a.Type == config.AgentTypeFilesystem && a.update.canSelfUpdate()
 	sendHeartbeat := func() {
-		req := api.HeartbeatRequest{AgentID: agentUUID, Status: "online", Version: version, PVEHost: pvebackup.IsPVEHost(), DockerHost: dockerHost(), DBEngines: a.dbEngines(), DBTools: len(a.dbEngines()) > 0}
+		req := api.HeartbeatRequest{AgentID: agentUUID, Status: "online", Version: version, PVEHost: pvebackup.IsPVEHost(), DockerHost: dockerHost(), DBEngines: a.dbEngines(), DBTools: len(a.dbEngines()) > 0, SelfUpdate: selfUpdate}
+		if selfUpdate {
+			req.UpdateError = a.update.lastErr
+		}
 		if a.Inventory != nil && time.Since(lastSummary) >= inventory.SummaryInterval {
 			if data, err := json.Marshal(a.Inventory.Summary(ctx)); err == nil {
 				req.Inventory = data
@@ -527,6 +538,9 @@ func StartHeartbeat(ctx context.Context, cfg *config.AgentConfig, store *TokenSt
 			} else {
 				slog.Info("Debug logging disabled remotely; back to the configured level")
 			}
+		}
+		if ack.Update != nil && selfUpdate && ack.Update.Version != version {
+			a.update.handle(ctx, ack.Update)
 		}
 	}
 
@@ -574,6 +588,8 @@ func StartHeartbeat(ctx context.Context, cfg *config.AgentConfig, store *TokenSt
 // queue with the activities registered by register, and the heartbeat loop; it blocks
 // until SIGINT/SIGTERM.
 func Run(a Agent, cfg *config.AgentConfig, configPath string, register func(w worker.Worker, conns *Conns, store *TokenStore) error) error {
+	// Resolved before a self-update renames the running binary to <exe>.old
+	exe, _ := os.Executable()
 	stopChan := make(chan os.Signal, 1)
 	signal.Notify(stopChan, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(stopChan)
@@ -582,7 +598,12 @@ func Run(a Agent, cfg *config.AgentConfig, configPath string, register func(w wo
 		<-stopChan
 		close(stop)
 	}()
-	return RunUntil(a, cfg, configPath, register, stop)
+	err := RunUntil(a, cfg, configPath, register, stop)
+	if errors.Is(err, ErrRestart) {
+		slog.Info("Restarting into the updated binary", "path", exe)
+		return execSelf(exe)
+	}
+	return err
 }
 
 // RunUntil is Run with an explicit stop signal (the Windows service control manager
@@ -611,10 +632,14 @@ func RunUntil(a Agent, cfg *config.AgentConfig, configPath string, register func
 	defer conns.Close()
 	slog.Info("Connected to FallBCK server gateway", "endpoint", conns.HostPort)
 
-	// Activity-only worker on the agent's private task queue
+	// Activity-only worker on the agent's private task queue; the interceptor counts
+	// running activities so a self-update waits for them
+	running := &inflight{}
+	a.update = newSelfUpdater(cfg, store, running)
 	w := worker.New(conns.Temporal, cfg.TaskQueue, worker.Options{
 		DisableWorkflowWorker: true,
 		Identity:              identity,
+		Interceptors:          []interceptor.WorkerInterceptor{running},
 	})
 	if err := register(w, conns, store); err != nil {
 		return err
@@ -627,9 +652,14 @@ func RunUntil(a Agent, cfg *config.AgentConfig, configPath string, register func
 
 	go StartHeartbeat(ctx, cfg, store, a)
 
-	<-stop
-	slog.Info("Shutting down " + a.Name + "...")
-	return nil
+	select {
+	case <-stop:
+		slog.Info("Shutting down " + a.Name + "...")
+		return nil
+	case <-a.update.restart:
+		slog.Info("Agent binary replaced; stopping the worker for restart")
+		return ErrRestart
+	}
 }
 
 // PrintEnrolled prints the post-enrollment summary and how to start the service

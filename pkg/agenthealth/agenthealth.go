@@ -121,7 +121,7 @@ func Evaluate(in Input) []Alert {
 	summary := Summary(a)
 
 	// Version
-	if behind, ok := versionBehind(a.Version, in.ServerVersion); ok && behind {
+	if behind, ok := VersionBehind(a.Version, in.ServerVersion); ok && behind {
 		add(LevelWarning, "Agent version is behind the server", fmt.Sprintf("Agent runs %s, server is %s. Update the agent to keep the API and workflows in step.", a.Version, in.ServerVersion), nil)
 	}
 
@@ -211,9 +211,9 @@ func cannotRun(a *db.Agent, summary *inventory.Summary, j *db.BackupJob) string 
 	return ""
 }
 
-// versionBehind compares two "v1.2.3"-style versions; ok is false when either is
+// VersionBehind compares two "v1.2.3"-style versions; ok is false when either is
 // not a version (dev builds, empty)
-func versionBehind(agent, server string) (behind, ok bool) {
+func VersionBehind(agent, server string) (behind, ok bool) {
 	av, aok := parseVersion(agent)
 	sv, sok := parseVersion(server)
 	if !aok || !sok {

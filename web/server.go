@@ -16,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
 	"github.com/osshield/fallbck/pkg/agenthealth"
+	"github.com/osshield/fallbck/pkg/agentupdate"
 	"github.com/osshield/fallbck/pkg/auth"
 	"github.com/osshield/fallbck/pkg/config"
 	"github.com/osshield/fallbck/pkg/db"
@@ -33,6 +34,8 @@ type Deps struct {
 	// TemporalUI is the embedded Temporal Web UI to proxy under /temporal/ (nil = disabled)
 	TemporalUI *temporalui.Server
 	Version    string
+	// Updates is the agent release mirror (nil: self-updates disabled)
+	Updates *agentupdate.Cache
 }
 
 // UIHandler manages rendering of HTML templates and static assets
@@ -387,11 +390,26 @@ func (u *UIHandler) HandleAgents(w http.ResponseWriter, r *http.Request) {
 		stale[a.ID] = agenthealth.Stale(a, now)
 	}
 
+	// Which agents the server could update: behind its release and able to self-update
+	behind := map[uuid.UUID]bool{}
+	updatesOn := u.deps.Updates != nil && u.deps.Updates.Enabled()
+	updateErrors := map[string]string{}
+	for _, a := range agents {
+		b, ok := agenthealth.VersionBehind(a.Version, u.deps.Version)
+		behind[a.ID] = ok && b
+	}
+	if updatesOn {
+		updateErrors = u.deps.Updates.Errors()
+	}
+
 	u.renderPage(w, r, "agents.html", map[string]interface{}{
-		"Title":     "Agents",
-		"ActiveNav": "agents",
-		"Agents":    agents,
-		"Stale":     stale,
+		"Title":        "Agents",
+		"ActiveNav":    "agents",
+		"Agents":       agents,
+		"Stale":        stale,
+		"Behind":       behind,
+		"UpdatesOn":    updatesOn,
+		"UpdateErrors": updateErrors,
 	})
 }
 
@@ -432,7 +450,10 @@ func (u *UIHandler) HandleAgentDetail(w http.ResponseWriter, r *http.Request) {
 	runs, _ := u.DB.ListRunsByAgent(ctx, agent.ID, 20)
 	alerts := agenthealth.Evaluate(agenthealth.Input{Agent: agent, Jobs: jobs, LastRuns: last, ServerVersion: u.deps.Version, Now: now})
 
+	behind, bok := agenthealth.VersionBehind(agent.Version, u.deps.Version)
 	u.renderPage(w, r, "agent_detail.html", map[string]interface{}{
+		"Behind":    bok && behind,
+		"UpdatesOn": u.deps.Updates != nil && u.deps.Updates.Enabled(),
 		"Title":     agent.Hostname,
 		"ActiveNav": "agents",
 		"Agent":     agent,
