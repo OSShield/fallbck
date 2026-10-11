@@ -1,0 +1,64 @@
+site_name: FallBCK
+site_description: Backups for filesystems, databases, Kubernetes, Proxmox VE, Docker and Microsoft 365, straight into Proxmox Backup Server.
+site_url: https://osshield.github.io/fallbck/
+repo_url: https://github.com/osshield/fallbck
+repo_name: osshield/fallbck
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - search.highlight
+    - content.code.copy
+    - content.action.edit
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle: {icon: material/weather-night, name: Dark mode}
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle: {icon: material/weather-sunny, name: Light mode}
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - toc: {permalink: true}
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed: {alternate_style: true}
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - Try it locally: getting-started/quick-start.md
+      - Production install: getting-started/production.md
+      - Linux packages: getting-started/packages.md
+  - Agents:
+      - Agents and file backups: agents/index.md
+      - Windows: agents/windows.md
+      - Databases: agents/databases.md
+      - SQL Server: agents/sql-server.md
+      - Kubernetes: agents/kubernetes.md
+      - Proxmox VE hosts: agents/proxmox.md
+      - Docker hosts: agents/docker.md
+      - Microsoft 365: agents/m365.md
+  - Running it:
+      - Encryption: operations/encryption.md
+      - Scheduling: operations/scheduling.md
+      - Agent status and updates: operations/agent-status.md
+      - CLI: operations/cli.md
+      - Troubleshooting: operations/troubleshooting.md
+  - Reference:
+      - Server config: reference/server-config.md
+      - Agent config: reference/agent-config.md
+      - Helm chart: reference/helm.md
+      - REST API: reference/api.md
+  - Under the hood:
+      - Architecture: architecture.md
+      - Development: development.md

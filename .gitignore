@@ -39,3 +39,5 @@ fallbck-k8s-agent*.tgz
 
 bin/
 .bin/
+# Docs build output
+/site/
