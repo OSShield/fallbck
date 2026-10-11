@@ -106,7 +106,7 @@ func (s *ServerAPI) HandleAgentInventory(w http.ResponseWriter, r *http.Request)
 	}
 	// The summary part is fresh too
 	if sum, err := json.Marshal(res.Inventory.Summary); err == nil {
-		_, _ = s.DB.UpdateAgentHeartbeat(r.Context(), agent.ID, agent.Status, db.AgentCapabilities{PVEHost: agent.PVEHost, DockerHost: agent.DockerHost, DBTools: agent.DBTools, DBEngines: agent.DBEngines, Inventory: sum})
+		_, _ = s.DB.UpdateAgentHeartbeat(r.Context(), agent.ID, agent.Status, db.AgentCapabilities{PVEHost: agent.PVEHost, DockerHost: agent.DockerHost, DBTools: agent.DBTools, DBEngines: agent.DBEngines, Inventory: sum, SelfUpdate: agent.SelfUpdate, UpdateError: agent.UpdateError})
 	}
 	s.writeJSON(w, http.StatusOK, res.Inventory)
 }

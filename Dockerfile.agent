@@ -43,7 +43,8 @@ COPY --from=builder /bin/fallbck-agent /usr/local/bin/fallbck-agent
 
 USER fallbck
 
-ENV FALLBCK_AGENT_DATA_DIR=/var/lib/fallbck/agent
+# The image owns the binary: the agent reports it cannot self-update
+ENV FALLBCK_AGENT_DATA_DIR=/var/lib/fallbck/agent FALLBCK_IN_CONTAINER=1
 
 VOLUME ["/var/lib/fallbck/agent", "/backup-data"]
 

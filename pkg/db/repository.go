@@ -84,12 +84,12 @@ func (d *DB) UpsertAgent(ctx context.Context, agent *Agent) error {
 
 func (d *DB) GetAgentByID(ctx context.Context, id uuid.UUID) (*Agent, error) {
 	query := `
-		SELECT id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, debug_logging, pve_host, docker_host, db_tools, db_engines, inventory, inventory_at, inventory_detail, inventory_detail_at
+		SELECT id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, debug_logging, pve_host, docker_host, db_tools, db_engines, inventory, inventory_at, inventory_detail, inventory_detail_at, auto_update, self_update, update_requested_at, update_error
 		FROM agents WHERE id = $1
 	`
 	row := d.Pool.QueryRow(ctx, query, id)
 	var a Agent
-	err := row.Scan(&a.ID, &a.Hostname, &a.IPAddress, &a.OS, &a.Arch, &a.Version, &a.TaskQueue, &a.Status, &a.LastSeenAt, &a.CreatedAt, &a.UpdatedAt, &a.AgentType, &a.DebugLogging, &a.PVEHost, &a.DockerHost, &a.DBTools, &a.DBEngines, &a.Inventory, &a.InventoryAt, &a.InventoryDetail, &a.InventoryDetailAt)
+	err := row.Scan(&a.ID, &a.Hostname, &a.IPAddress, &a.OS, &a.Arch, &a.Version, &a.TaskQueue, &a.Status, &a.LastSeenAt, &a.CreatedAt, &a.UpdatedAt, &a.AgentType, &a.DebugLogging, &a.PVEHost, &a.DockerHost, &a.DBTools, &a.DBEngines, &a.Inventory, &a.InventoryAt, &a.InventoryDetail, &a.InventoryDetailAt, &a.AutoUpdate, &a.SelfUpdate, &a.UpdateRequestedAt, &a.UpdateError)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -101,7 +101,7 @@ func (d *DB) GetAgentByID(ctx context.Context, id uuid.UUID) (*Agent, error) {
 
 func (d *DB) ListAgents(ctx context.Context) ([]*Agent, error) {
 	query := `
-		SELECT id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, debug_logging, pve_host, docker_host, db_tools, db_engines, inventory, inventory_at, inventory_detail, inventory_detail_at
+		SELECT id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, debug_logging, pve_host, docker_host, db_tools, db_engines, inventory, inventory_at, inventory_detail, inventory_detail_at, auto_update, self_update, update_requested_at, update_error
 		FROM agents ORDER BY hostname ASC
 	`
 	rows, err := d.Pool.Query(ctx, query)
@@ -113,7 +113,7 @@ func (d *DB) ListAgents(ctx context.Context) ([]*Agent, error) {
 	var agents []*Agent
 	for rows.Next() {
 		var a Agent
-		if err := rows.Scan(&a.ID, &a.Hostname, &a.IPAddress, &a.OS, &a.Arch, &a.Version, &a.TaskQueue, &a.Status, &a.LastSeenAt, &a.CreatedAt, &a.UpdatedAt, &a.AgentType, &a.DebugLogging, &a.PVEHost, &a.DockerHost, &a.DBTools, &a.DBEngines, &a.Inventory, &a.InventoryAt, &a.InventoryDetail, &a.InventoryDetailAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.Hostname, &a.IPAddress, &a.OS, &a.Arch, &a.Version, &a.TaskQueue, &a.Status, &a.LastSeenAt, &a.CreatedAt, &a.UpdatedAt, &a.AgentType, &a.DebugLogging, &a.PVEHost, &a.DockerHost, &a.DBTools, &a.DBEngines, &a.Inventory, &a.InventoryAt, &a.InventoryDetail, &a.InventoryDetailAt, &a.AutoUpdate, &a.SelfUpdate, &a.UpdateRequestedAt, &a.UpdateError); err != nil {
 			return nil, err
 		}
 		agents = append(agents, &a)
@@ -121,26 +121,57 @@ func (d *DB) ListAgents(ctx context.Context) ([]*Agent, error) {
 	return agents, rows.Err()
 }
 
-// UpdateAgentHeartbeat records the heartbeat and returns the agent's remote
-// debug-logging setting for the response.
-func (d *DB) UpdateAgentHeartbeat(ctx context.Context, id uuid.UUID, status AgentStatus, caps AgentCapabilities) (bool, error) {
+// UpdateAgentHeartbeat records the heartbeat (status, capabilities, version) and
+// returns what the response needs. An update error from the agent consumes a pending
+// "update now" request so a failed manual update is not retried every heartbeat.
+func (d *DB) UpdateAgentHeartbeat(ctx context.Context, id uuid.UUID, status AgentStatus, caps AgentCapabilities) (HeartbeatState, error) {
 	now := time.Now().UTC()
 	// An inventory summary in the heartbeat replaces the stored one; nil keeps it
 	query := `UPDATE agents SET last_seen_at = $1, status = $2, updated_at = $1, pve_host = $4, docker_host = $5, db_tools = $6, db_engines = $7,
-		inventory = COALESCE($8, inventory), inventory_at = CASE WHEN $8::jsonb IS NULL THEN inventory_at ELSE $1 END
-		WHERE id = $3 RETURNING debug_logging`
-	var debug bool
+		inventory = COALESCE($8, inventory), inventory_at = CASE WHEN $8::jsonb IS NULL THEN inventory_at ELSE $1 END,
+		version = COALESCE(NULLIF($9, ''), version), self_update = $10, update_error = $11,
+		update_requested_at = CASE WHEN $11 <> '' THEN NULL ELSE update_requested_at END
+		WHERE id = $3 RETURNING debug_logging, auto_update, update_requested_at IS NOT NULL, os, arch`
+	var st HeartbeatState
 	var inv []byte
 	if len(caps.Inventory) > 0 {
 		inv = caps.Inventory
 	}
-	if err := d.Pool.QueryRow(ctx, query, now, status, id, caps.PVEHost, caps.DockerHost, caps.DBTools, enginesOrEmpty(caps.DBEngines), inv).Scan(&debug); err != nil {
+	if err := d.Pool.QueryRow(ctx, query, now, status, id, caps.PVEHost, caps.DockerHost, caps.DBTools, enginesOrEmpty(caps.DBEngines), inv,
+		caps.Version, caps.SelfUpdate, caps.UpdateError).Scan(&st.DebugLogging, &st.AutoUpdate, &st.UpdateRequested, &st.OS, &st.Arch); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return false, ErrNotFound
+			return st, ErrNotFound
 		}
-		return false, err
+		return st, err
 	}
-	return debug, nil
+	return st, nil
+}
+
+// SetAgentAutoUpdate flips the per-agent auto-update opt-in
+func (d *DB) SetAgentAutoUpdate(ctx context.Context, id uuid.UUID, enabled bool) error {
+	return d.execAgent(ctx, `UPDATE agents SET auto_update = $2, updated_at = NOW() WHERE id = $1`, id, enabled)
+}
+
+// RequestAgentUpdate asks the agent to update on its next heartbeat (the web UI's
+// "Update now"); a previous error is cleared so the retry starts clean
+func (d *DB) RequestAgentUpdate(ctx context.Context, id uuid.UUID) error {
+	return d.execAgent(ctx, `UPDATE agents SET update_requested_at = NOW(), update_error = '', updated_at = NOW() WHERE id = $1`, id)
+}
+
+// ClearAgentUpdateRequest drops a pending request (the agent reached the version)
+func (d *DB) ClearAgentUpdateRequest(ctx context.Context, id uuid.UUID) error {
+	return d.execAgent(ctx, `UPDATE agents SET update_requested_at = NULL WHERE id = $1`, id)
+}
+
+func (d *DB) execAgent(ctx context.Context, sql string, args ...any) error {
+	tag, err := d.Pool.Exec(ctx, sql, args...)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // SetAgentDebugLogging flips the per-agent debug toggle (delivered on the next heartbeat)

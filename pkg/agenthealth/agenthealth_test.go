@@ -116,7 +116,7 @@ func TestVersionCompare(t *testing.T) {
 		{"1.2.0", "", false, false},
 	}
 	for _, c := range cases {
-		b, ok := versionBehind(c.agent, c.server)
+		b, ok := VersionBehind(c.agent, c.server)
 		if b != c.behind || ok != c.ok {
 			t.Errorf("%s vs %s: behind=%v ok=%v", c.agent, c.server, b, ok)
 		}
