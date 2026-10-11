@@ -11,16 +11,7 @@
         <option value="">-- Choose tenant --</option>
         {{range .Tenants}}<option value="{{.ID}}" data-name="{{.Name}}">{{.Name}} ({{.TenantID}}, {{.AuthMethod}})</option>{{end}}
       </select>
-      <button type="button" class="btn btn-secondary btn-sm" onclick="toggleInlineTenant(this)">New tenant</button>
-    </div>
-  </div>
-  <div class="tenant-fields tenant-inline" hidden style="border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 14px; margin-bottom: 16px;">
-    <h4 style="font-size: 14px; margin-bottom: 10px;">Register a tenant</h4>
-    {{template "tenant-fields" .}}
-    <div style="display: flex; gap: 8px; align-items: center;">
-      <button type="button" class="btn btn-primary btn-sm" onclick="createInlineTenant(this)">Save tenant</button>
-      <button type="button" class="btn btn-secondary btn-sm" onclick="toggleInlineTenant(this)">Cancel</button>
-      <span class="form-text tenant-inline-status"></span>
+      <a href="/tenants" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">Manage tenants</a>
     </div>
   </div>
   <div class="form-group">

@@ -321,7 +321,7 @@ func (s *Server) handleH2(w http.ResponseWriter, r *http.Request) {
 			httpError(w, 404, "no previous backup")
 			return
 		}
-		w.Write(didx)
+		w.Write(didx) //nolint:errcheck
 
 	case "GET /previous_backup_time":
 		fmt.Fprint(w, `{"data":null}`)

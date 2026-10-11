@@ -327,7 +327,7 @@ func backupUnit(ctx context.Context, c *Client, s *spec.Spec, state State, o Run
 	}
 
 	spool := filepath.Join(o.SpoolDir, o.Session.BackupRunID.String(), spec.SafeName(u.Group))
-	defer os.RemoveAll(spool)
+	defer os.RemoveAll(spool) //nolint:errcheck
 
 	var entries []Entry
 	var dirs []Dir

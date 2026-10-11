@@ -118,7 +118,7 @@ func writeJSON(w http.ResponseWriter, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-func (g *fakeGraph) handler(t *testing.T) http.Handler {
+func (g *fakeGraph) handler(_ *testing.T) http.Handler {
 	mux := http.NewServeMux()
 	count := func(key string) {
 		g.cmu.Lock()

@@ -9,12 +9,12 @@ import "context"
 
 // Snapshots holds the shadow copies of one backup run
 type Snapshots struct {
-	links   []string
-	shadows []shadow
+	links   []string //nolint:unused
+	shadows []shadow //nolint:unused
 }
 
 // shadow is one created shadow copy (platform-specific handle)
-type shadow struct {
+type shadow struct { //nolint:unused
 	id     string
 	volume string
 	remove func() error

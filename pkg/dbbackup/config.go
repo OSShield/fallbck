@@ -188,7 +188,7 @@ func ResolveCredentials(spec *Spec, password string, profiles map[string]Credent
 		if spec.Engine != EngineMongoDB && spec.Engine != EngineMSSQL {
 			return creds, fmt.Errorf("%w: no database user configured (set it on the job or in the credential profile)", ErrNoCredentials)
 		}
-	} else if creds.Password == "" && !strings.HasPrefix(creds.Host, "/") && !(spec.Engine == EngineMongoDB && spec.MongoDB.PasswordlessAuth()) {
+	} else if creds.Password == "" && !strings.HasPrefix(creds.Host, "/") && (spec.Engine != EngineMongoDB || !spec.MongoDB.PasswordlessAuth()) {
 		return creds, fmt.Errorf("%w: no password available for %s@%s (job password blank and profile provides none); only unix-socket connections may run without a password", ErrNoCredentials, creds.User, creds.Host)
 	}
 	return creds, nil

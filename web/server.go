@@ -99,6 +99,7 @@ func (u *UIHandler) RegisterRoutes(r chi.Router) {
 		r.Get("/agents/{id}", u.HandleAgentDetail)
 		r.Get("/onboarding", u.HandleOnboarding)
 		r.Get("/targets", u.HandleTargets)
+		r.Get("/tenants", u.HandleTenants)
 		r.Get("/jobs", u.HandleJobs)
 		r.Get("/kubernetes", u.HandleKubernetes)
 		r.Get("/runs", u.HandleRuns)
@@ -471,18 +472,27 @@ func (u *UIHandler) HandleOnboarding(w http.ResponseWriter, r *http.Request) {
 }
 
 func (u *UIHandler) HandleTargets(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	var targets []*db.BackupTarget
-	var tenants []*m365.Tenant
 	if u.DB != nil {
-		targets, _ = u.DB.ListTargets(ctx)
-		tenants, _ = u.DB.ListTenants(ctx)
+		targets, _ = u.DB.ListTargets(r.Context())
 	}
 
 	u.renderPage(w, r, "targets.html", map[string]interface{}{
 		"Title":     "PBS Targets",
 		"ActiveNav": "targets",
 		"Targets":   targets,
+	})
+}
+
+func (u *UIHandler) HandleTenants(w http.ResponseWriter, r *http.Request) {
+	var tenants []*m365.Tenant
+	if u.DB != nil {
+		tenants, _ = u.DB.ListTenants(r.Context())
+	}
+
+	u.renderPage(w, r, "tenants.html", map[string]interface{}{
+		"Title":     "Microsoft 365 Tenants",
+		"ActiveNav": "tenants",
 		"Tenants":   tenants,
 	})
 }
