@@ -269,7 +269,7 @@ const OB_HINT_AFTER_MS = 90000;
 const ob = {
   step: '0', start: '', type: '', platform: '', tokenId: '', token: '', agentId: '', agent: null,
   backupType: '', targetId: '', targetAutoPicked: false, jobs: [],
-  pollTimer: null, waitStarted: 0, runTimers: {}
+  pollTimer: null, waitStarted: 0
 };
 
 // Capability the onboarding type needs before backups of that kind can be created
@@ -368,6 +368,8 @@ function obSelect(el) {
   }
   obMarkSelected(kind, value);
   obUpdateFooter();
+  // Picking a card is the answer: advance, unless the footer gate (e.g. key export) holds
+  if (!document.getElementById('ob-next').disabled) obNext();
 }
 
 function obKey(event, el) {
@@ -920,34 +922,11 @@ async function obRunNow(jobId, button) {
   try {
     const run = await triggerJob(jobId);
     if (!run.id) throw new Error('The run id was not returned');
-    obPollRun(jobId, run.id, button);
+    window.location.href = `/runs/${run.id}`;
   } catch (err) {
     status.innerText = `Could not start: ${err.message}`;
     button.disabled = false;
   }
-}
-
-async function obPollRun(jobId, runId, button) {
-  const status = document.getElementById(`ob-run-${jobId}`);
-  try {
-    const resp = await apiFetch(`/api/v1/runs/${runId}`);
-    if (resp.ok) {
-      const run = await resp.json();
-      const phase = run.progress && run.progress.phase ? ` — ${run.progress.phase}` : '';
-      const link = `<a href="/runs/${runId}">run details</a>`;
-      if (RUN_ACTIVE.includes(run.status)) {
-        status.innerHTML = `<span class="ob-spinner"></span>${rdEsc(run.status)}${rdEsc(phase)} (${link})`;
-      } else {
-        const ok = run.status === 'completed';
-        status.innerHTML = `${ok ? '✓' : '✗'} ${rdEsc(run.status)}${run.error_message ? ': ' + rdEsc(run.error_message) : ''} (${link})`;
-        button.disabled = false;
-        return;
-      }
-    }
-  } catch (err) {
-    console.warn('run poll', err);
-  }
-  ob.runTimers[jobId] = setTimeout(() => obPollRun(jobId, runId, button), OB_POLL_MS);
 }
 
 function obAddAnother() {

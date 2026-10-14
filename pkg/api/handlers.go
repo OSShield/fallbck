@@ -1009,7 +1009,20 @@ func (s *ServerAPI) HandleTriggerJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	workflowID := fmt.Sprintf("backup-job-%s-%d", job.ID.String(), time.Now().Unix())
-	var runID string
+
+	run := &db.BackupRun{
+		ID:         uuid.New(),
+		JobID:      job.ID,
+		AgentID:    job.AgentID,
+		TargetID:   job.TargetID,
+		WorkflowID: workflowID,
+		Status:     db.RunStatusPending,
+	}
+	if err := s.DB.CreateRun(r.Context(), run); err != nil {
+		slog.Error("Failed to create run record", "error", err, "job_id", job.ID)
+		s.writeError(w, http.StatusInternalServerError, "Failed to create run record")
+		return
+	}
 
 	if s.Temporal != nil {
 		workflowOptions := client.StartWorkflowOptions{
@@ -1019,27 +1032,18 @@ func (s *ServerAPI) HandleTriggerJob(w http.ResponseWriter, r *http.Request) {
 		we, err := s.Temporal.ExecuteWorkflow(r.Context(), workflowOptions, "BackupJobWorkflow", job.ID)
 		if err != nil {
 			slog.Error("Failed to trigger Temporal backup workflow", "error", err, "job_id", job.ID)
+			now := time.Now()
+			_ = s.DB.SetRunStatus(r.Context(), run.ID, db.RunStatusFailed, "Failed to start Temporal workflow", &now)
 			s.writeError(w, http.StatusInternalServerError, "Failed to start Temporal workflow")
 			return
 		}
-		runID = we.GetRunID()
+		run.RunID = we.GetRunID()
 	}
-
-	// Create a pending run record in DB
-	run := &db.BackupRun{
-		ID:         uuid.New(),
-		JobID:      job.ID,
-		AgentID:    job.AgentID,
-		TargetID:   job.TargetID,
-		WorkflowID: workflowID,
-		RunID:      runID,
-		Status:     db.RunStatusPending,
-	}
-	_ = s.DB.CreateRun(r.Context(), run)
 
 	s.writeJSON(w, http.StatusAccepted, map[string]interface{}{
+		"id":          run.ID,
 		"workflow_id": workflowID,
-		"run_id":      runID,
+		"run_id":      run.RunID,
 		"status":      "initiated",
 	})
 }
