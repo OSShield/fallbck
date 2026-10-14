@@ -1,7 +1,7 @@
 # Override that fronts the stack with Caddy (TLS, internal CA) and adds dex as an OIDC
 # provider, so admin login works like production:
 #
-#   docker compose -f docker-compose.yml -f compose.sso.yml up -d --build
+#   docker compose -f docker-compose.yml -f compose.sso.yml up -d
 #   open https://fallbck.localhost   (accept Caddy's local CA; user admin@example.com / password)
 #
 # *.localhost resolves to 127.0.0.1 in browsers and systemd-resolved, and the caddy

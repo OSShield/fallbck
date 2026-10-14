@@ -10,7 +10,7 @@ FallBCK is one server binary (with [Temporal](https://temporal.io) and its Web U
 
 ```bash
 cd deploy
-docker compose up -d --build          # postgres + fallbck-server (admin auth disabled, --dev)
+docker compose up -d                  # postgres + fallbck-server (admin auth disabled, --dev)
 open http://localhost:8080            # Web UI; Temporal UI at http://localhost:8080/temporal/
 ```
 

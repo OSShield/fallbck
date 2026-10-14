@@ -11,7 +11,7 @@ The fastest way to see FallBCK run is the Compose stack in `deploy/`. It brings 
 ```bash
 git clone https://github.com/osshield/fallbck.git
 cd fallbck/deploy
-docker compose up -d --build
+docker compose up -d
 ```
 
 Open <http://localhost:8080> for the Web UI. The embedded Temporal UI is at <http://localhost:8080/temporal/> if you want to watch workflows go by.
@@ -37,7 +37,7 @@ Want something closer to production? Use the SSO overlay. Caddy terminates TLS a
 
 ```bash
 cd deploy
-docker compose -f docker-compose.yml -f compose.sso.yml up -d --build
+docker compose -f docker-compose.yml -f compose.sso.yml up -d
 ```
 
 Browse to <https://fallbck.localhost>, accept Caddy's local CA, and sign in as `admin@example.com` / `password`.

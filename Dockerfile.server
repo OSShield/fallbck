@@ -1,28 +1,9 @@
 # syntax=docker/dockerfile:1
 # fallbck-server: Web UI + API + PBS proxy + embedded Temporal + agent gateway.
-# The embedded Temporal server makes this a large binary (~175 MB); BuildKit cache
-# mounts keep rebuilds fast.
+# Built by GoReleaser (dockers_v2): the binary is prebuilt and sits in the build
+# context at $TARGETPLATFORM/fallbck-server. Build images with
+#   goreleaser release --snapshot --clean
 
-# ---- Build stage -------------------------------------------------------------
-FROM golang:1-alpine AS builder
-
-WORKDIR /src
-
-RUN apk add --no-cache git ca-certificates tzdata
-
-COPY go.mod go.sum ./
-RUN --mount=type=cache,target=/go/pkg/mod go mod download
-
-COPY . .
-
-ARG FALLBCK_VERSION=0.3.0
-RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux go build -trimpath \
-      -ldflags="-s -w -X main.ServerVersion=${FALLBCK_VERSION}" \
-      -o /bin/fallbck-server ./cmd/fallbck-server
-
-# ---- Runtime stage -----------------------------------------------------------
 FROM alpine:3.20
 
 RUN apk add --no-cache ca-certificates tzdata curl
@@ -31,7 +12,8 @@ RUN addgroup -S fallbck && adduser -S -G fallbck -u 10001 fallbck && \
     mkdir -p /var/lib/fallbck/server /etc/fallbck && \
     chown -R fallbck:fallbck /var/lib/fallbck /etc/fallbck
 
-COPY --from=builder /bin/fallbck-server /usr/local/bin/fallbck-server
+ARG TARGETPLATFORM
+COPY $TARGETPLATFORM/fallbck-server /usr/local/bin/fallbck-server
 
 USER fallbck
 

@@ -47,6 +47,22 @@ builds:
       - arm64
     binary: fallbck-k8s-agent
 
+  # Container image only (see dockers_v2); not archived or packaged
+  - id: fallbck-ctl
+    main: ./cmd/fallbck-ctl
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    binary: fallbck-ctl
+
 archives:
   - id: fallbck-server
     ids:
@@ -248,6 +264,52 @@ nfpms:
     deb:
       fields:
         Bugs: https://github.com/osshield/fallbck/issues
+
+# Images for oci.fi/fallbck/*, built from the binaries above (the Dockerfiles only copy
+# $TARGETPLATFORM/<binary>). Like the package uploads, they only run from a local
+# release (GitHub Actions has no registry login); arm64 needs binfmt/QEMU on the host.
+dockers_v2:
+  - id: server
+    ids: [fallbck-server]
+    dockerfile: Dockerfile.server
+    images: [oci.fi/fallbck/server]
+    tags: ["{{ .Version }}", latest]
+    platforms: [linux/amd64, linux/arm64]
+    disable: "{{ ne (envOrDefault \"GITHUB_RUN_ID\" \"\") \"\" }}"
+
+  - id: agent
+    ids: [fallbck-agent]
+    dockerfile: Dockerfile.agent
+    images: [oci.fi/fallbck/agent]
+    tags: ["{{ .Version }}", latest]
+    platforms: [linux/amd64, linux/arm64]
+    flags: [--target=slim]
+    disable: "{{ ne (envOrDefault \"GITHUB_RUN_ID\" \"\") \"\" }}"
+
+  - id: agent-tools
+    ids: [fallbck-agent]
+    dockerfile: Dockerfile.agent
+    images: [oci.fi/fallbck/agent]
+    tags: ["{{ .Version }}-tools", tools]
+    platforms: [linux/amd64, linux/arm64]
+    flags: [--target=tools]
+    disable: "{{ ne (envOrDefault \"GITHUB_RUN_ID\" \"\") \"\" }}"
+
+  - id: k8s-agent
+    ids: [fallbck-k8s-agent]
+    dockerfile: Dockerfile.k8s-agent
+    images: [oci.fi/fallbck/k8s-agent]
+    tags: ["{{ .Version }}", latest]
+    platforms: [linux/amd64, linux/arm64]
+    disable: "{{ ne (envOrDefault \"GITHUB_RUN_ID\" \"\") \"\" }}"
+
+  - id: ctl
+    ids: [fallbck-ctl]
+    dockerfile: Dockerfile.ctl
+    images: [oci.fi/fallbck/ctl]
+    tags: ["{{ .Version }}", latest]
+    platforms: [linux/amd64, linux/arm64]
+    disable: "{{ ne (envOrDefault \"GITHUB_RUN_ID\" \"\") \"\" }}"
 
 uploads:
   - name: "debpkg"

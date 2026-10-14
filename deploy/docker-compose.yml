@@ -12,7 +12,9 @@
 # one plaintext h2c port (8080) that a TLS-terminating reverse proxy should front.
 #
 # Run from the deploy/ directory (or pass -f deploy/docker-compose.yml). Images are built
-# from the repository root with Dockerfile.server / Dockerfile.agent (targets slim and tools).
+# by GoReleaser (dockers_v2 in .goreleaser.yml) and pulled from oci.fi. To run local code,
+# `goreleaser release --snapshot --clean --skip=publish` from the repository root loads
+# them as oci.fi/fallbck/<name>:<tag>-<arch>; retag the ones you need.
 
 services:
   # -------------------------------------------------------------------------
@@ -44,11 +46,6 @@ services:
   # -------------------------------------------------------------------------
   server:
     image: oci.fi/fallbck/server:latest
-    build:
-      context: ..
-      dockerfile: Dockerfile.server
-      args:
-        FALLBCK_VERSION: ${FALLBCK_VERSION:-0.3.0}
     container_name: fallbck-server
     restart: unless-stopped
     depends_on:
@@ -105,12 +102,6 @@ services:
   # -------------------------------------------------------------------------
   agent:
     image: oci.fi/fallbck/agent:latest
-    build:
-      context: ..
-      dockerfile: Dockerfile.agent
-      target: slim
-      args:
-        FALLBCK_VERSION: ${FALLBCK_VERSION:-0.3.0}
     container_name: fallbck-agent
     restart: unless-stopped
     profiles:
@@ -139,12 +130,6 @@ services:
   # -------------------------------------------------------------------------
   docker-host-agent:
     image: oci.fi/fallbck/agent:latest
-    build:
-      context: ..
-      dockerfile: Dockerfile.agent
-      target: slim
-      args:
-        FALLBCK_VERSION: ${FALLBCK_VERSION:-0.3.0}
     container_name: fallbck-docker-host-agent
     restart: unless-stopped
     user: "0:0"
@@ -176,12 +161,6 @@ services:
   # -------------------------------------------------------------------------
   db-agent:
     image: oci.fi/fallbck/agent:tools
-    build:
-      context: ..
-      dockerfile: Dockerfile.agent
-      target: tools
-      args:
-        FALLBCK_VERSION: ${FALLBCK_VERSION:-0.3.0}
     container_name: fallbck-db-agent
     restart: unless-stopped
     profiles:
@@ -204,11 +183,6 @@ services:
 
   k8s-agent:
     image: oci.fi/fallbck/k8s-agent:latest
-    build:
-      context: ..
-      dockerfile: Dockerfile.k8s-agent
-      args:
-        FALLBCK_VERSION: ${FALLBCK_VERSION:-0.3.0}
     profiles:
       - k8s
 
