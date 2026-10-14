@@ -1,5 +1,11 @@
 # Try it locally
 
+## Quick Start Demo
+If you just want to see a quick demo of the platform, use the setup in the `demo/` directory, see the readme alongside the `compose.yml` file. **Please note that this is for short-lived demonstrations only, no data is persisted, there are unsafe defaults everywhere, and it should not be exposed to the internet**.
+
+It will automatically enroll an agent when you start the demo container.
+
+## Real Setup
 The fastest way to see FallBCK run is the Compose stack in `deploy/`. It brings up Postgres and the server in dev mode with login switched off, so don't put this on the internet.
 
 ```bash
@@ -23,7 +29,7 @@ FALLBCK_AGENT_ENROLLMENT_KEY=$TOKEN docker compose --profile agent up -d
 The agent turns up on the **Agents** page within a few seconds. From there, **Onboarding** walks you through adding a PBS target and your first backup job.
 
 !!! tip "No PBS lying around?"
-    You'll need one to actually store backups. A throwaway PBS VM is fine for testing. Give the API token `Datastore.Backup` on a datastore and you're set.
+    You'll need one to actually store backups. A throwaway PBS VM or container (e.g. dockurr/proxmox-backup) is fine for testing. Give the API token `Datastore.Backup` on a datastore and you're set.
 
 ## With SSO and TLS
 

@@ -242,6 +242,18 @@ func (d *DB) CreateEnrollmentToken(ctx context.Context, token *EnrollmentToken) 
 	return err
 }
 
+// EnsureUnlimitedEnrollmentToken creates a never-expiring, unlimited-use token with the
+// given hash unless it already exists (server --insecure-unlimited-dev-token)
+func (d *DB) EnsureUnlimitedEnrollmentToken(ctx context.Context, tokenHash, name string) error {
+	query := `
+		INSERT INTO enrollment_tokens (id, token_hash, name, max_uses, uses_count, expires_at, created_at)
+		VALUES ($1, $2, $3, 0, 0, $4, NOW())
+		ON CONFLICT (token_hash) DO UPDATE SET max_uses = 0, expires_at = EXCLUDED.expires_at
+	`
+	_, err := d.Pool.Exec(ctx, query, uuid.New(), tokenHash, name, time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC))
+	return err
+}
+
 func (d *DB) ValidateAndConsumeToken(ctx context.Context, tokenHash string) (*EnrollmentToken, error) {
 	query := `
 		UPDATE enrollment_tokens

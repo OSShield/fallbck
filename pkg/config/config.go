@@ -5,8 +5,6 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
-	"github.com/osshield/fallbck/pkg/dbbackup"
-	"github.com/osshield/fallbck/pkg/dockerbackup"
 	"log/slog"
 	"net/netip"
 	"net/url"
@@ -15,6 +13,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/osshield/fallbck/pkg/dbbackup"
+	"github.com/osshield/fallbck/pkg/dockerbackup"
 
 	"gopkg.in/yaml.v3"
 )
@@ -547,7 +548,7 @@ func applyProfileEnv(c *dbbackup.Config, environ []string) {
 		case "HOST":
 			p.Host = value
 		case "PORT":
-			fmt.Sscanf(value, "%d", &p.Port)
+			fmt.Sscanf(value, "%d", &p.Port) //golint:ignore errcheck
 		}
 		if p.Engine == "" {
 			if e, ok := dbbackup.NormalizeEngine(name); ok {

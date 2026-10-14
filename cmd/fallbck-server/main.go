@@ -16,12 +16,14 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/google/uuid"
 	"github.com/osshield/fallbck/pkg/agentupdate"
 	"github.com/osshield/fallbck/pkg/api"
 	"github.com/osshield/fallbck/pkg/auth"
 	"github.com/osshield/fallbck/pkg/config"
 	"github.com/osshield/fallbck/pkg/db"
 	"github.com/osshield/fallbck/pkg/gateway"
+	"github.com/osshield/fallbck/pkg/pbs"
 	"github.com/osshield/fallbck/pkg/proxy"
 	"github.com/osshield/fallbck/pkg/secrets"
 	"github.com/osshield/fallbck/pkg/temporal"
@@ -41,6 +43,13 @@ func main() {
 	configPath := flag.String("config", "", "Path to server YAML configuration file")
 	portFlag := flag.Int("port", 0, "Override HTTP port")
 	devFlag := flag.Bool("dev", false, "Development mode: permits auth.insecure_disable and UI preview without Postgres/Temporal")
+	devTokenFlag := flag.String("insecure-unlimited-dev-token", "", "Development only (requires --dev): UUID usable as an enrollment token with unlimited uses and no expiry")
+	devRemote := flag.String("dev-create-remote", "", "Development only (requires --dev): name of a PBS remote to create at startup unless one with that name exists")
+	devRemoteURL := flag.String("dev-remote-url", "", "PBS URL for --dev-create-remote")
+	devRemoteDatastore := flag.String("dev-remote-datastore", "", "PBS datastore for --dev-create-remote")
+	devRemoteNamespace := flag.String("dev-remote-namespace", "", "PBS namespace for --dev-create-remote (optional)")
+	devRemoteToken := flag.String("dev-remote-token", "", "PBS API token (user@realm!tokenid:secret) for --dev-create-remote")
+	devRemoteVerifyNone := flag.Bool("dev-remote-verify-none", false, "Skip TLS verification for --dev-create-remote")
 	flag.Parse()
 
 	logLevel := config.LogLevel()
@@ -59,6 +68,42 @@ func main() {
 	if err := cfg.Validate(*devFlag); err != nil {
 		slog.Error("Invalid server configuration", "error", err)
 		os.Exit(1)
+	}
+	if *devTokenFlag != "" {
+		if !*devFlag {
+			slog.Error("--insecure-unlimited-dev-token is only permitted together with --dev")
+			os.Exit(1)
+		}
+		if _, err := uuid.Parse(*devTokenFlag); err != nil {
+			slog.Error("--insecure-unlimited-dev-token must be a UUID", "error", err)
+			os.Exit(1)
+		}
+	}
+	var devTarget *db.BackupTarget
+	if *devRemote != "" {
+		if !*devFlag {
+			slog.Error("--dev-create-remote is only permitted together with --dev")
+			os.Exit(1)
+		}
+		if *devRemoteURL == "" || *devRemoteDatastore == "" || *devRemoteToken == "" {
+			slog.Error("--dev-create-remote requires --dev-remote-url, --dev-remote-datastore and --dev-remote-token")
+			os.Exit(1)
+		}
+		token, err := pbs.NormalizeAPIToken(*devRemoteToken)
+		if err != nil {
+			slog.Error("--dev-remote-token: expected user@realm!tokenid:secret", "error", err)
+			os.Exit(1)
+		}
+		devTarget = &db.BackupTarget{
+			Name:       *devRemote,
+			TargetType: "pbs",
+			Endpoint:   strings.TrimRight(*devRemoteURL, "/"),
+			Datastore:  *devRemoteDatastore,
+			Namespace:  *devRemoteNamespace,
+			AuthToken:  token,
+			TLSVerify:  !*devRemoteVerifyNone,
+			PxarFormat: db.PxarFormatV2,
+		}
 	}
 	if cfg.Auth.InsecureDisable {
 		slog.Warn("!!! ADMIN AUTHENTICATION IS DISABLED (auth.insecure_disable) — development only, never expose this instance !!!")
@@ -95,6 +140,19 @@ func main() {
 			os.Exit(1)
 		} else if n > 0 {
 			slog.Info("Sealed secrets that were stored in clear by earlier versions", "rows", n)
+		}
+		if *devTokenFlag != "" {
+			if err := database.EnsureUnlimitedEnrollmentToken(ctx, auth.HashToken(*devTokenFlag), "insecure-unlimited-dev-token"); err != nil {
+				slog.Error("Creating the unlimited dev enrollment token failed", "error", err)
+				os.Exit(1)
+			}
+			slog.Warn("!!! UNLIMITED ENROLLMENT TOKEN ACTIVE (--insecure-unlimited-dev-token) — development only, never expose this instance !!!")
+		}
+		if devTarget != nil {
+			if err := ensureDevTarget(ctx, database, devTarget); err != nil {
+				slog.Error("Creating the dev PBS remote failed", "error", err)
+				os.Exit(1)
+			}
 		}
 	}
 
@@ -375,4 +433,24 @@ func loadSealer(cfg *config.ServerConfig) (*secrets.Sealer, error) {
 		slog.Info("Master key loaded", "path", path)
 	}
 	return secrets.New(key)
+}
+
+// ensureDevTarget creates the --dev-create-remote target unless one with that name
+// already exists (an existing one is left as is)
+func ensureDevTarget(ctx context.Context, database *db.DB, t *db.BackupTarget) error {
+	targets, err := database.ListTargets(ctx)
+	if err != nil {
+		return err
+	}
+	for _, existing := range targets {
+		if existing.Name == t.Name {
+			slog.Info("Dev PBS remote already exists, leaving it unchanged", "name", t.Name)
+			return nil
+		}
+	}
+	if err := database.CreateTarget(ctx, t); err != nil {
+		return err
+	}
+	slog.Info("Created dev PBS remote", "name", t.Name, "endpoint", t.Endpoint, "datastore", t.Datastore)
+	return nil
 }

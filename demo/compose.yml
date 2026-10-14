@@ -1,0 +1,73 @@
+services:
+  pbs:
+    image: ghcr.io/osshield/ephemeral-pbs:basic
+    hostname: pbs.localhost
+    ports:
+      - "8007:8007"
+    tmpfs:
+      - /run
+    environment:
+      TZ: "Europe/Stockholm"
+      PASSWORD: "demo"
+      POSTFIX: "N"
+      # BUILD: "Y"
+
+  postgres:
+    image: postgres:latest
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fallbckdemo -d fallbckdemo"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    environment:
+      POSTGRES_USER: "fallbckdemo"
+      POSTGRES_PASSWORD: "fallbckdemo"
+      POSTGRES_DB: "fallbckdemo"
+
+  fallbck:
+    image: oci.fi/fallbck/server:latest
+    hostname: fallbck.localhost
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:8080/api/v1/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      pbs:
+        condition: service_started
+    environment:
+      TZ: "Europe/Stockholm"
+      FALLBCK_HTTP_PORT: "8080"
+      FALLBCK_HTTP_BIND: "0.0.0.0"
+      FALLBCK_PUBLIC_URL: "http://fallbck.localhost:8080"
+      FALLBCK_JWT_SECRET: change-me-in-production-fallbck-secret-key-32bytes
+      FALLBCK_DB_URL: "postgres://fallbckdemo:fallbckdemo@postgres:5432/fallbckdemo?sslmode=disable"
+      FALLBCK_TEMPORAL_MODE: "embedded"
+      FALLBCK_TEMPORAL_NAMESPACE: "default"
+      FALLBCK_AUTH_INSECURE_DISABLE: "true"
+      DEBUG: "false"
+    command: 
+      - "--dev"
+      - "--insecure-unlimited-dev-token=12345678-1234-1234-1234-1234567890ab"
+      - "--dev-create-remote='Demo Level1'"
+      - "--dev-remote-url=https://pbs.localhost:8007"
+      - "--dev-remote-datastore=data"
+      - "--dev-remote-namespace=level1"
+      - '--dev-remote-token=backupuser@pbs!backup:12345678-1234-1234-1234-1234567890ab'
+      - "--dev-remote-verify-none"
+  
+  agent:
+    image: oci.fi/fallbck/agent:latest
+    hostname: agent.localhost
+    container_name: agent
+    depends_on:
+      fallbck:
+        condition: service_healthy
+    environment:
+      FALLBCK_AGENT_SERVER_URL: "http://fallbck.localhost:8080"
+      FALLBCK_AGENT_ENROLLMENT_KEY: "12345678-1234-1234-1234-1234567890ab"
