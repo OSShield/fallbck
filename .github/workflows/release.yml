@@ -242,7 +242,7 @@ jobs:
           gh release upload "${GITHUB_REF#refs/tags/}" dist/msi/fallbck-agent_Windows_x86_64.msi --clobber
           export W_SHA256SUM=$(sha256sum dist/msi/fallbck-agent_Windows_x86_64.msi | cut -d ' ' -f 1)
           cat deploy/windows/winget.yaml | envsubst > dist/win-fallbck-agent-manifest.yaml
-          curl -fsS -X PUT --user "osshield_pkg:${{ secrets.PKG_UPLOAD_PASSWORD }}" -F manifest=@dist/win-fallbck-agent-manifest.yaml -F installer=@/mnt/f/Downloads/fallbck-agent_Windows_x86_64.msi https://win.osshield.eu/upload
+          curl -fsS -X PUT --user "osshield_pkg:${{ secrets.PKG_UPLOAD_PASSWORD }}" -F manifest=@dist/win-fallbck-agent-manifest.yaml -F installer=@dist/msi/fallbck-agent_Windows_x86_64.msi https://win.osshield.eu/upload
 
       - name: Upload snapshot packages
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
@@ -260,5 +260,5 @@ jobs:
       - name: Create and push helm package
         run: |
           helm package deploy/helm/fallbck-k8s-agent --version "${GITHUB_REF#refs/tags/v}" --app-version "${GITHUB_REF#refs/tags/v}"
-          helm push fallbck-k8s-agent-"${GITHUB_REF#refs/tags/v}".tgz oci://cr.osshield.eu/helm/fallbck-k8s-agent --username "osshield_pkg" --password "${{ secrets.PKG_UPLOAD_PASSWORD }}"
+          curl --upload-file fallbck-k8s-agent-"${GITHUB_REF#refs/tags/v}".tgz --user "osshield_pkg:${{ secrets.PKG_UPLOAD_PASSWORD }}" https://helm.osshield.eu/upload
           helm push fallbck-k8s-agent-"${GITHUB_REF#refs/tags/v}".tgz oci://ghcr.io/osshield/fallbck/k8s-agent --username "${{ github.actor }}" --password "${{ secrets.GITHUB_TOKEN }}"
