@@ -136,8 +136,6 @@ jobs:
           helm push fallbck-k8s-agent-"${GITHUB_REF#refs/tags/v}".tgz oci://ghcr.io/osshield/fallbck/k8s-agent --username "${{ github.actor }}" --password "${{ secrets.GITHUB_TOKEN }}"
           helm push fallbck-k8s-agent-"${GITHUB_REF#refs/tags/v}".tgz oci://cr.osshield.eu/fallbck/k8s-agent --username "osshield_pkg" --password "${{ secrets.PKG_UPLOAD_PASSWORD }}"
 
-
-
   release:
     name: GoReleaser
     runs-on: self-hosted
