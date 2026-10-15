@@ -18,14 +18,14 @@ import (
 
 func TestDBWorkerPodSpec(t *testing.T) {
 	pod := dbWorkerPod("fb-1", "clusterdb", map[string]string{labelRunID: "r1"}, DBWorkerConfig{
-		Image: "postgres:17", AgentImage: "oci.fi/fallbck/k8s-agent:1.2.3", ImagePullPolicy: "Always",
+		Image: "postgres:17", AgentImage: "cr.osshield.eu/fallbck/k8s-agent:1.2.3", ImagePullPolicy: "Always",
 		ResourcesJSON: `{"limits":{"memory":"1Gi"}}`, SpoolSizeLimit: "5Gi",
 		Env: []corev1.EnvVar{{Name: EnvWorkerDBPassword, Value: "pw"}},
 	})
 	if pod.Spec.AutomountServiceAccountToken == nil || *pod.Spec.AutomountServiceAccountToken {
 		t.Error("dump pod must not get a service account token")
 	}
-	if len(pod.Spec.InitContainers) != 1 || pod.Spec.InitContainers[0].Image != "oci.fi/fallbck/k8s-agent:1.2.3" {
+	if len(pod.Spec.InitContainers) != 1 || pod.Spec.InitContainers[0].Image != "cr.osshield.eu/fallbck/k8s-agent:1.2.3" {
 		t.Fatalf("init container: %+v", pod.Spec.InitContainers)
 	}
 	init := pod.Spec.InitContainers[0]

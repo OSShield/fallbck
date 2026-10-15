@@ -12,9 +12,9 @@
 # one plaintext h2c port (8080) that a TLS-terminating reverse proxy should front.
 #
 # Run from the deploy/ directory (or pass -f deploy/docker-compose.yml). Images are built
-# by GoReleaser (dockers_v2 in .goreleaser.yml) and pulled from oci.fi. To run local code,
+# by GoReleaser (dockers_v2 in .goreleaser.yml) and pulled from cr.osshield.eu. To run local code,
 # `goreleaser release --snapshot --clean --skip=publish` from the repository root loads
-# them as oci.fi/fallbck/<name>:<tag>-<arch>; retag the ones you need.
+# them as cr.osshield.eu/fallbck/<name>:<tag>-<arch>; retag the ones you need.
 
 services:
   # -------------------------------------------------------------------------
@@ -45,7 +45,7 @@ services:
   # 2. FallBCK server: Web UI + API + PBS proxy + embedded Temporal + agent gateway
   # -------------------------------------------------------------------------
   server:
-    image: oci.fi/fallbck/server:latest
+    image: cr.osshield.eu/fallbck/server:latest
     container_name: fallbck-server
     restart: unless-stopped
     depends_on:
@@ -101,7 +101,7 @@ services:
   # The agent talks to http://server:8080 for everything (REST + Temporal gRPC over h2c).
   # -------------------------------------------------------------------------
   agent:
-    image: oci.fi/fallbck/agent:latest
+    image: cr.osshield.eu/fallbck/agent:latest
     container_name: fallbck-agent
     restart: unless-stopped
     profiles:
@@ -129,7 +129,7 @@ services:
   #       FALLBCK_AGENT_ENROLLMENT_KEY=<raw_token> docker compose --profile docker-host-agent up -d
   # -------------------------------------------------------------------------
   docker-host-agent:
-    image: oci.fi/fallbck/agent:latest
+    image: cr.osshield.eu/fallbck/agent:latest
     container_name: fallbck-docker-host-agent
     restart: unless-stopped
     user: "0:0"
@@ -160,7 +160,7 @@ services:
   #    job against postgres:5432 (user fallbck) leave its password blank.
   # -------------------------------------------------------------------------
   db-agent:
-    image: oci.fi/fallbck/agent:tools
+    image: cr.osshield.eu/fallbck/agent:tools
     container_name: fallbck-db-agent
     restart: unless-stopped
     profiles:
@@ -182,7 +182,7 @@ services:
       - fallbck-net
 
   k8s-agent:
-    image: oci.fi/fallbck/k8s-agent:latest
+    image: cr.osshield.eu/fallbck/k8s-agent:latest
     profiles:
       - k8s
 

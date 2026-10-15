@@ -68,15 +68,15 @@ function agentWizardRepo(target, pkg) {
     case 'proxmox':
       return `${sudo}apt-get update\n${sudo}apt-get -y install gnupg2 apt-transport-https curl\n\n` +
         `${sudo}install -d -m 0755 /etc/apt/keyrings\n` +
-        `curl -fsSL https://deb.pkg.lv/key | ${sudo}gpg --dearmor -o /etc/apt/keyrings/pkg-lv.gpg\n` +
-        `echo "deb [signed-by=/etc/apt/keyrings/pkg-lv.gpg] https://deb.pkg.lv all main" | ${sudo}tee /etc/apt/sources.list.d/pkg-lv.list\n` +
+        `curl -fsSL https://deb.osshield.eu/key | ${sudo}gpg --dearmor -o /etc/apt/keyrings/osshield-eu.gpg\n` +
+        `echo "deb [signed-by=/etc/apt/keyrings/osshield-eu.gpg] https://deb.osshield.eu all main" | ${sudo}tee /etc/apt/sources.list.d/osshield-eu.list\n` +
         `${sudo}apt update\n${sudo}apt install ${pkg}`;
     case 'rhel':
-      return `sudo tee /etc/yum.repos.d/pkg-lv.repo <<'EOF'\n[pkg-lv]\nname=pkg.lv\nbaseurl=https://rpm.pkg.lv\nenabled=1\ngpgcheck=1\ngpgkey=https://rpm.pkg.lv/key\nEOF\n` +
-        `sudo rpm --import https://rpm.pkg.lv/key\nsudo yum install ${pkg}`;
+      return `sudo tee /etc/yum.repos.d/osshield-eu.repo <<'EOF'\n[osshield-eu]\nname=osshield.eu\nbaseurl=https://rpm.osshield.eu\nenabled=1\ngpgcheck=1\ngpgkey=https://rpm.osshield.eu/key\nEOF\n` +
+        `sudo rpm --import https://rpm.osshield.eu/key\nsudo yum install ${pkg}`;
     case 'alpine':
-      return `apk update\napk add curl\ncd /etc/apk/keys && curl -JO https://alpine.pkg.lv/key\n` +
-        `echo "https://alpine.pkg.lv" >> /etc/apk/repositories\napk update\napk add ${pkg}`;
+      return `apk update\napk add curl\ncd /etc/apk/keys && curl -JO https://alpine.osshield.eu/key\n` +
+        `echo "https://alpine.osshield.eu" >> /etc/apk/repositories\napk update\napk add ${pkg}`;
   }
   return '';
 }
@@ -114,7 +114,7 @@ function agentWizardSections(type, target, serverUrl, token) {
     sections.push({
       title: 'Install the Helm chart',
       text: 'Run this with a kubeconfig that is cluster-admin on the target cluster. The agent enrolls as k8s-<clusterName> and keeps its identity in a Secret in the fallbck namespace; helm upgrade never touches it.',
-      code: `helm upgrade --install fallbck-k8s-agent \\\n  oci://oci.fi/helm/fallbck-k8s-agent \\\n  --namespace fallbck --create-namespace \\\n  --set server.url=${serverUrl} \\\n  --set clusterName=my-cluster \\\n  --set enrollment.key=${token}`,
+      code: `helm upgrade --install fallbck-k8s-agent \\\n  oci://cr.osshield.eu/helm/fallbck-k8s-agent \\\n  --namespace fallbck --create-namespace \\\n  --set server.url=${serverUrl} \\\n  --set clusterName=my-cluster \\\n  --set enrollment.key=${token}`,
       note: 'Private or self-signed server certificate: add --set-file server.caCert=ca.pem or, for testing only, --set server.insecureSkipVerify=true.'
     });
     sections.push({
@@ -129,7 +129,7 @@ function agentWizardSections(type, target, serverUrl, token) {
     sections.push({
       title: 'Run the agent as a container (tools flavour)',
       text: 'The tools flavour of the agent image ships pg_dump, mariadb-dump and mongodump. It backs up databases reachable over the network from the container; no host mounts are needed. The agent enrolls itself on first start with the key below; remove the key afterwards.',
-      code: `services:\n  fallbck-agent:\n    image: oci.fi/fallbck/agent:tools\n    container_name: fallbck-agent\n    restart: unless-stopped\n    environment:\n      FALLBCK_AGENT_HOSTNAME: ${'$'}{HOSTNAME:-db-host}\n      FALLBCK_AGENT_SERVER_URL: ${serverUrl}\n      FALLBCK_AGENT_ENROLLMENT_KEY: ${token}\n      # credential profiles for jobs that leave the password blank:\n      # FALLBCK_AGENT_DB_PROFILE_MAIN_ENGINE: postgres\n      # FALLBCK_AGENT_DB_PROFILE_MAIN_USER: backup\n      # FALLBCK_AGENT_DB_PROFILE_MAIN_PASSWORD: secret\n    volumes:\n      - fallbck_agent_data:/var/lib/fallbck/agent\nvolumes:\n  fallbck_agent_data:`,
+      code: `services:\n  fallbck-agent:\n    image: cr.osshield.eu/fallbck/agent:tools\n    container_name: fallbck-agent\n    restart: unless-stopped\n    environment:\n      FALLBCK_AGENT_HOSTNAME: ${'$'}{HOSTNAME:-db-host}\n      FALLBCK_AGENT_SERVER_URL: ${serverUrl}\n      FALLBCK_AGENT_ENROLLMENT_KEY: ${token}\n      # credential profiles for jobs that leave the password blank:\n      # FALLBCK_AGENT_DB_PROFILE_MAIN_ENGINE: postgres\n      # FALLBCK_AGENT_DB_PROFILE_MAIN_USER: backup\n      # FALLBCK_AGENT_DB_PROFILE_MAIN_PASSWORD: secret\n    volumes:\n      - fallbck_agent_data:/var/lib/fallbck/agent\nvolumes:\n  fallbck_agent_data:`,
       note: 'Private or self-signed server certificate: mount the CA bundle and set FALLBCK_AGENT_SERVER_CA to its path, or FALLBCK_AGENT_INSECURE_SKIP_VERIFY=true for testing only.'
     });
     sections.push({
@@ -144,7 +144,7 @@ function agentWizardSections(type, target, serverUrl, token) {
     sections.push({
       title: 'Run the agent as a container',
       text: 'Save this as docker-compose.yml on the Docker host and start it with docker compose up -d. The agent enrolls itself on first start with the key below and keeps its identity in the fallbck_agent_data volume; remove the key afterwards. FALLBCK_AGENT_HOSTNAME names the agent and its snapshot group (host/<hostname>-docker), so set it to the host\'s real name rather than the container id.',
-      code: `services:\n  fallbck-agent:\n    image: oci.fi/fallbck/agent:latest\n    container_name: fallbck-agent\n    user: "0:0"\n    restart: unless-stopped\n    environment:\n      FALLBCK_AGENT_HOSTNAME: ${'$'}{HOSTNAME:-docker-host}\n      FALLBCK_AGENT_SERVER_URL: ${serverUrl}\n      FALLBCK_AGENT_ENROLLMENT_KEY: ${token}\n      FALLBCK_AGENT_DOCKER_VOLUME_ACCESS: auto\n    volumes:\n      - fallbck_agent_data:/var/lib/fallbck/agent\n      - /var/run/docker.sock:/var/run/docker.sock\n      - /var/lib/docker/volumes:/var/lib/docker/volumes:ro\n      - /etc/docker:/etc/docker:ro\n      # compose project directories, so their config files can be archived:\n      - /opt/compose:/opt/compose:ro\nvolumes:\n  fallbck_agent_data:`,
+      code: `services:\n  fallbck-agent:\n    image: cr.osshield.eu/fallbck/agent:latest\n    container_name: fallbck-agent\n    user: "0:0"\n    restart: unless-stopped\n    environment:\n      FALLBCK_AGENT_HOSTNAME: ${'$'}{HOSTNAME:-docker-host}\n      FALLBCK_AGENT_SERVER_URL: ${serverUrl}\n      FALLBCK_AGENT_ENROLLMENT_KEY: ${token}\n      FALLBCK_AGENT_DOCKER_VOLUME_ACCESS: auto\n    volumes:\n      - fallbck_agent_data:/var/lib/fallbck/agent\n      - /var/run/docker.sock:/var/run/docker.sock\n      - /var/lib/docker/volumes:/var/lib/docker/volumes:ro\n      - /etc/docker:/etc/docker:ro\n      # compose project directories, so their config files can be archived:\n      - /opt/compose:/opt/compose:ro\nvolumes:\n  fallbck_agent_data:`,
       note: 'Without the /var/lib/docker/volumes mount the agent reads volumes through short-lived helper containers instead (slower, needs spool space). Private or self-signed server certificate: mount the CA bundle and set FALLBCK_AGENT_SERVER_CA to its path, or FALLBCK_AGENT_INSECURE_SKIP_VERIFY=true for testing only.'
     });
     sections.push({
@@ -169,6 +169,12 @@ function agentWizardSections(type, target, serverUrl, token) {
         code: "CREATE LOGIN [NT AUTHORITY\\SYSTEM] FROM WINDOWS;  -- usually exists already\nALTER SERVER ROLE [sysadmin] ADD MEMBER [NT AUTHORITY\\SYSTEM];  -- or db_backupoperator in every database"
       });
     }
+    sections.push({
+      title: 'Or install with winget',
+      text: 'Adds the OSShield winget source once, then installs the agent from it. Winget runs the MSI silently, so the server URL and enrollment key go in as MSI properties:',
+      code: `winget source add --name "osshield" --arg "https://win.osshield.eu" --type "Microsoft.Rest"\nwinget source update\nwinget install --source osshield OSShield.FallbckAgent --custom "SERVER_URL=${serverUrl} TOKEN=${token}"`,
+      note: 'Later upgrades: winget upgrade --source osshield OSShield.FallbckAgent.'
+    });
     sections.push({
       title: 'Or install the MSI by hand',
       text: `Download fallbck-agent_Windows_x86_64.msi from ${AGENT_WIZARD_RELEASES}/latest. Double-click it and enter the server URL and enrollment key below when asked; the installer enrolls the agent and starts the service. For an unattended install pass them on the command line instead:`,

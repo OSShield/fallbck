@@ -18,8 +18,6 @@ For a local stack to poke at, see [Try it locally](getting-started/quick-start.m
 
 [GoReleaser](https://github.com/osshield/fallbck/blob/main/.goreleaser.yml) builds everything from the `Release` GitHub Action when a `v*` tag is pushed. Every push to `main` and every PR gets a snapshot build as a workflow artifact, so packaging can't quietly rot.
 
-Publishing to the package repos needs the `PKG_UPLOAD_PASSWORD` repo secret (the `linux_push` user of `*.pkg.lv`).
-
 ## Docs
 
 This site is in `docs/` and gets built with [Zensical](https://zensical.org) from `mkdocs.yml`. Preview it locally:

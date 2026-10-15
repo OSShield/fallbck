@@ -20,7 +20,7 @@ The agent looks for tools at startup and every ten minutes after, and reports wh
 !!! warning "pg_dump has to be at least as new as the server"
     The agent hunts through the usual per-version dirs (`/usr/lib/postgresql/*/bin`, `/usr/pgsql-*/bin`, `/usr/libexec/postgresql*`). If it still grabs the wrong one, pin it with `db_backup.tools.postgres_bindir`.
 
-Fetching binlogs also needs `mysqlbinlog` / `mariadb-binlog`. On Alpine that only comes in the full `mariadb` package. MongoDB needs `mongodb-database-tools`. If you'd rather not install any of this, the `oci.fi/fallbck/agent:tools` image ships all of it.
+Fetching binlogs also needs `mysqlbinlog` / `mariadb-binlog`. On Alpine that only comes in the full `mariadb` package. MongoDB needs `mongodb-database-tools`. If you'd rather not install any of this, the `cr.osshield.eu/fallbck/agent:tools` image ships all of it.
 
 ## Setting up a job
 

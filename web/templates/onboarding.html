@@ -94,15 +94,15 @@
         <div id="ob-platform-options" class="wizard-options">
           <div class="wizard-option" role="button" tabindex="0" data-kind="platform" data-value="debian" data-types="files,database,docker,m365" onclick="obSelect(this)" onkeydown="obKey(event, this)">
             <div class="wizard-option-title">Debian / Ubuntu</div>
-            <div class="wizard-option-desc">apt package from deb.pkg.lv, managed by systemd.</div>
+            <div class="wizard-option-desc">apt package from deb.osshield.eu, managed by systemd.</div>
           </div>
           <div class="wizard-option" role="button" tabindex="0" data-kind="platform" data-value="rhel" data-types="files,database,docker,m365" onclick="obSelect(this)" onkeydown="obKey(event, this)">
             <div class="wizard-option-title">RHEL / Rocky / Alma / Fedora</div>
-            <div class="wizard-option-desc">rpm package from rpm.pkg.lv, managed by systemd.</div>
+            <div class="wizard-option-desc">rpm package from rpm.osshield.eu, managed by systemd.</div>
           </div>
           <div class="wizard-option" role="button" tabindex="0" data-kind="platform" data-value="alpine" data-types="files,database,docker,m365" onclick="obSelect(this)" onkeydown="obKey(event, this)">
             <div class="wizard-option-title">Alpine Linux</div>
-            <div class="wizard-option-desc">apk package from alpine.pkg.lv, managed by OpenRC.</div>
+            <div class="wizard-option-desc">apk package from alpine.osshield.eu, managed by OpenRC.</div>
           </div>
           <div class="wizard-option" role="button" tabindex="0" data-kind="platform" data-value="linux-other" data-types="files,database,docker,m365" onclick="obSelect(this)" onkeydown="obKey(event, this)">
             <div class="wizard-option-title">Other Linux</div>
@@ -110,11 +110,11 @@
           </div>
           <div class="wizard-option" role="button" tabindex="0" data-kind="platform" data-value="windows" data-types="files,database,m365" onclick="obSelect(this)" onkeydown="obKey(event, this)">
             <div class="wizard-option-title">Windows</div>
-            <div class="wizard-option-desc">MSI installer from the GitHub release, runs as a Windows service with Volume Shadow Copies. Also the agent for Microsoft SQL Server on this host.</div>
+            <div class="wizard-option-desc">MSI installer from the GitHub release or winget, runs as a Windows service with Volume Shadow Copies. Also the agent for Microsoft SQL Server on this host.</div>
           </div>
           <div class="wizard-option" role="button" tabindex="0" data-kind="platform" data-value="kubernetes" data-types="kubernetes" onclick="obSelect(this)" onkeydown="obKey(event, this)">
             <div class="wizard-option-title">Kubernetes cluster</div>
-            <div class="wizard-option-desc">Helm chart from oci.fi installed into the fallbck namespace of the target cluster.</div>
+            <div class="wizard-option-desc">Helm chart from cr.osshield.eu installed into the fallbck namespace of the target cluster.</div>
           </div>
           <div class="wizard-option" role="button" tabindex="0" data-kind="platform" data-value="docker-container" data-types="docker,database,m365" onclick="obSelect(this)" onkeydown="obKey(event, this)">
             <div class="wizard-option-title">Docker container</div>
@@ -122,7 +122,7 @@
           </div>
           <div class="wizard-option" role="button" tabindex="0" data-kind="platform" data-value="proxmox" data-types="proxmox" onclick="obSelect(this)" onkeydown="obKey(event, this)">
             <div class="wizard-option-title">Proxmox VE node</div>
-            <div class="wizard-option-desc">Debian-based: the apt package from deb.pkg.lv installed as root on the node.</div>
+            <div class="wizard-option-desc">Debian-based: the apt package from deb.osshield.eu installed as root on the node.</div>
           </div>
         </div>
       </div>

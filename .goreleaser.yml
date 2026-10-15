@@ -267,7 +267,7 @@ nfpms:
       fields:
         Bugs: https://github.com/osshield/fallbck/issues
 
-# Images for oci.fi/fallbck/*, built from the binaries above (the Dockerfiles only copy
+# Images for cr.osshield.eu/fallbck/*, built from the binaries above (the Dockerfiles only copy
 # $TARGETPLATFORM/<binary>). Like the package uploads, they only run from a local
 # release (GitHub Actions has no registry login); arm64 needs binfmt/QEMU on the host.
 dockers_v2:

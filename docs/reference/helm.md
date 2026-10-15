@@ -19,7 +19,7 @@ The chart for [`fallbck-k8s-agent`](../agents/kubernetes.md) lives in [`deploy/h
 
 | Value | Default | What it does |
 |---|---|---|
-| `image.repository` | `oci.fi/fallbck/k8s-agent` | |
+| `image.repository` | `cr.osshield.eu/fallbck/k8s-agent` | |
 | `image.tag` | `latest` | Pin this to your server's version. |
 | `image.pullPolicy` | `Always` | |
 | `resources` | 100m / 256Mi, limit 1Gi | |

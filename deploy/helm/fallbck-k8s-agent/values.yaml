@@ -25,7 +25,7 @@ identitySecretName: fallbck-k8s-agent-identity
 stateSecretName: fallbck-k8s-agent-state
 
 image:
-  repository: oci.fi/fallbck/k8s-agent
+  repository: cr.osshield.eu/fallbck/k8s-agent
   tag: latest
   pullPolicy: Always
 

@@ -25,7 +25,7 @@ services:
       POSTGRES_DB: "fallbckdemo"
 
   fallbck:
-    image: oci.fi/fallbck/server:latest
+    image: cr.osshield.eu/fallbck/server:latest
     hostname: fallbck.localhost
     ports:
       - "8080:8080"
@@ -62,7 +62,7 @@ services:
       - "--dev-remote-verify-none"
   
   agent:
-    image: oci.fi/fallbck/agent:latest
+    image: cr.osshield.eu/fallbck/agent:latest
     hostname: agent.localhost
     container_name: agent
     depends_on:

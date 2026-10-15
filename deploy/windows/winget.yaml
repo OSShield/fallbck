@@ -1,0 +1,11 @@
+PackageIdentifier: OSShield.FallbckAgent
+PackageVersion: ${W_VERSION}
+PackageName: Fallbck Backup Agent
+Publisher: OSShield
+ShortDescription: Windows agent for the Fallbck backup system
+InstallerType: msi
+ManifestVersion: 1.6.0
+Installers:
+  - Architecture: x64
+    InstallerUrl: ${W_INSTALLERURL}
+    InstallerSha256: ${W_SHA256SUM}

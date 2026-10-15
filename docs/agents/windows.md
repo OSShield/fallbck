@@ -6,7 +6,15 @@
 
 Grab the MSI from the [releases page](https://github.com/osshield/fallbck/releases). Double-click it and it asks for the server URL, the enrollment key and, optionally, a CA bundle. It then enrolls and starts the service.
 
-For unattended installs, use the PowerShell one-liner that the onboarding flow prints (*Files* → *Windows*), or pass MSI properties:
+With winget, add the OSShield source once and install from it. Winget runs the MSI silently, so pass the server URL and the enrollment key as MSI properties with `--custom`:
+
+```powershell
+winget source add --name "osshield" --arg "https://win.osshield.eu" --type "Microsoft.Rest"
+winget source update
+winget install --source osshield OSShield.FallbckAgent --custom "SERVER_URL=https://backup.example.com TOKEN=<enrollment token>"
+```
+
+For unattended installs without winget, use the PowerShell one-liner that the onboarding flow prints (*Files* → *Windows*), or pass the MSI properties yourself:
 
 ```powershell
 & ([scriptblock]::Create((iwr -useb https://backup.example.com/install-agent.ps1).Content)) -Token <enrollment token>
@@ -28,4 +36,4 @@ Paths are Windows paths: `C:\Users`, `D:\data`, or a whole volume like `C:\`. In
 Incremental runs with [metadata change detection](index.md#incremental-runs-on-pxar-v2) work the same as on Linux.
 
 !!! note "No self-update on Windows"
-    Windows agents don't [update themselves](../operations/agent-status.md#agent-updates). Roll out the new MSI when you upgrade the server.
+    Windows agents don't [update themselves](../operations/agent-status.md#agent-updates). Roll out the new MSI when you upgrade the server, or run `winget upgrade --source osshield OSShield.FallbckAgent` on hosts installed through winget.

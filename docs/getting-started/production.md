@@ -31,7 +31,7 @@ Pick your poison:
       -v /srv/fallbck:/var/lib/fallbck/server \
       -v /srv/fallbck/server.yaml:/etc/fallbck/server.yaml:ro \
       -e TZ=Europe/Stockholm \
-      oci.fi/fallbck/server:latest --config /etc/fallbck/server.yaml
+      cr.osshield.eu/fallbck/server:latest --config /etc/fallbck/server.yaml
     ```
 
     Or skip the file and set everything through `FALLBCK_*` env vars, the way `deploy/docker-compose.yml` does.

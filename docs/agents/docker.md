@@ -7,7 +7,7 @@ Backs up a Docker host's containers, networks, volumes and compose projects, so 
 Run `fallbck-agent` **as root** on the Docker host, one of two ways:
 
 - the OS package, or
-- the `oci.fi/fallbck/agent` image with the Docker socket mounted.
+- the `cr.osshield.eu/fallbck/agent` image with the Docker socket mounted.
 
 Onboarding (*Docker host*) prints both. Once the agent's heartbeat says it can reach the daemon, create a **Docker host** job.
 

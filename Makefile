@@ -15,7 +15,7 @@ endif
 
 all: binary helm
 
-# also builds and pushes the oci.fi/fallbck/* images (dockers_v2)
+# also builds and pushes the cr.osshield.eu/fallbck/* images (dockers_v2)
 binary:
 	@echo "Building binaries and images for version $(BVERSION)"
 	git tag -a "v$(BVERSION)" -m "Release v$(BVERSION)" && \
@@ -25,4 +25,4 @@ binary:
 helm:
 	@echo "Building helm chart for version $(BVERSION)"
 	helm package deploy/helm/fallbck-k8s-agent --version $(BVERSION) --app-version $(BVERSION) && \
-	helm push fallbck-k8s-agent-$(BVERSION).tgz oci://oci.fi/helm
+	helm push fallbck-k8s-agent-$(BVERSION).tgz oci://cr.osshield.eu/helm
