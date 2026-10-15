@@ -277,7 +277,6 @@ dockers_v2:
     images: [ghcr.io/osshield/fallbck/server, cr.osshield.eu/fallbck/server]
     tags: ["{{ .Version }}", latest]
     platforms: [linux/amd64, linux/arm64]
-    disable: "{{ ne (envOrDefault \"GITHUB_RUN_ID\" \"\") \"\" }}"
 
   - id: agent
     ids: [fallbck-agent]
@@ -286,7 +285,6 @@ dockers_v2:
     tags: ["{{ .Version }}", latest]
     platforms: [linux/amd64, linux/arm64]
     flags: [--target=slim]
-    disable: "{{ ne (envOrDefault \"GITHUB_RUN_ID\" \"\") \"\" }}"
 
   - id: agent-tools
     ids: [fallbck-agent]

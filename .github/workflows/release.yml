@@ -125,7 +125,7 @@ jobs:
     name: GoReleaser
     runs-on: self-hosted
     permissions:
-      contents: read
+      contents: write
       packages: write
       attestations: write
       id-token: write
