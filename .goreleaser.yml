@@ -27,6 +27,7 @@ builds:
     goos:
       - linux
       - windows
+      - macos
     goarch:
       - amd64
       - arm64
@@ -58,6 +59,7 @@ builds:
       - -s -w
     goos:
       - linux
+      - macos
     goarch:
       - amd64
       - arm64
@@ -272,7 +274,7 @@ dockers_v2:
   - id: server
     ids: [fallbck-server]
     dockerfile: Dockerfile.server
-    images: [oci.fi/fallbck/server]
+    images: [oci.fi/fallbck/server, cr.osshield.eu/fallbck/server]
     tags: ["{{ .Version }}", latest]
     platforms: [linux/amd64, linux/arm64]
     disable: "{{ ne (envOrDefault \"GITHUB_RUN_ID\" \"\") \"\" }}"
@@ -280,7 +282,7 @@ dockers_v2:
   - id: agent
     ids: [fallbck-agent]
     dockerfile: Dockerfile.agent
-    images: [oci.fi/fallbck/agent]
+    images: [oci.fi/fallbck/agent, cr.osshield.eu/fallbck/agent]
     tags: ["{{ .Version }}", latest]
     platforms: [linux/amd64, linux/arm64]
     flags: [--target=slim]
@@ -289,66 +291,63 @@ dockers_v2:
   - id: agent-tools
     ids: [fallbck-agent]
     dockerfile: Dockerfile.agent
-    images: [oci.fi/fallbck/agent]
+    images: [ cr.osshield.eu/fallbck/agent ]
     tags: ["{{ .Version }}-tools", tools]
     platforms: [linux/amd64, linux/arm64]
     flags: [--target=tools]
-    disable: "{{ ne (envOrDefault \"GITHUB_RUN_ID\" \"\") \"\" }}"
 
   - id: k8s-agent
     ids: [fallbck-k8s-agent]
     dockerfile: Dockerfile.k8s-agent
-    images: [oci.fi/fallbck/k8s-agent]
+    images: [ cr.osshield.eu/fallbck/k8s-agent ]
     tags: ["{{ .Version }}", latest]
     platforms: [linux/amd64, linux/arm64]
-    disable: "{{ ne (envOrDefault \"GITHUB_RUN_ID\" \"\") \"\" }}"
 
   - id: ctl
     ids: [fallbck-ctl]
     dockerfile: Dockerfile.ctl
-    images: [oci.fi/fallbck/ctl]
+    images: [ cr.osshield.eu/fallbck/ctl ]
     tags: ["{{ .Version }}", latest]
     platforms: [linux/amd64, linux/arm64]
-    disable: "{{ ne (envOrDefault \"GITHUB_RUN_ID\" \"\") \"\" }}"
 
 uploads:
-  - name: "debpkg"
-    skip: "{{ ne (envOrDefault \"GITHUB_RUN_ID\" \"\") \"\" }}"
+  - name: "debian"
     ids:
       - fallbck-server
       - fallbck-agent
+      - fallbck-ctl
     method: "PUT"
     exts:
       - deb
     mode: archive
-    username: "linux_push"
-    target: https://deb.pkg.lv/upload?dist=all&component=main
+    username: "osshield_pkg"
+    target: https://deb.osshield.eu/upload?dist=all&component=main
     custom_artifact_name: true
 
-  - name: "apkpkg"
-    skip: "{{ ne (envOrDefault \"GITHUB_RUN_ID\" \"\") \"\" }}"
+  - name: "alpine"
     ids:
       - fallbck-server
       - fallbck-agent
+      - fallbck-ctl
     method: "PUT"
     exts:
       - apk
     mode: archive
     username: "linux_push"
-    target: https://alpine.pkg.lv/upload?repo=all
+    target: https://alpine.osshield.eu/upload?repo=all
     custom_artifact_name: true
 
-  - name: "rpmpkg"
-    skip: "{{ ne (envOrDefault \"GITHUB_RUN_ID\" \"\") \"\" }}"
+  - name: "rhel"
     ids:
       - fallbck-server
       - fallbck-agent
+      - fallbck-ctl
     method: "PUT"
     exts:
       - rpm
     mode: archive
     username: "linux_push"
-    target: https://rpm.pkg.lv/upload?repo=all
+    target: https://rpm.osshield.eu/upload?repo=all
     custom_artifact_name: true
 
 release:
