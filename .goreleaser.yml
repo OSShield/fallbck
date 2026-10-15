@@ -274,7 +274,7 @@ dockers_v2:
   - id: server
     ids: [fallbck-server]
     dockerfile: Dockerfile.server
-    images: [oci.fi/fallbck/server, cr.osshield.eu/fallbck/server]
+    images: [ghcr.io/osshield/fallbck/server, cr.osshield.eu/fallbck/server]
     tags: ["{{ .Version }}", latest]
     platforms: [linux/amd64, linux/arm64]
     disable: "{{ ne (envOrDefault \"GITHUB_RUN_ID\" \"\") \"\" }}"
@@ -282,7 +282,7 @@ dockers_v2:
   - id: agent
     ids: [fallbck-agent]
     dockerfile: Dockerfile.agent
-    images: [oci.fi/fallbck/agent, cr.osshield.eu/fallbck/agent]
+    images: [ghcr.io/osshield/fallbck/agent, cr.osshield.eu/fallbck/agent]
     tags: ["{{ .Version }}", latest]
     platforms: [linux/amd64, linux/arm64]
     flags: [--target=slim]
@@ -291,7 +291,7 @@ dockers_v2:
   - id: agent-tools
     ids: [fallbck-agent]
     dockerfile: Dockerfile.agent
-    images: [ cr.osshield.eu/fallbck/agent ]
+    images: [ghcr.io/osshield/fallbck/agent, cr.osshield.eu/fallbck/agent ]
     tags: ["{{ .Version }}-tools", tools]
     platforms: [linux/amd64, linux/arm64]
     flags: [--target=tools]
@@ -299,14 +299,14 @@ dockers_v2:
   - id: k8s-agent
     ids: [fallbck-k8s-agent]
     dockerfile: Dockerfile.k8s-agent
-    images: [ cr.osshield.eu/fallbck/k8s-agent ]
+    images: [ghcr.io/osshield/fallbck/k8s-agent, cr.osshield.eu/fallbck/k8s-agent ]
     tags: ["{{ .Version }}", latest]
     platforms: [linux/amd64, linux/arm64]
 
   - id: ctl
     ids: [fallbck-ctl]
     dockerfile: Dockerfile.ctl
-    images: [ cr.osshield.eu/fallbck/ctl ]
+    images: [ghcr.io/osshield/fallbck/ctl, cr.osshield.eu/fallbck/ctl ]
     tags: ["{{ .Version }}", latest]
     platforms: [linux/amd64, linux/arm64]
 
@@ -333,7 +333,7 @@ uploads:
     exts:
       - apk
     mode: archive
-    username: "linux_push"
+    username: "osshield_pkg"
     target: https://alpine.osshield.eu/upload?repo=all
     custom_artifact_name: true
 
@@ -346,7 +346,7 @@ uploads:
     exts:
       - rpm
     mode: archive
-    username: "linux_push"
+    username: "osshield_pkg"
     target: https://rpm.osshield.eu/upload?repo=all
     custom_artifact_name: true
 

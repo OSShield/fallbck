@@ -23,15 +23,20 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     steps:
+
       - uses: actions/checkout@v4
+
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
+
       - name: Vet
         run: go vet ./...
+
       - name: Unit tests
         run: go test ./...
+
       - name: Integration tests (embedded Temporal on sqlite)
         run: go test -tags sqlite -count=1 ./pkg/temporal/embedded/ ./pkg/integration/
 
@@ -151,9 +156,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_RUN_ID: ${{ env.GITHUB_RUN_ID }}
-          UPLOAD_DEBPKG_SECRET: ${{ secrets.PKG_UPLOAD_PASSWORD }}
-          UPLOAD_APKPKG_SECRET: ${{ secrets.PKG_UPLOAD_PASSWORD }}
-          UPLOAD_RPMPKG_SECRET: ${{ secrets.PKG_UPLOAD_PASSWORD }}
+          UPLOAD_DEBIAN_SECRET: ${{ secrets.PKG_UPLOAD_PASSWORD }}
+          UPLOAD_ALPINE_SECRET: ${{ secrets.PKG_UPLOAD_PASSWORD }}
+          UPLOAD_RHEL_SECRET: ${{ secrets.PKG_UPLOAD_PASSWORD }}
 
       - name: Attach the Windows MSI to the release
         if: ${{ startsWith(github.ref, 'refs/tags/v') }}
@@ -179,3 +184,13 @@ jobs:
             dist/*.rpm
             dist/*.apk
             dist/*.tar.gz
+            dist/*.dmg
+      
+      - uses: azure/setup-helm@v5.0.0
+        name: Setup helm
+
+      - name: Create and push helm package
+        run: |
+          helm package deploy/helm/fallbck-k8s-agent --version "${GITHUB_REF#refs/tags/v}" --app-version "${GITHUB_REF#refs/tags/v}"
+          helm push fallbck-k8s-agent-"${GITHUB_REF#refs/tags/v}".tgz oci://ghcr.io/osshield/fallbck/k8s-agent --username "${{ github.actor }}" --password "${{ secrets.GITHUB_TOKEN }}"
+          helm push fallbck-k8s-agent-"${GITHUB_REF#refs/tags/v}".tgz oci://cr.osshield.eu/fallbck/k8s-agent --username "osshield_pkg" --password "${{ secrets.PKG_UPLOAD_PASSWORD }}"
