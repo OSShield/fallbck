@@ -4,7 +4,7 @@
 # (args: ["worker"]). Built by GoReleaser (dockers_v2) from the prebuilt
 # $TARGETPLATFORM/fallbck-k8s-agent.
 
-FROM alpine:3.21
+FROM alpine:3
 
 RUN apk add --no-cache ca-certificates tzdata
 

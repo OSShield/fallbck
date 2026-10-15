@@ -10,11 +10,11 @@
 # ---- mariadb-binlog ------------------------------------------------------------
 # Alpine ships mariadb-binlog only inside the (large) mariadb server package; take the
 # single binary from it so binary-log fetching works without the server.
-FROM alpine:3.21 AS mariadb-tools
+FROM alpine:3 AS mariadb-tools
 RUN apk add --no-cache mariadb
 
 # ---- Runtime stage: slim -----------------------------------------------------
-FROM alpine:3.21 AS slim
+FROM alpine:3 AS slim
 
 RUN apk add --no-cache ca-certificates tzdata
 
