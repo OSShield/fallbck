@@ -27,7 +27,7 @@ builds:
     goos:
       - linux
       - windows
-      - macos
+      - darwin
     goarch:
       - amd64
       - arm64
@@ -59,7 +59,7 @@ builds:
       - -s -w
     goos:
       - linux
-      - macos
+      - darwin
     goarch:
       - amd64
       - arm64
