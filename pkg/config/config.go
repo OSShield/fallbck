@@ -606,6 +606,7 @@ func (c *AgentConfig) Save(path string) error {
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("failed to write agent config file %s: %w", path, err)
 	}
+	protectDataDir(filepath.Dir(path))
 	return nil
 }
 
