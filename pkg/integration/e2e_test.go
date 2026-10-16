@@ -146,6 +146,7 @@ func TestBackupWorkflowThroughGateway(t *testing.T) {
 
 	// 2. Server-side pieces: token manager, verifier, gateway on an h2c listener
 	cfg := config.DefaultServerConfig()
+	cfg.JWTSecret = "e2e-test-jwt-secret-that-is-long-enough-123456"
 	cfg.PublicURL = "http://fallbck.test"
 	tm := auth.NewTokenManager(cfg.JWTSecret)
 
