@@ -45,6 +45,18 @@ func (d *DB) open(stored string) (string, error) {
 	return d.Sealer.OpenString(stored)
 }
 
+// HasSealedSecrets reports whether any stored secret is already sealed, i.e. a master
+// key existed before. A freshly generated key then means the key file was lost.
+func (d *DB) HasSealedSecrets(ctx context.Context) (bool, error) {
+	var n int
+	err := d.Pool.QueryRow(ctx, `SELECT
+		(SELECT count(*) FROM backup_targets WHERE auth_token_encrypted LIKE 'v1:%') +
+		(SELECT count(*) FROM target_keys WHERE key_sealed LIKE 'v1:%') +
+		(SELECT count(*) FROM m365_tenants WHERE secret_sealed LIKE 'v1:%') +
+		(SELECT count(*) FROM backup_jobs WHERE db_config->>'password' LIKE 'v1:%')`).Scan(&n)
+	return n > 0, err
+}
+
 // SealLegacySecrets rewrites secrets stored in clear before the master key existed.
 // It returns how many rows were sealed. Safe to run at every start.
 func (d *DB) SealLegacySecrets(ctx context.Context) (int, error) {

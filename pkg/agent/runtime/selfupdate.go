@@ -17,8 +17,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/osshield/fallbck/pkg/agentupdate"
 	"github.com/osshield/fallbck/pkg/api"
 	"github.com/osshield/fallbck/pkg/config"
+	"github.com/osshield/fallbck/pkg/releasesig"
 	"go.temporal.io/sdk/interceptor"
 )
 
@@ -59,6 +61,9 @@ type selfUpdater struct {
 	store    *TokenStore
 	inflight *inflight
 	restart  chan struct{}
+	// verify checks the release checksums against their Sigstore bundle
+	// (releasesig.Verify; tests substitute it)
+	verify func(bundle, checksums []byte) error
 
 	lastErr string
 	nextTry time.Time
@@ -69,7 +74,7 @@ func newSelfUpdater(cfg *config.AgentConfig, store *TokenStore, inflight *inflig
 	exe, _ := os.Executable()
 	client := ServerHTTPClient(cfg)
 	client.Timeout = 10 * time.Minute
-	return &selfUpdater{exe: exe, client: client, base: strings.TrimRight(cfg.ServerURL, "/"), store: store, inflight: inflight, restart: make(chan struct{})}
+	return &selfUpdater{exe: exe, client: client, base: strings.TrimRight(cfg.ServerURL, "/"), store: store, inflight: inflight, restart: make(chan struct{}), verify: releasesig.Verify}
 }
 
 // canSelfUpdate reports whether this process can replace its own binary: Linux, not
@@ -110,12 +115,48 @@ func (u *selfUpdater) handle(ctx context.Context, upd *api.AgentUpdate) {
 	close(u.restart)
 }
 
-// apply downloads the binary next to the current one, checks its digest, smoke-tests
-// it and renames it into place (the previous binary stays as <name>.old)
+// apply downloads the release archive next to the current binary, verifies the
+// release's Sigstore bundle and the archive against the signed checksums (so a
+// compromised server cannot hand out a binary GitHub never built), extracts the
+// binary, smoke-tests it and renames it into place (the previous binary stays as
+// <name>.old)
 func (u *selfUpdater) apply(ctx context.Context, upd *api.AgentUpdate) error {
+	if upd.ArchiveURL == "" || upd.ChecksumsURL == "" || upd.BundleURL == "" || upd.Archive == "" {
+		return errors.New("server offers no signed release (older server); update by hand")
+	}
+	archive := u.exe + ".new.tar.gz"
+	defer os.Remove(archive)
+	gotSHA, err := u.download(ctx, upd.ArchiveURL, archive)
+	if err != nil {
+		return err
+	}
+	sums, err := u.fetch(ctx, upd.ChecksumsURL)
+	if err != nil {
+		return err
+	}
+	bundle, err := u.fetch(ctx, upd.BundleURL)
+	if err != nil {
+		return err
+	}
+	if err := u.verify(bundle, sums); err != nil {
+		return err
+	}
+	want, err := releasesig.ChecksumFor(sums, upd.Archive)
+	if err != nil {
+		return err
+	}
+	if gotSHA != want {
+		return fmt.Errorf("%s: checksum mismatch against the signed release (got %s, want %s)", upd.Archive, gotSHA, want)
+	}
 	tmp := u.exe + ".new"
 	defer os.Remove(tmp)
-	if err := u.download(ctx, upd, tmp); err != nil {
+	f, err := os.Open(archive)
+	if err != nil {
+		return err
+	}
+	_, err = agentupdate.ExtractBinary(f, tmp)
+	f.Close()
+	if err != nil {
 		return err
 	}
 	smoke, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -130,34 +171,52 @@ func (u *selfUpdater) apply(ctx context.Context, upd *api.AgentUpdate) error {
 	return swapBinary(u.exe, tmp)
 }
 
-func (u *selfUpdater) download(ctx context.Context, upd *api.AgentUpdate, dst string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.base+upd.URL, nil)
+// get performs an authenticated GET against the server
+func (u *selfUpdater) get(ctx context.Context, path string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.base+path, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+u.store.Token())
 	resp, err := u.client.Do(req)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		return nil, fmt.Errorf("GET %s: %s", path, resp.Status)
+	}
+	return resp, nil
+}
+
+// download saves path to dst and returns the file's sha256
+func (u *selfUpdater) download(ctx context.Context, path, dst string) (string, error) {
+	resp, err := u.get(ctx, path)
+	if err != nil {
+		return "", err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("download: %s", resp.Status)
-	}
-	f, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o755)
+	f, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
 	if err != nil {
-		return err
+		return "", err
 	}
 	h := sha256.New()
 	_, err = io.Copy(io.MultiWriter(f, h), resp.Body)
 	f.Close()
 	if err != nil {
-		return err
+		return "", err
 	}
-	if got := hex.EncodeToString(h.Sum(nil)); got != upd.SHA256 {
-		return fmt.Errorf("checksum mismatch (got %s, want %s)", got, upd.SHA256)
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// fetch reads a small file (checksums, bundle) from the server
+func (u *selfUpdater) fetch(ctx context.Context, path string) ([]byte, error) {
+	resp, err := u.get(ctx, path)
+	if err != nil {
+		return nil, err
 	}
-	return nil
+	defer resp.Body.Close()
+	return releasesig.ReadAll(resp.Body, 1<<20)
 }
 
 // swapBinary moves exe to exe.old and tmp to exe, restoring exe when the second

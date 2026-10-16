@@ -117,7 +117,7 @@ func main() {
 	// Seals stored secrets (PBS API tokens, backup encryption keys). Generated on the
 	// first start; from then on the database is useless without it, so it is backed
 	// up together with the database.
-	sealer, err := loadSealer(cfg)
+	sealer, keyCreated, err := loadSealer(cfg)
 	if err != nil {
 		slog.Error("Master key unavailable", "error", err)
 		os.Exit(1)
@@ -136,6 +136,15 @@ func main() {
 		defer database.Close()
 		database.Sealer = sealer
 		slog.Info("Connected to PostgreSQL database successfully")
+		if keyCreated {
+			if sealed, err := database.HasSealedSecrets(ctx); err != nil {
+				slog.Error("Checking for sealed secrets failed", "error", err)
+				os.Exit(1)
+			} else if sealed {
+				slog.Error("A new master key was just generated but the database already holds secrets sealed with another key: the key file was lost. Restore it (or set FALLBCK_MASTER_KEY) and remove the new file before starting again", "path", cfg.EffectiveMasterKeyFile())
+				os.Exit(1)
+			}
+		}
 		if n, err := database.SealLegacySecrets(ctx); err != nil {
 			slog.Error("Sealing stored secrets with the master key failed", "error", err)
 			os.Exit(1)
@@ -303,6 +312,9 @@ func main() {
 		redirectURL := strings.TrimRight(cfg.PublicURL, "/") + "/auth/callback"
 		oidcCtx, oidcCancel := context.WithTimeout(ctx, 60*time.Second)
 		for {
+			if len(cfg.Auth.OIDC.AllowedGroups) == 0 && len(cfg.Auth.OIDC.AllowedEmails) == 0 {
+				slog.Warn("OIDC has no allowed_groups or allowed_emails: every identity the provider issues is an admin here")
+			}
 			oidcProvider, err = auth.NewOIDC(oidcCtx, cfg.Auth.OIDC, redirectURL)
 			if err == nil {
 				break
@@ -425,26 +437,28 @@ func main() {
 
 // loadSealer builds the secrets sealer from FALLBCK_MASTER_KEY / security.master_key,
 // else from the key file (created on first start)
-func loadSealer(cfg *config.ServerConfig) (*secrets.Sealer, error) {
+func loadSealer(cfg *config.ServerConfig) (sealer *secrets.Sealer, created bool, err error) {
 	if cfg.Security.MasterKey != "" {
 		key, err := secrets.ParseKey(cfg.Security.MasterKey)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		slog.Info("Master key taken from configuration/environment")
-		return secrets.New(key)
+		sealer, err = secrets.New(key)
+		return sealer, false, err
 	}
 	path := cfg.EffectiveMasterKeyFile()
 	key, created, err := secrets.LoadOrCreateKeyFile(path)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if created {
 		slog.Warn("Generated a new master key; back it up together with the database, stored secrets cannot be recovered without it", "path", path)
 	} else {
 		slog.Info("Master key loaded", "path", path)
 	}
-	return secrets.New(key)
+	sealer, err = secrets.New(key)
+	return sealer, created, err
 }
 
 // ensureDevTarget creates the --dev-create-remote target unless one with that name

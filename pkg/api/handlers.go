@@ -62,11 +62,11 @@ func (s *ServerAPI) RegisterRoutes(r chi.Router, admin, agent Middleware) {
 	r.Route("/api/v1", func(r chi.Router) {
 		// Public
 		r.Get("/health", s.HandleHealth)
-		r.Post("/agents/enroll", s.HandleAgentEnroll)
+		r.With(middleware.RequestSize(64<<10), enrollLimiter()).Post("/agents/enroll", s.HandleAgentEnroll)
 
 		// Agent-authenticated
 		r.Group(func(r chi.Router) {
-			r.Use(agent)
+			r.Use(agent, middleware.RequestSize(4<<20))
 			r.Post("/agents/heartbeat", s.HandleAgentHeartbeat)
 			r.Post("/agents/token/rotate", s.HandleRotateAgentToken)
 			r.Get("/agents/pbs-credentials", s.HandlePBSCredentials)
@@ -79,7 +79,10 @@ func (s *ServerAPI) RegisterRoutes(r chi.Router, admin, agent Middleware) {
 			r.Post("/agents/volume-ticket", s.HandleSubTicket)
 			r.Post("/agents/token/worker", s.HandleWorkerToken)
 			r.Post("/agents/run-progress", s.HandleRunProgress)
+			r.Get("/agents/update/checksums", s.HandleAgentUpdateChecksums)
+			r.Get("/agents/update/checksums.sigstore.json", s.HandleAgentUpdateBundle)
 			r.Get("/agents/update/{os}/{arch}", s.HandleAgentUpdateBinary)
+			r.Get("/agents/update/{os}/{arch}/archive", s.HandleAgentUpdateArchive)
 		})
 
 		// Administrative
@@ -324,22 +327,56 @@ func (s *ServerAPI) agentUpdate(ctx context.Context, id uuid.UUID, agentVersion 
 	if !ready {
 		return nil
 	}
-	return &AgentUpdate{Version: s.Updates.Version, URL: "/api/v1/agents/update/" + st.OS + "/" + st.Arch, SHA256: sha}
+	base := "/api/v1/agents/update/"
+	return &AgentUpdate{
+		Version: s.Updates.Version, URL: base + st.OS + "/" + st.Arch, SHA256: sha,
+		Archive: agentupdate.ArchiveName(st.OS, st.Arch), ArchiveURL: base + st.OS + "/" + st.Arch + "/archive",
+		ChecksumsURL: base + "checksums", BundleURL: base + "checksums.sigstore.json",
+	}
 }
 
-// HandleAgentUpdateBinary serves the mirrored agent binary for an OS/arch
+// HandleAgentUpdateBinary serves the mirrored agent binary for an OS/arch (agents
+// from before release signing)
 func (s *ServerAPI) HandleAgentUpdateBinary(w http.ResponseWriter, r *http.Request) {
+	s.serveUpdateFile(w, r, func(goos, goarch string) string { return s.Updates.Path(goos, goarch) })
+}
+
+// HandleAgentUpdateArchive serves the verified release archive for an OS/arch
+func (s *ServerAPI) HandleAgentUpdateArchive(w http.ResponseWriter, r *http.Request) {
+	s.serveUpdateFile(w, r, func(goos, goarch string) string { return s.Updates.ArchivePath(goos, goarch) })
+}
+
+// HandleAgentUpdateChecksums serves the release's checksums file; HandleAgentUpdateBundle
+// its Sigstore bundle. Both are mirrored with the first binary, so any mirrored
+// platform makes them available.
+func (s *ServerAPI) HandleAgentUpdateChecksums(w http.ResponseWriter, r *http.Request) {
+	s.serveUpdateFile(w, r, func(string, string) string { return s.Updates.ChecksumsPath() })
+}
+
+func (s *ServerAPI) HandleAgentUpdateBundle(w http.ResponseWriter, r *http.Request) {
+	s.serveUpdateFile(w, r, func(string, string) string { return s.Updates.BundlePath() })
+}
+
+func (s *ServerAPI) serveUpdateFile(w http.ResponseWriter, r *http.Request, path func(goos, goarch string) string) {
 	goos, goarch := chi.URLParam(r, "os"), chi.URLParam(r, "arch")
+	if goos == "" {
+		// Checksums and bundle are per release, not per platform: the agent's own
+		// platform tells whether the release has been mirrored at all
+		goos, goarch = "linux", r.URL.Query().Get("arch")
+		if goarch == "" {
+			goarch = "amd64"
+		}
+	}
 	if s.Updates == nil {
 		s.writeError(w, http.StatusNotFound, "agent updates are disabled")
 		return
 	}
 	if _, ready := s.Updates.Binary(goos, goarch); !ready {
-		s.writeError(w, http.StatusNotFound, "no agent binary mirrored for "+goos+"/"+goarch)
+		s.writeError(w, http.StatusNotFound, "no agent release mirrored for "+goos+"/"+goarch)
 		return
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")
-	http.ServeFile(w, r, s.Updates.Path(goos, goarch))
+	http.ServeFile(w, r, path(goos, goarch))
 }
 
 // HandleListAgents returns all registered agents

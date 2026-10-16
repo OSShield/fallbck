@@ -28,6 +28,15 @@ func Sweep(ctx context.Context, c *Clients, agentID string, isActive func(runID 
 			}
 		}
 	}
+	if secrets, err := c.Core.CoreV1().Secrets("").List(ctx, metav1.ListOptions{LabelSelector: selector}); err == nil {
+		for i := range secrets.Items {
+			s := &secrets.Items[i]
+			if tooOld(s.CreationTimestamp) && !isActive(s.Labels[labelRunID]) {
+				slog.Info("Sweeping orphaned worker env secret", "namespace", s.Namespace, "name", s.Name)
+				_ = c.Core.CoreV1().Secrets(s.Namespace).Delete(ctx, s.Name, metav1.DeleteOptions{})
+			}
+		}
+	}
 	if pvcs, err := c.Core.CoreV1().PersistentVolumeClaims("").List(ctx, metav1.ListOptions{LabelSelector: selector}); err == nil {
 		for i := range pvcs.Items {
 			p := &pvcs.Items[i]

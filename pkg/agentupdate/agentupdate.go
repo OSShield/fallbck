@@ -1,7 +1,10 @@
-// Package agentupdate mirrors the fallbck-agent binary of the server's own release
-// for agents that update themselves. The goreleaser archive and checksum file are
-// fetched from GitHub once per OS/arch, the archive is verified, the binary is
-// extracted into <data dir>/agent-releases/<version>/ and served to agents from there.
+// Package agentupdate mirrors the fallbck-agent release of the server's own version
+// for agents that update themselves. The goreleaser archive, the checksums file and
+// its Sigstore bundle are fetched from GitHub once per OS/arch, the bundle is
+// verified against the release workflow identity, the archive against the signed
+// checksums, and everything is kept under <data dir>/agent-releases/<version>/.
+// Agents fetch the archive plus the signed checksums and verify again themselves
+// (the extracted binary is still served for agents from before release signing).
 package agentupdate
 
 import (
@@ -21,6 +24,7 @@ import (
 	"time"
 
 	"github.com/osshield/fallbck/pkg/agenthealth"
+	"github.com/osshield/fallbck/pkg/releasesig"
 )
 
 // ReleaseBase is where goreleaser publishes the archives
@@ -36,6 +40,9 @@ type Cache struct {
 	// BaseURL is the release download base (ReleaseBase); tests point it elsewhere
 	BaseURL string
 	Client  *http.Client
+	// Verify checks the checksums file against its Sigstore bundle (releasesig.Verify;
+	// tests substitute it)
+	Verify func(bundle, checksums []byte) error
 
 	mu       sync.Mutex
 	ready    map[string]string // os/arch -> sha256 of the extracted binary
@@ -55,6 +62,7 @@ func New(version, dataDir string) *Cache {
 		Dir:      filepath.Join(dataDir, "agent-releases"),
 		BaseURL:  ReleaseBase,
 		Client:   &http.Client{Timeout: 10 * time.Minute},
+		Verify:   releasesig.Verify,
 		ready:    map[string]string{},
 		fetching: map[string]bool{},
 		failed:   map[string]fetchError{},
@@ -113,6 +121,16 @@ func (c *Cache) Path(goos, goarch string) string {
 	return filepath.Join(c.Dir, c.Version, "fallbck-agent_"+goos+"_"+goarch)
 }
 
+// ArchivePath is where the verified release archive for os/arch lives
+func (c *Cache) ArchivePath(goos, goarch string) string {
+	return filepath.Join(c.Dir, c.Version, ArchiveName(goos, goarch))
+}
+
+// ChecksumsPath and BundlePath are the release's signed checksums file and its
+// Sigstore bundle
+func (c *Cache) ChecksumsPath() string { return filepath.Join(c.Dir, c.Version, "checksums.txt") }
+func (c *Cache) BundlePath() string    { return c.ChecksumsPath() + ".sigstore.json" }
+
 // Errors returns the last fetch error per os/arch, for the agents page
 func (c *Cache) Errors() map[string]string {
 	c.mu.Lock()
@@ -133,25 +151,37 @@ func ArchiveName(goos, goarch string) string {
 	return "fallbck_agent_" + strings.ToUpper(goos[:1]) + goos[1:] + "_" + arch + ".tar.gz"
 }
 
-// fetch downloads and verifies the archive and extracts the binary
+// fetch downloads the signed checksums, verifies the bundle, downloads and verifies
+// the archive, keeps it, and extracts the binary
 func (c *Cache) fetch(goos, goarch string) (string, error) {
 	base := c.BaseURL + "/v" + c.Version + "/"
-	sums, err := c.get(base + "fallbck_" + c.Version + "_checksums.txt")
+	sums, err := c.getBytes(base+"fallbck_"+c.Version+"_checksums.txt", 1<<20)
 	if err != nil {
 		return "", err
 	}
-	defer sums.Close()
-	want, err := checksumFor(sums, ArchiveName(goos, goarch))
+	bundle, err := c.getBytes(base+"fallbck_"+c.Version+"_checksums.txt.sigstore.json", 1<<20)
+	if err != nil {
+		return "", err
+	}
+	if err := c.Verify(bundle, sums); err != nil {
+		return "", err
+	}
+	want, err := releasesig.ChecksumFor(sums, ArchiveName(goos, goarch))
 	if err != nil {
 		return "", err
 	}
 
+	dst := c.Path(goos, goarch)
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return "", err
+	}
 	archive, err := c.get(base + ArchiveName(goos, goarch))
 	if err != nil {
 		return "", err
 	}
 	defer archive.Close()
-	tmp, err := os.CreateTemp("", "fallbck-agent-release-*.tar.gz")
+	archivePath := c.ArchivePath(goos, goarch)
+	tmp, err := os.OpenFile(archivePath+".tmp", os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0o644)
 	if err != nil {
 		return "", err
 	}
@@ -167,19 +197,32 @@ func (c *Cache) fetch(goos, goarch string) (string, error) {
 	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
 		return "", err
 	}
-
-	dst := c.Path(goos, goarch)
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return "", err
-	}
-	sha, err := extractBinary(tmp, dst)
+	sha, err := ExtractBinary(tmp, dst)
 	if err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(dst+".sha256", []byte(sha+"\n"), 0o644); err != nil {
+	if err := os.Rename(tmp.Name(), archivePath); err != nil {
 		return "", err
 	}
+	for path, data := range map[string][]byte{c.ChecksumsPath(): sums, c.BundlePath(): bundle, dst + ".sha256": []byte(sha + "\n")} {
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			return "", err
+		}
+	}
 	return sha, nil
+}
+
+func (c *Cache) getBytes(url string, limit int64) ([]byte, error) {
+	r, err := c.get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	b, err := releasesig.ReadAll(r, limit)
+	if err != nil {
+		return nil, fmt.Errorf("GET %s: %w", url, err)
+	}
+	return b, nil
 }
 
 func (c *Cache) get(url string) (io.ReadCloser, error) {
@@ -194,24 +237,9 @@ func (c *Cache) get(url string) (io.ReadCloser, error) {
 	return resp.Body, nil
 }
 
-// checksumFor finds name in a goreleaser checksums file ("<sha256>  <name>" lines)
-func checksumFor(r io.Reader, name string) (string, error) {
-	b, err := io.ReadAll(r)
-	if err != nil {
-		return "", err
-	}
-	for _, line := range strings.Split(string(b), "\n") {
-		f := strings.Fields(line)
-		if len(f) == 2 && f[1] == name {
-			return f[0], nil
-		}
-	}
-	return "", fmt.Errorf("%s is not in the checksums file", name)
-}
-
-// extractBinary writes the fallbck-agent entry of the tar.gz to dst (atomically) and
+// ExtractBinary writes the fallbck-agent entry of the tar.gz to dst (atomically) and
 // returns its sha256
-func extractBinary(r io.Reader, dst string) (string, error) {
+func ExtractBinary(r io.Reader, dst string) (string, error) {
 	gz, err := gzip.NewReader(r)
 	if err != nil {
 		return "", err

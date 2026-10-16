@@ -158,6 +158,12 @@ func BackupVolume(ctx context.Context, c *Clients, req VolumeBackupRequest) (*sp
 	}
 
 	progress("uploading " + plan.Namespace + "/" + plan.PVCName)
+	if err := createEnvSecret(ctx, c, plan.Namespace, name, labels, req.Worker.Env); err != nil {
+		res.Status = "failed"
+		res.Error = err.Error()
+		return res, err
+	}
+	cleanup.secret = name
 	pod := workerPod(name, plan.Namespace, mountPVC, readOnlyMount, nodeName, labels, req.Worker)
 	if _, err := c.Core.CoreV1().Pods(plan.Namespace).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
 		res.Status = "failed"
@@ -351,7 +357,7 @@ func workerPod(name, ns, claim string, readOnly bool, nodeName string, labels ma
 				Image:                    w.Image,
 				ImagePullPolicy:          pullPolicy(w.ImagePullPolicy),
 				Args:                     []string{"worker"},
-				Env:                      w.Env,
+				EnvFrom:                  envFromSecret(name),
 				Resources:                resources,
 				SecurityContext:          secCtx,
 				TerminationMessagePolicy: corev1.TerminationMessageReadFile,
@@ -534,12 +540,34 @@ func podLogTail(ctx context.Context, c *Clients, ns, name string) string {
 	return strings.TrimSpace(string(data))
 }
 
+// createEnvSecret stores a worker's environment (ticket, token, credentials) in a
+// Secret the pod loads with envFrom, so nothing sensitive sits in Pod.spec where
+// anyone with "get pods" can read it. Named like the pod, labelled like the pod,
+// deleted with the pod.
+func createEnvSecret(ctx context.Context, c *Clients, ns, name string, labels map[string]string, env []corev1.EnvVar) error {
+	data := make(map[string]string, len(env))
+	for _, e := range env {
+		data[e.Name] = e.Value
+	}
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Labels: labels}, StringData: data}
+	if _, err := c.Core.CoreV1().Secrets(ns).Create(ctx, secret, metav1.CreateOptions{}); err != nil {
+		return fmt.Errorf("creating worker env secret %s/%s: %w", ns, name, err)
+	}
+	return nil
+}
+
+// envFromSecret is the container-side half of createEnvSecret
+func envFromSecret(name string) []corev1.EnvFromSource {
+	return []corev1.EnvFromSource{{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: name}}}}
+}
+
 // ---- cleanup ----------------------------------------------------------------
 
 type cleanup struct {
 	c         *Clients
 	namespace string
 	pod       string
+	secret    string
 	pvc       string
 	snapshot  string
 	done      bool
@@ -566,6 +594,9 @@ func (cl *cleanup) run() {
 	}
 	del("pod", cl.pod, func() error {
 		return cl.c.Core.CoreV1().Pods(cl.namespace).Delete(ctx, cl.pod, metav1.DeleteOptions{})
+	})
+	del("secret", cl.secret, func() error {
+		return cl.c.Core.CoreV1().Secrets(cl.namespace).Delete(ctx, cl.secret, metav1.DeleteOptions{})
 	})
 	del("pvc", cl.pvc, func() error {
 		return cl.c.Core.CoreV1().PersistentVolumeClaims(cl.namespace).Delete(ctx, cl.pvc, metav1.DeleteOptions{})

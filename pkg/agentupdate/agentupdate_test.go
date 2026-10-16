@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -29,8 +30,18 @@ func fakeRelease(t *testing.T, binary []byte, corrupt bool) *httptest.Server {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1.2.3/fallbck_1.2.3_checksums.txt", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(sums)) })
+	mux.HandleFunc("/v1.2.3/fallbck_1.2.3_checksums.txt.sigstore.json", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("bundle-for:" + sums)) })
 	mux.HandleFunc("/v1.2.3/"+ArchiveName("linux", "amd64"), func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(archive.Bytes()) })
 	return httptest.NewServer(mux)
+}
+
+// fakeVerify stands in for releasesig.Verify: the fake release "signs" the checksums
+// by echoing them into the bundle
+func fakeVerify(bundle, checksums []byte) error {
+	if string(bundle) != "bundle-for:"+string(checksums) {
+		return errors.New("bad signature")
+	}
+	return nil
 }
 
 func wait(t *testing.T, c *Cache) (string, bool) {
@@ -53,6 +64,7 @@ func TestMirrorsVerifiedBinary(t *testing.T) {
 	defer srv.Close()
 	c := New("v1.2.3", t.TempDir())
 	c.BaseURL = srv.URL
+	c.Verify = fakeVerify
 	if _, ok := c.Binary("linux", "amd64"); ok {
 		t.Fatal("ready before the fetch finished")
 	}
@@ -67,6 +79,11 @@ func TestMirrorsVerifiedBinary(t *testing.T) {
 	got, err := os.ReadFile(c.Path("linux", "amd64"))
 	if err != nil || !bytes.Equal(got, binary) {
 		t.Fatalf("cached binary wrong: %v", err)
+	}
+	for _, f := range []string{c.ArchivePath("linux", "amd64"), c.ChecksumsPath(), c.BundlePath()} {
+		if _, err := os.Stat(f); err != nil {
+			t.Errorf("%s not kept for agents: %v", f, err)
+		}
 	}
 	// A new cache over the same dir reuses the extracted file without fetching
 	c2 := New("1.2.3", c.Dir[:len(c.Dir)-len("/agent-releases")])
@@ -84,11 +101,26 @@ func TestRejectsBadChecksum(t *testing.T) {
 	defer srv.Close()
 	c := New("1.2.3", t.TempDir())
 	c.BaseURL = srv.URL
+	c.Verify = fakeVerify
 	if _, ok := wait(t, c); ok {
 		t.Fatal("corrupt archive accepted")
 	}
 	if _, err := os.Stat(c.Path("linux", "amd64")); err == nil {
 		t.Fatal("binary written despite checksum mismatch")
+	}
+}
+
+func TestRejectsBadSignature(t *testing.T) {
+	srv := fakeRelease(t, []byte("x"), false)
+	defer srv.Close()
+	c := New("1.2.3", t.TempDir())
+	c.BaseURL = srv.URL
+	c.Verify = func(bundle, checksums []byte) error { return errors.New("not signed by the release workflow") }
+	if _, ok := wait(t, c); ok {
+		t.Fatal("unsigned release mirrored")
+	}
+	if _, err := os.Stat(c.Path("linux", "amd64")); err == nil {
+		t.Fatal("binary written despite signature failure")
 	}
 }
 
