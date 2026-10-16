@@ -6,7 +6,7 @@ http_port: 8080
 http_bind: "0.0.0.0"
 public_url: "https://backup.example.com"          # the reverse proxy's URL (OIDC redirect, agents)
 # trusted_proxies: ["10.0.0.5/32"]  # reverse proxies allowed to set X-Forwarded-For (default: loopback + private ranges)
-jwt_secret: "super-secret-key-change-in-production-must-be-32-plus-chars"
+# jwt_secret: ""   # leave unset: generated into <data_dir>/jwt.secret on first start (32+ chars if you set one)
 data_dir: "/var/lib/fallbck/server"
 
 # Master key sealing stored secrets (PBS API tokens, backup encryption keys) at rest.

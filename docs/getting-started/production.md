@@ -42,7 +42,7 @@ Start from [`deploy/server.yaml.example`](https://github.com/osshield/fallbck/bl
 
 ```yaml
 public_url: "https://backup.example.com"   # what users and agents type in
-jwt_secret: "<32+ random characters>"
+# jwt_secret is generated into data_dir on first start; set it only to manage it yourself
 database:
   url: "postgres://fallbck:...@db:5432/fallbck"
 auth:
@@ -126,3 +126,17 @@ If the proxy isn't on loopback or a private range, add it to `trusted_proxies` s
 ## Next up
 
 Sign in, open **Onboarding**, and enroll your first agent. [Agents and file backups](../agents/index.md) explains what happens along the way.
+
+## Release signatures
+
+Every release's checksums file is signed keyless with cosign from the GitHub release workflow, and the container images are signed the same way. To check a download by hand:
+
+```bash
+cosign verify-blob --bundle fallbck_<version>_checksums.txt.sigstore.json \
+  --certificate-identity-regexp '^https://github.com/osshield/fallbck/.github/workflows/release.yml@refs/tags/v' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  fallbck_<version>_checksums.txt
+sha256sum -c --ignore-missing fallbck_<version>_checksums.txt
+```
+
+The server does the same check before it mirrors an agent release, and agents do it again before they replace their own binary. An agent older than 0.15 can't verify, so update those once by package or installer. A server older than 0.15 offers no signature, so a 0.15+ agent refuses to self-update from it.

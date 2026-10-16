@@ -305,6 +305,23 @@ func (t *BackupTarget) Sanitize() *BackupTarget {
 }
 
 // BackupJob defines what, when, and where an agent backs up
+// EffectiveBackupID is the PBS backup group a filesystem, Docker, Proxmox VE or
+// kubernetes job writes to: the stored backup_id, else the agent ID (with -docker /
+// -pve for those types). Server-derived on purpose: an agent must not be able to
+// pick another host's group by reporting its hostname.
+func (j *BackupJob) EffectiveBackupID() string {
+	if j.BackupID != "" {
+		return j.BackupID
+	}
+	switch j.JobType {
+	case JobTypeDocker:
+		return j.AgentID.String() + "-docker"
+	case JobTypePVE:
+		return j.AgentID.String() + "-pve"
+	}
+	return j.AgentID.String()
+}
+
 type BackupJob struct {
 	ID           uuid.UUID `json:"id" db:"id"`
 	Name         string    `json:"name" db:"name"`
@@ -317,6 +334,10 @@ type BackupJob struct {
 	// DirectPBS makes the agent talk to PBS itself (credentials handed out per run)
 	// instead of through the server-side tunnel. Server-side setting only.
 	DirectPBS bool `json:"direct_pbs" db:"direct_pbs"`
+	// BackupID is the PBS backup group of filesystem, Docker, Proxmox VE and
+	// kubernetes jobs (database and Microsoft 365 jobs carry theirs in their config).
+	// Empty means the agent ID, see EffectiveBackupID.
+	BackupID string `json:"backup_id" db:"backup_id"`
 	// JobType is filesystem (BackupPaths) or database (DBConfig)
 	JobType string `json:"job_type" db:"job_type"`
 	// DBConfig is the database job specification; the password is stored but never

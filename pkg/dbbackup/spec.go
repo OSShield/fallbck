@@ -266,13 +266,62 @@ func specErr(format string, args ...any) error {
 	return fmt.Errorf("%w: %s", ErrInvalidSpec, fmt.Sprintf(format, args...))
 }
 
-// Options the agent controls itself; never accepted from job extra args
-var deniedExtraArgs = []string{
-	"--file", "-f", "--result-file", "-r", "--out", "-o", "--config", "--uri",
-	"--password", "-p", "--pgdata", "-D", "--username", "-U", "--host", "-h", "--port",
+// allowedExtraArgs lists, per engine, the long options a job may add to the dump
+// command. Anything else is refused: the dump tools accept unambiguous option
+// prefixes and several options name files to read or write (--file, --archive,
+// --plugin-dir), so a denylist cannot hold. Output, connection and credential
+// options are deliberately absent; the agent owns those.
+var allowedExtraArgs = map[string]map[string]bool{
+	EnginePostgres: set(
+		"--blobs", "--large-objects", "--no-blobs", "--no-large-objects", "--clean", "--create",
+		"--data-only", "--schema-only", "--if-exists", "--inserts", "--column-inserts",
+		"--rows-per-insert", "--on-conflict-do-nothing", "--disable-triggers", "--enable-row-security",
+		"--load-via-partition-root", "--use-set-session-authorization", "--quote-all-identifiers",
+		"--strict-names", "--serializable-deferrable", "--lock-wait-timeout", "--encoding",
+		"--compress", "--jobs", "--section", "--snapshot", "--verbose",
+		"--schema", "--exclude-schema", "--table", "--exclude-table", "--exclude-table-data",
+		"--extension", "--exclude-extension", "--table-and-children", "--exclude-table-and-children",
+		"--exclude-table-data-and-children",
+		"--no-owner", "--no-privileges", "--no-acl", "--no-comments", "--no-publications",
+		"--no-subscriptions", "--no-security-labels", "--no-tablespaces", "--no-table-access-method",
+		"--no-toast-compression", "--no-unlogged-table-data", "--no-sync",
+	),
+	EngineMySQL: set(
+		"--single-transaction", "--quick", "--lock-tables", "--skip-lock-tables", "--lock-all-tables",
+		"--add-drop-database", "--add-drop-table", "--add-drop-trigger", "--add-locks", "--skip-add-locks",
+		"--comments", "--skip-comments", "--compact", "--complete-insert", "--extended-insert",
+		"--skip-extended-insert", "--hex-blob", "--insert-ignore", "--replace", "--disable-keys",
+		"--skip-disable-keys", "--opt", "--skip-opt", "--force", "--flush-logs", "--flush-privileges",
+		"--ignore-table", "--ignore-database", "--no-create-db", "--no-create-info", "--no-data",
+		"--no-tablespaces", "--order-by-primary", "--routines", "--skip-routines", "--triggers",
+		"--skip-triggers", "--events", "--skip-events", "--set-gtid-purged", "--gtid", "--master-data",
+		"--source-data", "--dump-slave", "--dump-replica", "--dump-date", "--skip-dump-date", "--tz-utc",
+		"--skip-tz-utc", "--default-character-set", "--max-allowed-packet", "--net-buffer-length",
+		"--column-statistics", "--skip-column-statistics", "--where", "--system", "--verbose",
+	),
+	EngineMongoDB: set(
+		"--collection", "--excludeCollection", "--excludeCollectionsWithPrefix", "--query",
+		"--forceTableScan", "--dumpDbUsersAndRoles", "--viewsAsCollections", "--gzip", "--oplog",
+		"--quiet", "--verbose",
+	),
 }
 
+func set(names ...string) map[string]bool {
+	m := make(map[string]bool, len(names))
+	for _, n := range names {
+		m[n] = true
+	}
+	return m
+}
+
+// controlRe matches bytes that would break the credential files the agent writes
+// (pgpass lines, the mysql defaults file, the mongodump YAML config)
+var controlRe = regexp.MustCompile(`[\x00-\x1f\x7f]`)
+
 var backupIDRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]*$`)
+
+// ValidBackupID reports whether s is a usable PBS backup id
+func ValidBackupID(s string) bool { return backupIDRe.MatchString(s) }
 
 // dnsLabelRe matches Kubernetes namespace and Service names
 var dnsLabelRe = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
@@ -290,6 +339,11 @@ func (s *Spec) Validate() error {
 	}
 	s.Engine = engine
 	s.Host = strings.TrimSpace(s.Host)
+	for field, v := range map[string]string{"host": s.Host, "user": s.User, "password": s.Password} {
+		if controlRe.MatchString(v) {
+			return specErr("%s contains control characters", field)
+		}
+	}
 	if k := s.Kubernetes; k != nil {
 		k.Namespace = strings.TrimSpace(k.Namespace)
 		k.Service = strings.TrimSpace(k.Service)
@@ -307,6 +361,11 @@ func (s *Spec) Validate() error {
 		if k.SecretName != "" {
 			if !dnsLabelRe.MatchString(strings.ReplaceAll(k.SecretName, ".", "-")) {
 				return specErr("kubernetes.secret_name %q is not a valid Secret name", k.SecretName)
+			}
+			// Credentials read from a Secret only ever go to a Service in the same
+			// namespace, never to a host of the job author's choosing
+			if k.Service == "" || s.Host != "" {
+				return specErr("kubernetes.secret_name requires kubernetes.service and no host")
 			}
 			if k.PasswordKey == "" {
 				k.PasswordKey = "password"
@@ -350,6 +409,9 @@ func (s *Spec) Validate() error {
 			list[i] = name
 			if name == "" {
 				return specErr("database names must not be empty")
+			}
+			if controlRe.MatchString(name) {
+				return specErr("database name %q contains control characters", name)
 			}
 			if strings.HasPrefix(name, "-") {
 				return specErr("database name %q must not start with '-'", name)
@@ -426,7 +488,7 @@ func (s *Spec) Validate() error {
 		default:
 			return specErr("postgres.role_passwords %q is not one of auto, include, omit", p.RolePasswords)
 		}
-		if err := validateExtraArgs(p.ExtraDumpArgs); err != nil {
+		if err := validateExtraArgs(EnginePostgres, p.ExtraDumpArgs); err != nil {
 			return err
 		}
 	case EngineMySQL:
@@ -436,7 +498,7 @@ func (s *Spec) Validate() error {
 		if s.MySQL == nil {
 			s.MySQL = &MySQLOptions{}
 		}
-		if err := validateExtraArgs(s.MySQL.ExtraDumpArgs); err != nil {
+		if err := validateExtraArgs(EngineMySQL, s.MySQL.ExtraDumpArgs); err != nil {
 			return err
 		}
 	case EngineMongoDB:
@@ -470,26 +532,24 @@ func (s *Spec) Validate() error {
 				return specErr("mongodb.auth_mechanism MONGODB-X509 needs a client certificate file, which kubernetes targets cannot use")
 			}
 		}
-		if err := validateExtraArgs(m.ExtraArgs); err != nil {
+		if err := validateExtraArgs(EngineMongoDB, m.ExtraArgs); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func validateExtraArgs(args []string) error {
+func validateExtraArgs(engine string, args []string) error {
 	for _, a := range args {
 		if !strings.HasPrefix(a, "--") {
 			return specErr("extra argument %q must be a long option (--name[=value])", a)
 		}
-		name := a
-		if i := strings.IndexByte(a, '='); i >= 0 {
-			name = a[:i]
+		if controlRe.MatchString(a) {
+			return specErr("extra argument %q contains control characters", a)
 		}
-		for _, denied := range deniedExtraArgs {
-			if name == denied {
-				return specErr("extra argument %q is managed by the agent and cannot be overridden", name)
-			}
+		name, _, _ := strings.Cut(a, "=")
+		if !allowedExtraArgs[engine][name] {
+			return specErr("extra argument %q is not an allowed %s option", name, engine)
 		}
 	}
 	return nil

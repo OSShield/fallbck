@@ -43,7 +43,7 @@ The gateway is the security boundary in both modes. Embedded Temporal only binds
 
 PBS is the target, driven by the [gopbs](https://github.com/osshield/gopbs) library (pxar v1 and v2, picked per target).
 
-1. `PrepareBackupSession` on the server mints a **backup ticket**: a short-lived JWT naming the agent, target, datastore, namespace and snapshot (`host/<hostname>/<time>`).
+1. `PrepareBackupSession` on the server mints a **backup ticket**: a short-lived JWT naming the agent, target, datastore, namespace and snapshot (`host/<backup_id>/<time>`; the group is the job's `backup_id`, by default the agent ID, never the hostname the agent reports).
 2. The agent opens a gRPC byte stream to the server (`pkg/proxy`, `fallbck.pbs.v1.BackupTunnel`) with its agent token and the ticket.
 3. The server checks both, loads the target, connects to PBS with the target's **API token** (TLS chain verification or fingerprint pin), does the `proxmox-backup-protocol-v1` upgrade for exactly the snapshot in the ticket, and pipes bytes both ways.
 4. The agent hands the stream to gopbs (`pbs.Config.DialSession`), which chunks, dedups and uploads the pxar archive, catalog and manifest, then finishes the snapshot.

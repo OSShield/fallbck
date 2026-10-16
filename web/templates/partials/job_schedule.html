@@ -13,6 +13,11 @@
   </label>
 </div>
 
+<div class="form-group" id="job-backup-group">
+  <label>PBS backup group (optional, default: the agent ID; Docker and Proxmox VE jobs add -docker / -pve. Changing it starts a new snapshot chain)</label>
+  <input type="text" name="backup_id" class="form-control" placeholder="web-01" pattern="[A-Za-z0-9_][A-Za-z0-9._-]*">
+</div>
+
 <p style="font-size: 12px; color: var(--text-muted); margin: 0 0 12px;">Retention is configured on the Proxmox Backup Server as a datastore prune job; FallBCK never prunes or deletes snapshots.</p>
 
 <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500;">

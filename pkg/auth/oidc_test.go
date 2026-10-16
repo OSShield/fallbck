@@ -148,6 +148,9 @@ func TestAuthorizeIdentity(t *testing.T) {
 	if err := AuthorizeIdentity(OIDCConfig{AllowedGroups: []string{"admins"}, AllowedEmails: []string{"x@y"}}, id); !errors.Is(err, ErrNotAuthorized) {
 		t.Errorf("expected ErrNotAuthorized, got %v", err)
 	}
+	if err := AuthorizeIdentity(OIDCConfig{AllowedEmails: []string{"bob@example.com"}}, &Identity{Email: "bob@example.com", EmailUnverified: true}); !errors.Is(err, ErrNotAuthorized) {
+		t.Errorf("unverified email must not match allowed_emails: %v", err)
+	}
 	if err := AuthorizeIdentity(OIDCConfig{AllowedEmails: []string{""}}, &Identity{}); !errors.Is(err, ErrNotAuthorized) {
 		t.Error("empty email must never match an allow-list entry")
 	}

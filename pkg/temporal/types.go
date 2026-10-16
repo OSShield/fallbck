@@ -65,12 +65,14 @@ type BackupSessionInfo struct {
 	// ticket (GET /api/v1/agents/m365-credentials)
 	M365Config *m365.Spec `json:"m365_config,omitempty"`
 	// JobName is informational (manifest)
-	JobName      string    `json:"job_name,omitempty"`
-	BackupPaths  []string  `json:"backup_paths"`
-	ExcludePaths []string  `json:"exclude_paths"`
-	WorkflowID   string    `json:"workflow_id"`
-	RunID        string    `json:"run_id"`
-	BackupRunID  uuid.UUID `json:"backup_run_id"`
+	JobName string `json:"job_name,omitempty"`
+	// AgentHostname is written as the snapshot comment on PBS (informational)
+	AgentHostname string    `json:"agent_hostname,omitempty"`
+	BackupPaths   []string  `json:"backup_paths"`
+	ExcludePaths  []string  `json:"exclude_paths"`
+	WorkflowID    string    `json:"workflow_id"`
+	RunID         string    `json:"run_id"`
+	BackupRunID   uuid.UUID `json:"backup_run_id"`
 }
 
 // BackupExecutionResult contains the outcome and metrics of a backup run

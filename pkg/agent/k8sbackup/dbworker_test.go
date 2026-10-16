@@ -49,8 +49,14 @@ func TestDBWorkerPodSpec(t *testing.T) {
 	for _, e := range main.Env {
 		env[e.Name] = e.Value
 	}
-	if env[EnvWorkerSpool] != "/spool" || env["HOME"] != "/tmp" || env[EnvWorkerDBPassword] != "pw" {
+	if env[EnvWorkerSpool] != "/spool" || env["HOME"] != "/tmp" {
 		t.Errorf("env %v", env)
+	}
+	if _, inSpec := env[EnvWorkerDBPassword]; inSpec {
+		t.Error("credentials must not be in Pod.spec")
+	}
+	if len(main.EnvFrom) != 1 || main.EnvFrom[0].SecretRef == nil || main.EnvFrom[0].SecretRef.Name != "fb-1" {
+		t.Errorf("env must come from the per-run secret: %+v", main.EnvFrom)
 	}
 	var spool *corev1.Volume
 	for i := range pod.Spec.Volumes {

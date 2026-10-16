@@ -17,6 +17,11 @@ rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["create", "delete", "watch"]
+  # Per-run Secret next to each worker pod carrying its ticket and credentials
+  # (envFrom), so they never sit in Pod.spec. Deleted with the pod.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create", "delete"]
   - apiGroups: [""]
     resources: ["pods/log"]
     verbs: ["get"]

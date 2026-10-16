@@ -18,6 +18,9 @@ import (
 
 func stateKey(jobID string) string { return jobID + ".json" }
 
+// CredentialsLabel must be "true" on a Secret before a database job may read it
+const CredentialsLabel = "fallbck.io/allow-db-credentials"
+
 // LoadDBState returns the job's previous state from the state Secret, or nil
 func LoadDBState(ctx context.Context, core kubernetes.Interface, namespace, secretName, jobID string) (*dbspec.JobState, error) {
 	secret, err := core.CoreV1().Secrets(namespace).Get(ctx, secretName, metav1.GetOptions{})
@@ -45,11 +48,9 @@ func SaveDBState(ctx context.Context, core kubernetes.Interface, namespace, secr
 		return fmt.Errorf("serialising job state: %w", err)
 	}
 	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: secretName, Namespace: namespace,
-			Labels: map[string]string{labelManagedBy: labelValue},
-		},
-		Data: map[string][]byte{stateKey(jobID): data},
+		Name: secretName, Namespace: namespace,
+		Labels: map[string]string{labelManagedBy: labelValue},
+		Data:   map[string][]byte{stateKey(jobID): data},
 	}
 	_, err = core.CoreV1().Secrets(namespace).Create(ctx, secret, metav1.CreateOptions{})
 	if apierrors.IsAlreadyExists(err) {
@@ -75,6 +76,12 @@ func ReadSecretCredentials(ctx context.Context, core kubernetes.Interface, names
 	secret, err := core.CoreV1().Secrets(namespace).Get(ctx, secretName, metav1.GetOptions{})
 	if err != nil {
 		return "", "", fmt.Errorf("reading credentials secret %s/%s: %w", namespace, secretName, err)
+	}
+	// The ClusterRole can read every Secret (resource backups need that); a job may
+	// only use the ones somebody labelled for it, so a compromised server cannot
+	// turn a database job into a Secret exfiltration path
+	if secret.Labels[CredentialsLabel] != "true" {
+		return "", "", fmt.Errorf("credentials secret %s/%s is not labelled %s=true", namespace, secretName, CredentialsLabel)
 	}
 	pw, ok := secret.Data[passwordKey]
 	if !ok {

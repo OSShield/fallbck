@@ -23,6 +23,9 @@ type Identity struct {
 	Email   string
 	Name    string
 	Groups  []string
+	// EmailUnverified is set when the IdP says email_verified=false; allowed_emails
+	// never matches such an identity (a missing claim is taken as verified)
+	EmailUnverified bool
 }
 
 // ErrNotAuthorized is returned when an authenticated identity is not permitted to administer
@@ -119,6 +122,9 @@ func (o *OIDC) Exchange(ctx context.Context, code, nonce string) (*Identity, err
 	if id.Name == "" {
 		id.Name = stringClaim(claims, "preferred_username")
 	}
+	if v, ok := claims["email_verified"].(bool); ok && !v {
+		id.EmailUnverified = true
+	}
 	if err := o.Authorize(id); err != nil {
 		return nil, err
 	}
@@ -136,7 +142,7 @@ func AuthorizeIdentity(cfg OIDCConfig, id *Identity) error {
 		return nil
 	}
 	for _, email := range cfg.AllowedEmails {
-		if strings.EqualFold(email, id.Email) && id.Email != "" {
+		if strings.EqualFold(email, id.Email) && id.Email != "" && !id.EmailUnverified {
 			return nil
 		}
 	}

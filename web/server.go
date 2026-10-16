@@ -165,9 +165,15 @@ func SecurityHeaders(next http.Handler) http.Handler {
 
 // ---------------------------------------------------------------- auth pages
 
-// safeNext only allows same-origin relative redirects
+// safeNext only allows same-origin relative redirects: an absolute path with no
+// scheme, host or userinfo, and nothing a browser would normalise into one
+// (backslashes, control characters such as /%09/evil.com -> //evil.com)
 func safeNext(next string) string {
-	if next == "" || !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") || strings.HasPrefix(next, "/\\") {
+	u, err := url.Parse(next)
+	if err != nil || next == "" || u.Scheme != "" || u.Host != "" || u.User != nil || u.Opaque != "" ||
+		!strings.HasPrefix(u.Path, "/") || strings.HasPrefix(u.Path, "//") ||
+		strings.ContainsFunc(next, func(r rune) bool { return r < 0x20 || r == 0x7f || r == '\\' }) ||
+		strings.ContainsFunc(u.Path, func(r rune) bool { return r < 0x20 || r == 0x7f || r == '\\' }) {
 		return "/dashboard"
 	}
 	return next

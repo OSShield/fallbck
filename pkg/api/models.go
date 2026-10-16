@@ -89,8 +89,17 @@ type HeartbeatRequest struct {
 // binary (agent token auth), SHA256 its digest
 type AgentUpdate struct {
 	Version string `json:"version"`
-	URL     string `json:"url"`
-	SHA256  string `json:"sha256"`
+	// URL serves the extracted binary and SHA256 its digest: what agents from before
+	// release signing use. Newer agents ignore both.
+	URL    string `json:"url"`
+	SHA256 string `json:"sha256"`
+	// ArchiveURL serves the goreleaser archive named Archive; ChecksumsURL and
+	// BundleURL the release's checksums file and its Sigstore bundle. The agent
+	// verifies the bundle, then the archive against the signed checksums.
+	Archive      string `json:"archive,omitempty"`
+	ArchiveURL   string `json:"archive_url,omitempty"`
+	ChecksumsURL string `json:"checksums_url,omitempty"`
+	BundleURL    string `json:"bundle_url,omitempty"`
 }
 
 // MergeAgentRequest moves the jobs and runs of one agent onto another and deletes

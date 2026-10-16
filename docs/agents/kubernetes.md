@@ -47,7 +47,7 @@ Same agent. Create a *Database* job for the `k8s-<cluster>` agent (onboarding â†
 
 - the namespace,
 - the Service to connect to (or an explicit host),
-- optionally a Secret holding the password (and user),
+- optionally a Secret holding the password (and user). The Secret must carry the label `fallbck.io/allow-db-credentials: "true"`, and a job that uses one has to name a Service, not a host. The agent can read every Secret in the cluster, so this label is what keeps a database job from shipping any other Secret somewhere else,
 - optionally a tools-image override.
 
 Each run starts a dump pod in that namespace. The main container is the **engine's own image** (`postgres:<major>`, `mariadb:<major>`, `mysql:<major>`, `mongo:<major>`), and an init container drops the agent binary into it. The agent probes the server version to pick the tag, so `pg_dump` always matches. MongoDB can't be probed and uses `latest`. The dump spools to an emptyDir (`worker.db.spoolSizeLimit`) and uploads exactly like a [regular DB backup](databases.md#what-lands-on-pbs).
@@ -56,8 +56,9 @@ WAL/binlog chain state is kept per job in the `stateSecretName` Secret, so conti
 
 ## Security, the honest version
 
-- The ClusterRole reads **everything, Secrets included**. That's what a DR backup needs. It can also create pods, PVCs and VolumeSnapshots cluster-wide, because workers have to run in each volume's namespace.
-- Worker pods carry short-lived credentials (2h ticket, 6h token) in their spec and have no Kubernetes API access.
+- The ClusterRole reads **everything, Secrets included**. That's what a DR backup needs. It can also create pods, PVCs, VolumeSnapshots and Secrets cluster-wide, because workers have to run in each volume's namespace.
+- Worker pods get their short-lived credentials (2h ticket, 6h token) from a per-run Secret in their namespace, not from `Pod.spec`, and have no Kubernetes API access. The Secret is deleted with the pod.
+- A database job may only read Secrets labelled `fallbck.io/allow-db-credentials: "true"`, and only to reach a Service in the same namespace.
 
 ## Restore
 

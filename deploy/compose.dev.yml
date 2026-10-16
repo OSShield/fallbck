@@ -1,0 +1,10 @@
+# Development overlay: admin login switched off, no IdP needed. Never expose this.
+#
+#   docker compose -f docker-compose.yml -f compose.dev.yml up -d
+#   open http://localhost:8080
+
+services:
+  server:
+    command: ["--dev"]
+    environment:
+      - FALLBCK_AUTH_INSECURE_DISABLE=true

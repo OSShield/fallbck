@@ -70,6 +70,10 @@ func BackupDatabase(ctx context.Context, c *Clients, req DBBackupRequest) (*DBBa
 	defer cleanup.run()
 
 	progress("dumping " + req.BackupID)
+	if err := createEnvSecret(ctx, c, req.Namespace, name, labels, req.Worker.Env); err != nil {
+		return nil, err
+	}
+	cleanup.secret = name
 	pod := dbWorkerPod(name, req.Namespace, labels, req.Worker)
 	if _, err := c.Core.CoreV1().Pods(req.Namespace).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
 		return nil, fmt.Errorf("creating dump pod for %s: %w", req.BackupID, err)
@@ -124,11 +128,13 @@ func dbWorkerPod(name, ns string, labels map[string]string, w DBWorkerConfig) *c
 			spool.SizeLimit = &q
 		}
 	}
-	env := append([]corev1.EnvVar{
+	// Only the harmless fixed values live in Pod.spec; w.Env (credentials, ticket)
+	// comes from the per-run Secret named like the pod
+	env := []corev1.EnvVar{
 		{Name: EnvWorkerSpool, Value: spoolMount},
 		{Name: "HOME", Value: "/tmp"},
 		{Name: "TMPDIR", Value: "/tmp"},
-	}, w.Env...)
+	}
 	binary := binaryMount + "/fallbck-k8s-agent"
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Labels: labels},
@@ -150,6 +156,7 @@ func dbWorkerPod(name, ns string, labels map[string]string, w DBWorkerConfig) *c
 				Command:                  []string{binary},
 				Args:                     []string{"db-worker"},
 				Env:                      env,
+				EnvFrom:                  envFromSecret(name),
 				Resources:                resources,
 				SecurityContext:          secCtx,
 				TerminationMessagePolicy: corev1.TerminationMessageReadFile,

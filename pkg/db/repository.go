@@ -572,20 +572,20 @@ func (d *DB) CreateJob(ctx context.Context, job *BackupJob) error {
 	if err != nil {
 		return fmt.Errorf("failed to serialize exclude paths: %w", err)
 	}
-	cols, err := jobTypeColumns(job)
+	cols, err := d.jobTypeColumns(job)
 	if err != nil {
 		return err
 	}
 
 	query := `
-		INSERT INTO backup_jobs (id, name, agent_id, target_id, schedule_cron, backup_paths, exclude_paths, enabled, direct_pbs, created_at, updated_at, job_type, db_config, k8s_config, pve_config, docker_config, m365_config, m365_tenant_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+		INSERT INTO backup_jobs (id, name, agent_id, target_id, schedule_cron, backup_paths, exclude_paths, enabled, direct_pbs, created_at, updated_at, job_type, db_config, k8s_config, pve_config, docker_config, m365_config, m365_tenant_id, backup_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
 		RETURNING id
 	`
 	return d.Pool.QueryRow(ctx, query,
 		job.ID, job.Name, job.AgentID, job.TargetID, job.ScheduleCron,
 		backupPathsJSON, excludePathsJSON, job.Enabled, job.DirectPBS,
-		job.CreatedAt, job.UpdatedAt, cols.jobType, cols.db, cols.k8s, cols.pve, cols.docker, cols.m365, cols.tenantID,
+		job.CreatedAt, job.UpdatedAt, cols.jobType, cols.db, cols.k8s, cols.pve, cols.docker, cols.m365, cols.tenantID, job.BackupID,
 	).Scan(&job.ID)
 }
 
@@ -593,7 +593,7 @@ func (d *DB) GetJobByID(ctx context.Context, id uuid.UUID) (*BackupJob, error) {
 	query := `
 		SELECT j.id, j.name, j.agent_id, j.target_id, j.schedule_cron, j.backup_paths, j.exclude_paths,
 		       j.enabled, j.direct_pbs, j.created_at, j.updated_at,
-		       j.job_type, j.db_config, j.k8s_config, j.pve_config, j.docker_config, j.m365_config,
+		       j.job_type, j.db_config, j.k8s_config, j.pve_config, j.docker_config, j.m365_config, j.backup_id,
 		       a.hostname as agent_name, t.name as target_name
 		FROM backup_jobs j
 		JOIN agents a ON j.agent_id = a.id
@@ -607,7 +607,7 @@ func (d *DB) GetJobByID(ctx context.Context, id uuid.UUID) (*BackupJob, error) {
 		&j.ID, &j.Name, &j.AgentID, &j.TargetID, &j.ScheduleCron,
 		&backupPathsRaw, &excludePathsRaw,
 		&j.Enabled, &j.DirectPBS, &j.CreatedAt, &j.UpdatedAt,
-		&j.JobType, &dbConfigRaw, &k8sConfigRaw, &pveConfigRaw, &dockerConfigRaw, &m365ConfigRaw,
+		&j.JobType, &dbConfigRaw, &k8sConfigRaw, &pveConfigRaw, &dockerConfigRaw, &m365ConfigRaw, &j.BackupID,
 		&j.AgentName, &j.TargetName,
 	)
 	if err != nil {
@@ -619,7 +619,9 @@ func (d *DB) GetJobByID(ctx context.Context, id uuid.UUID) (*BackupJob, error) {
 
 	_ = json.Unmarshal(backupPathsRaw, &j.BackupPaths)
 	_ = json.Unmarshal(excludePathsRaw, &j.ExcludePaths)
-	j.DBConfig = parseDBConfig(dbConfigRaw)
+	if j.DBConfig, err = d.parseDBConfig(dbConfigRaw); err != nil {
+		return nil, err
+	}
 	j.K8sConfig = parseK8sConfig(j.JobType, k8sConfigRaw)
 	j.PVEConfig = parsePVEConfig(j.JobType, pveConfigRaw)
 	j.DockerConfig = parseDockerConfig(j.JobType, dockerConfigRaw)
@@ -632,7 +634,7 @@ func (d *DB) ListJobs(ctx context.Context) ([]*BackupJob, error) {
 	query := `
 		SELECT j.id, j.name, j.agent_id, j.target_id, j.schedule_cron, j.backup_paths, j.exclude_paths,
 		       j.enabled, j.direct_pbs, j.created_at, j.updated_at,
-		       j.job_type, j.db_config, j.k8s_config, j.pve_config, j.docker_config, j.m365_config,
+		       j.job_type, j.db_config, j.k8s_config, j.pve_config, j.docker_config, j.m365_config, j.backup_id,
 		       a.hostname as agent_name, t.name as target_name
 		FROM backup_jobs j
 		JOIN agents a ON j.agent_id = a.id
@@ -653,14 +655,16 @@ func (d *DB) ListJobs(ctx context.Context) ([]*BackupJob, error) {
 			&j.ID, &j.Name, &j.AgentID, &j.TargetID, &j.ScheduleCron,
 			&backupPathsRaw, &excludePathsRaw,
 			&j.Enabled, &j.DirectPBS, &j.CreatedAt, &j.UpdatedAt,
-			&j.JobType, &dbConfigRaw, &k8sConfigRaw, &pveConfigRaw, &dockerConfigRaw, &m365ConfigRaw,
+			&j.JobType, &dbConfigRaw, &k8sConfigRaw, &pveConfigRaw, &dockerConfigRaw, &m365ConfigRaw, &j.BackupID,
 			&j.AgentName, &j.TargetName,
 		); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal(backupPathsRaw, &j.BackupPaths)
 		_ = json.Unmarshal(excludePathsRaw, &j.ExcludePaths)
-		j.DBConfig = parseDBConfig(dbConfigRaw)
+		if j.DBConfig, err = d.parseDBConfig(dbConfigRaw); err != nil {
+			return nil, err
+		}
 		j.K8sConfig = parseK8sConfig(j.JobType, k8sConfigRaw)
 		j.PVEConfig = parsePVEConfig(j.JobType, pveConfigRaw)
 		j.DockerConfig = parseDockerConfig(j.JobType, dockerConfigRaw)
@@ -680,7 +684,7 @@ type jobColumns struct {
 
 // jobTypeColumns normalises the job type and serialises the configuration of that
 // type; the other configuration columns are written as empty objects
-func jobTypeColumns(job *BackupJob) (jobColumns, error) {
+func (d *DB) jobTypeColumns(job *BackupJob) (jobColumns, error) {
 	jobType, ok := NormalizeJobType(job.JobType)
 	if !ok {
 		return jobColumns{}, fmt.Errorf("unknown job type %q", job.JobType)
@@ -698,7 +702,9 @@ func jobTypeColumns(job *BackupJob) (jobColumns, error) {
 	var err error
 	switch {
 	case jobType == JobTypeDatabase && job.DBConfig != nil:
-		cols.db, err = marshal("database", job.DBConfig)
+		sealed := job.DBConfig.Clone()
+		sealed.Password = d.seal(sealed.Password)
+		cols.db, err = marshal("database", sealed)
 	case jobType == JobTypeKubernetes && job.K8sConfig != nil:
 		cols.k8s, err = marshal("kubernetes", job.K8sConfig)
 	case jobType == JobTypePVE && job.PVEConfig != nil:
@@ -763,16 +769,21 @@ func parseK8sConfig(jobType string, raw []byte) *k8sbackup.Spec {
 	return &spec
 }
 
-// parseDBConfig decodes the db_config column; an empty object yields nil
-func parseDBConfig(raw []byte) *dbbackup.Spec {
+// parseDBConfig decodes the db_config column and opens the sealed password; an empty
+// object yields nil
+func (d *DB) parseDBConfig(raw []byte) (*dbbackup.Spec, error) {
 	if len(raw) == 0 {
-		return nil
+		return nil, nil
 	}
 	var spec dbbackup.Spec
 	if err := json.Unmarshal(raw, &spec); err != nil || spec.Engine == "" {
-		return nil
+		return nil, nil
 	}
-	return &spec
+	var err error
+	if spec.Password, err = d.open(spec.Password); err != nil {
+		return nil, fmt.Errorf("database job password: %w", err)
+	}
+	return &spec, nil
 }
 
 func (d *DB) DeleteJob(ctx context.Context, id uuid.UUID) error {

@@ -3,6 +3,8 @@ package db
 import (
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 func TestRunDurationString(t *testing.T) {
@@ -42,6 +44,25 @@ func TestEnrollmentTokenStatus(t *testing.T) {
 	for _, c := range cases {
 		if got := c.tok.Status(); got != c.want {
 			t.Errorf("Status(%+v) = %q, want %q", c.tok, got, c.want)
+		}
+	}
+}
+
+func TestEffectiveBackupID(t *testing.T) {
+	id := uuid.MustParse("11111111-2222-3333-4444-555555555555")
+	cases := map[string]struct {
+		job  BackupJob
+		want string
+	}{
+		"explicit":   {BackupJob{AgentID: id, JobType: JobTypeFilesystem, BackupID: "web-01"}, "web-01"},
+		"filesystem": {BackupJob{AgentID: id, JobType: JobTypeFilesystem}, id.String()},
+		"kubernetes": {BackupJob{AgentID: id, JobType: JobTypeKubernetes}, id.String()},
+		"docker":     {BackupJob{AgentID: id, JobType: JobTypeDocker}, id.String() + "-docker"},
+		"pve":        {BackupJob{AgentID: id, JobType: JobTypePVE}, id.String() + "-pve"},
+	}
+	for name, c := range cases {
+		if got := c.job.EffectiveBackupID(); got != c.want {
+			t.Errorf("%s: got %q, want %q", name, got, c.want)
 		}
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/osshield/fallbck/pkg/auth"
@@ -34,6 +35,17 @@ func (s *ServerAPI) validateJob(ctx context.Context, job *db.BackupJob, existing
 	job.JobType = jobType
 	if err := db.ValidateCron(job.ScheduleCron); err != nil {
 		return err.Error(), err
+	}
+	job.BackupID = strings.TrimSpace(job.BackupID)
+	switch jobType {
+	case db.JobTypeDatabase, db.JobTypeM365:
+		job.BackupID = "" // these carry the group inside their own config
+	default:
+		if job.BackupID == "" {
+			job.BackupID = job.EffectiveBackupID()
+		} else if !dbbackup.ValidBackupID(job.BackupID) {
+			return "backup_id may only contain letters, digits, '.', '_' and '-'", errors.New("bad backup_id")
+		}
 	}
 
 	// The agent type decides which shape a database job may take (a kubernetes agent

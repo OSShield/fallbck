@@ -154,6 +154,7 @@ func (s *ServerAPI) HandleSubTicket(w http.ResponseWriter, r *http.Request) {
 		BackupType: claims.BackupType,
 		BackupID:   group,
 		BackupTime: backupTime,
+		Issued:     claims.Issued,
 	}, volumeTicketTTL)
 	if err != nil {
 		slog.Error("Failed to mint sub-ticket", "error", err)
@@ -171,7 +172,7 @@ func (s *ServerAPI) HandleWorkerToken(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	token, expires, err := s.TokenManager.CreateAgentToken(agent.AgentID, agent.TaskQueue, agent.Version, workerTokenTTL)
+	token, expires, err := s.TokenManager.CreateWorkerToken(agent.AgentID, agent.TaskQueue, agent.Version, workerTokenTTL)
 	if err != nil {
 		slog.Error("Failed to mint worker token", "error", err)
 		s.writeError(w, http.StatusInternalServerError, "failed to mint worker token")

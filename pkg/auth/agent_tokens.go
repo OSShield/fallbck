@@ -20,6 +20,9 @@ const DefaultAgentTokenTTL = 365 * 24 * time.Hour
 type AgentTokenClaims struct {
 	TaskQueue string `json:"tq"`
 	Version   int    `json:"ver"`
+	// Worker marks the short-lived secondary token of a kubernetes run's worker pods;
+	// it cannot be rotated into a long-lived one
+	Worker bool `json:"wrk,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -30,12 +33,22 @@ func (c *AgentTokenClaims) AgentID() (uuid.UUID, error) {
 
 // CreateAgentToken mints a long-lived bearer token for an enrolled agent
 func (tm *TokenManager) CreateAgentToken(agentID uuid.UUID, taskQueue string, version int, ttl time.Duration) (string, time.Time, error) {
+	return tm.createAgentToken(agentID, taskQueue, version, ttl, false)
+}
+
+// CreateWorkerToken mints a short-lived worker token (same agent identity, not rotatable)
+func (tm *TokenManager) CreateWorkerToken(agentID uuid.UUID, taskQueue string, version int, ttl time.Duration) (string, time.Time, error) {
+	return tm.createAgentToken(agentID, taskQueue, version, ttl, true)
+}
+
+func (tm *TokenManager) createAgentToken(agentID uuid.UUID, taskQueue string, version int, ttl time.Duration, worker bool) (string, time.Time, error) {
 	if ttl <= 0 {
 		ttl = DefaultAgentTokenTTL
 	}
 	claims := AgentTokenClaims{
 		TaskQueue:        taskQueue,
 		Version:          version,
+		Worker:           worker,
 		RegisteredClaims: registered(agentID.String(), AudienceAgent, ttl),
 	}
 	signed, err := tm.sign(claims)
@@ -66,6 +79,7 @@ type AgentClaims struct {
 	AgentID   uuid.UUID
 	TaskQueue string
 	Version   int
+	Worker    bool
 	ExpiresAt time.Time
 }
 
@@ -136,6 +150,7 @@ func (v *AgentVerifier) Verify(ctx context.Context, bearer string) (*AgentClaims
 		AgentID:   agentID,
 		TaskQueue: claims.TaskQueue,
 		Version:   claims.Version,
+		Worker:    claims.Worker,
 		ExpiresAt: claims.ExpiresAt.Time,
 	}, nil
 }

@@ -169,7 +169,8 @@ func TestUIRequiresAdminWhenSecured(t *testing.T) {
 }
 
 func TestSafeNext(t *testing.T) {
-	cases := map[string]string{"": "/dashboard", "/jobs": "/jobs", "//evil.com": "/dashboard", "https://evil.com": "/dashboard", "/\\evil": "/dashboard"}
+	cases := map[string]string{"": "/dashboard", "/jobs": "/jobs", "//evil.com": "/dashboard", "https://evil.com": "/dashboard", "/\\evil": "/dashboard",
+		"/%09/evil.com": "/dashboard", "/\t/evil.com": "/dashboard", "/%5Cevil.com": "/dashboard", "//evil.com/%2F..": "/dashboard", "/jobs?x=1#frag": "/jobs?x=1#frag"}
 	for in, want := range cases {
 		if got := safeNext(in); got != want {
 			t.Errorf("safeNext(%q) = %q, want %q", in, got, want)

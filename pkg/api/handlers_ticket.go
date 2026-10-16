@@ -11,6 +11,10 @@ import (
 // refreshedTicketTTL matches the session ticket lifetime issued by PrepareBackupSession
 const refreshedTicketTTL = 2 * time.Hour
 
+// maxTicketLifetime bounds how long a run's tickets can be refreshed after the first
+// one was minted
+const maxTicketLifetime = 24 * time.Hour
+
 // TicketRefreshResponse carries a re-issued backup ticket and its snapshot timestamp
 type TicketRefreshResponse struct {
 	Ticket     string `json:"ticket"`
@@ -55,6 +59,19 @@ func (s *ServerAPI) HandleRefreshTicket(w http.ResponseWriter, r *http.Request) 
 		s.writeError(w, http.StatusForbidden, "backup ticket was not issued to this agent")
 		return
 	}
+	if claims.Issued > 0 && time.Since(time.Unix(claims.Issued, 0)) > maxTicketLifetime {
+		s.writeError(w, http.StatusForbidden, "backup ticket is too old to refresh; start a new run")
+		return
+	}
+	// The job may have been moved to another agent or target since the run started
+	if s.DB != nil {
+		job, err := s.DB.GetJobByID(r.Context(), claims.JobID)
+		if err != nil || job.AgentID != claims.AgentID || job.TargetID != claims.TargetID {
+			slog.Warn("Ticket refresh for a job that no longer belongs to this agent and target", "agent_id", agent.AgentID, "job_id", claims.JobID)
+			s.writeError(w, http.StatusForbidden, "job no longer belongs to this agent and target")
+			return
+		}
+	}
 	backupTime := freshBackupTime(claims.BackupTime)
 	fresh, err := s.TokenManager.CreateBackupTicket(auth.BackupTicketClaims{
 		JobID:      claims.JobID,
@@ -65,6 +82,7 @@ func (s *ServerAPI) HandleRefreshTicket(w http.ResponseWriter, r *http.Request) 
 		BackupType: claims.BackupType,
 		BackupID:   claims.BackupID,
 		BackupTime: backupTime,
+		Issued:     claims.Issued,
 	}, refreshedTicketTTL)
 	if err != nil {
 		slog.Error("Failed to re-issue backup ticket", "error", err)

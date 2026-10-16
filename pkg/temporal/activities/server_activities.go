@@ -87,7 +87,7 @@ func (s *ServerActivities) PrepareBackupSession(ctx context.Context, jobID uuid.
 		Datastore:  target.Datastore,
 		Namespace:  target.Namespace,
 		BackupType: "host",
-		BackupID:   agent.Hostname,
+		BackupID:   job.EffectiveBackupID(),
 		BackupTime: now.Unix(),
 	}
 	jobType, _ := db.NormalizeJobType(job.JobType)
@@ -131,8 +131,7 @@ func (s *ServerActivities) PrepareBackupSession(ctx context.Context, jobID uuid.
 			dockerSpec = &dockerbackup.Spec{}
 		}
 		// Definitions and volumes live in their own group next to the host's
-		// filesystem backups
-		claims.BackupID = agent.Hostname + "-docker"
+		// filesystem backups (job.EffectiveBackupID adds the -docker suffix)
 	}
 	if jobType == db.JobTypePVE {
 		pveSpec = job.PVEConfig
@@ -140,8 +139,7 @@ func (s *ServerActivities) PrepareBackupSession(ctx context.Context, jobID uuid.
 			pveSpec = &pvebackup.Spec{}
 		}
 		// The host configuration lives in its own group next to the host's filesystem
-		// backups
-		claims.BackupID = agent.Hostname + "-pve"
+		// backups (job.EffectiveBackupID adds the -pve suffix)
 	}
 	if jobType == db.JobTypeKubernetes {
 		if job.K8sConfig == nil {
@@ -149,7 +147,7 @@ func (s *ServerActivities) PrepareBackupSession(ctx context.Context, jobID uuid.
 		}
 		k8sSpec = job.K8sConfig
 		// Kubernetes snapshots use the PBS "ct" (container) backup type; the group id
-		// stays k8s-<cluster> (agent hostname), volumes append -pvc-<ns>-<name>
+		// is the job's backup_id, volumes append -pvc-<ns>-<name>
 		claims.BackupType = "ct"
 	}
 	if jobType == db.JobTypeDatabase {
@@ -214,6 +212,7 @@ func (s *ServerActivities) PrepareBackupSession(ctx context.Context, jobID uuid.
 		JobType:            jobType,
 		AgentType:          agentType,
 		JobName:            job.Name,
+		AgentHostname:      agent.Hostname,
 		DBConfig:           sessionSpec,
 		DBPasswordOnServer: passwordOnServer,
 		K8sConfig:          k8sSpec,
