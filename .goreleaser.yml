@@ -318,9 +318,10 @@ uploads:
     exts:
       - deb
     mode: archive
-    username: "osshield_pkg"
     target: https://deb.osshield.eu/upload?dist=all&component=main
     custom_artifact_name: true
+    custom_headers:
+      Authorization: "Bearer {{ .Env.REPO_TOKEN }}"
 
   - name: "alpine"
     ids:
@@ -331,9 +332,10 @@ uploads:
     exts:
       - apk
     mode: archive
-    username: "osshield_pkg"
     target: https://alpine.osshield.eu/upload?repo=all
     custom_artifact_name: true
+    custom_headers:
+      Authorization: "Bearer {{ .Env.REPO_TOKEN }}"
 
   - name: "rhel"
     ids:
@@ -344,9 +346,10 @@ uploads:
     exts:
       - rpm
     mode: archive
-    username: "osshield_pkg"
     target: https://rpm.osshield.eu/upload?repo=all
     custom_artifact_name: true
+    custom_headers:
+      Authorization: "Bearer {{ .Env.REPO_TOKEN }}"
 
 release:
   disable: "{{ eq (envOrDefault \"GITHUB_RUN_ID\" \"\") \"\" }}"

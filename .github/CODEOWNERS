@@ -1,0 +1,11 @@
+# Changes to the pipeline, packaging and the security core always need a maintainer
+# review (the main branch ruleset requires code owner approval for these paths).
+/.github/              @scheibling
+/deploy/               @scheibling
+/Dockerfile.*          @scheibling
+/.goreleaser.yml       @scheibling
+/pkg/releasesig/       @scheibling
+/pkg/auth/             @scheibling
+/pkg/secrets/          @scheibling
+/pkg/api/handlers_encryption.go  @scheibling
+/pkg/db/migrations/    @scheibling
