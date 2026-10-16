@@ -16,7 +16,7 @@ require (
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/microsoft/go-mssqldb v1.11.2
 	github.com/mxk/go-vss v1.2.1
-	github.com/osshield/gopbs v0.3.0-rc.3
+	github.com/osshield/gopbs v0.4.0-alpha.1
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/stretchr/testify v1.12.1
 	github.com/temporalio/ui-server/v2 v2.55.0

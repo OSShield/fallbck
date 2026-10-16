@@ -157,7 +157,7 @@ func Run(ctx context.Context, opts Options) (*temporal.BackupExecutionResult, er
 			excludes[i] = strings.ReplaceAll(e, `\`, "/")
 		}
 	}
-	ref := pbs.SnapshotRef{Type: s.BackupType, ID: s.BackupID}
+	ref := pbs.SnapshotRef{Type: s.BackupType, ID: s.BackupID, Notes: s.AgentHostname}
 	if s.BackupTime > 0 {
 		ref.Time = time.Unix(s.BackupTime, 0).UTC()
 	}

@@ -77,7 +77,30 @@ func (d *DB) SealLegacySecrets(ctx context.Context) (int, error) {
 			return 0, err
 		}
 	}
-	return len(pending), nil
+	// Database job passwords lived in clear inside db_config before 0.15
+	rows, err = d.Pool.Query(ctx, `SELECT id, db_config->>'password' FROM backup_jobs WHERE job_type = 'database' AND COALESCE(db_config->>'password', '') <> '' AND db_config->>'password' NOT LIKE 'v1:%'`)
+	if err != nil {
+		return 0, err
+	}
+	var jobs []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.token); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		jobs = append(jobs, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	for _, r := range jobs {
+		if _, err := d.Pool.Exec(ctx, `UPDATE backup_jobs SET db_config = jsonb_set(db_config, '{password}', to_jsonb($2::text)) WHERE id = $1`, r.id, d.seal(r.token)); err != nil {
+			return 0, err
+		}
+	}
+	return len(pending) + len(jobs), nil
 }
 
 // New creates a new database connection pool and applies migrations if enabled

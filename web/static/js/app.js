@@ -403,6 +403,7 @@ function setJobTypeIn(form, type) {
   show('job-docker-fields', isDocker);
   show('job-m365-fields', isM365);
   show('job-k8s-fields', isK8s);
+  show('job-backup-group', !isDB && !isM365); // those two carry the group in their own config
   filterJobAgents(form, type);
   if (form.elements['db_engine']) setDBEngine(form.elements['db_engine'].value, form);
   else updateDBTarget(form);
@@ -615,6 +616,7 @@ function loadJobIntoForm(form, job) {
   form.elements['agent_id'].value = job.agent_id || '';
   updateDBTarget(form);
   form.elements['schedule_cron'].value = job.schedule_cron || '';
+  form.elements['backup_id'].value = job.backup_id || '';
   form.elements['direct_pbs'].checked = !!job.direct_pbs;
   form.elements['enabled'].checked = !!job.enabled;
 }
@@ -633,6 +635,7 @@ function buildJobPayload(form) {
     exclude_paths: formLines(fd, 'exclude_paths'),
     enabled: fd.get('enabled') === 'on',
     direct_pbs: fd.get('direct_pbs') === 'on',
+    backup_id: (fd.get('backup_id') || '').trim(),
     job_type: (typeEl ? typeEl.value : form.dataset.jobType) || 'filesystem'
   };
 
@@ -854,6 +857,7 @@ function loadK8sJobIntoForm(form, job) {
   form.elements['agent_id'].value = job.agent_id || '';
   form.elements['target_id'].value = job.target_id || '';
   form.elements['schedule_cron'].value = job.schedule_cron || '';
+  form.elements['backup_id'].value = job.backup_id || '';
   form.elements['direct_pbs'].checked = !!job.direct_pbs;
   form.elements['enabled'].checked = !!job.enabled;
   const kc = job.k8s_config || {};
@@ -898,6 +902,7 @@ function buildK8sPayload(form) {
     exclude_paths: [],
     enabled: fd.get('enabled') === 'on',
     direct_pbs: fd.get('direct_pbs') === 'on',
+    backup_id: (fd.get('backup_id') || '').trim(),
     k8s_config: {
       namespaces: { include: formLines(fd, 'k8s_ns_include'), exclude: formLines(fd, 'k8s_ns_exclude') },
       label_selector: fd.get('k8s_label_selector') || '',

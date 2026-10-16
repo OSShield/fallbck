@@ -12,15 +12,33 @@ import (
 	"github.com/osshield/fallbck/pkg/db"
 )
 
-// HandleRotateAgentToken issues a fresh bearer token to an authenticated agent (same
-// token version, so the old token stays valid until it expires or the agent is revoked).
+// HandleRotateAgentToken issues a fresh bearer token to an authenticated agent. The
+// token version is bumped, so the presented token (and every other token of that
+// agent, worker tokens included) stops validating at once. Worker tokens are
+// short-lived on purpose and may not rotate themselves into a long-lived one.
 func (s *ServerAPI) HandleRotateAgentToken(w http.ResponseWriter, r *http.Request) {
 	claims := auth.AgentFrom(r.Context())
 	if claims == nil {
 		s.writeError(w, http.StatusUnauthorized, "agent token required")
 		return
 	}
-	token, expires, err := s.TokenManager.CreateAgentToken(claims.AgentID, claims.TaskQueue, claims.Version, s.Config.AgentTokens.TTL)
+	if claims.Worker {
+		s.writeError(w, http.StatusForbidden, "worker tokens cannot be rotated")
+		return
+	}
+	version := claims.Version
+	if s.DB != nil {
+		v, err := s.DB.BumpAgentTokenVersion(r.Context(), claims.AgentID)
+		if err != nil {
+			s.writeError(w, http.StatusInternalServerError, "Failed to issue agent token")
+			return
+		}
+		version = v
+		if s.Verifier != nil {
+			s.Verifier.Invalidate(claims.AgentID)
+		}
+	}
+	token, expires, err := s.TokenManager.CreateAgentToken(claims.AgentID, claims.TaskQueue, version, s.Config.AgentTokens.TTL)
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, "Failed to issue agent token")
 		return

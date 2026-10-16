@@ -34,7 +34,7 @@ dist/
 
 *.local.yaml
 *.local.md
-# .local/
+.local/
 fallbck-k8s-agent*.tgz
 
 bin/

@@ -194,6 +194,15 @@ func TestRefreshTicketIssuesNewSnapshotTime(t *testing.T) {
 	if rr := call(&auth.AgentClaims{AgentID: uuid.New()}, ticket); rr.Code != http.StatusForbidden {
 		t.Errorf("another agent's ticket: expected 403, got %d", rr.Code)
 	}
+	if claims.Issued == 0 {
+		t.Error("refreshed ticket lost its issue time")
+	}
+	old := original
+	old.Issued = time.Now().Add(-25 * time.Hour).Unix()
+	oldTicket, _ := tm.CreateBackupTicket(old, time.Hour)
+	if rr := call(&auth.AgentClaims{AgentID: agentID}, oldTicket); rr.Code != http.StatusForbidden {
+		t.Errorf("day-old run: expected 403, got %d", rr.Code)
+	}
 	if rr := call(&auth.AgentClaims{AgentID: agentID}, ""); rr.Code != http.StatusBadRequest {
 		t.Errorf("missing ticket: expected 400, got %d", rr.Code)
 	}

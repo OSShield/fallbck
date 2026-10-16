@@ -59,6 +59,9 @@ type BackupTicketClaims struct {
 	BackupType string    `json:"backup_type"` // e.g. "host"
 	BackupID   string    `json:"backup_id"`   // e.g. "agent-123"
 	BackupTime int64     `json:"backup_time"` // unix timestamp
+	// Issued is when the run's first ticket was minted; refreshes and sub-tickets carry
+	// it over so a run cannot keep itself alive forever
+	Issued int64 `json:"issued,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -112,6 +115,9 @@ func (tm *TokenManager) parse(tokenString, audience string, claims jwt.Claims) e
 
 // CreateBackupTicket generates a signed JWT ticket valid for the specified duration (e.g. 2 hours)
 func (tm *TokenManager) CreateBackupTicket(claims BackupTicketClaims, ttl time.Duration) (string, error) {
+	if claims.Issued == 0 {
+		claims.Issued = time.Now().Unix()
+	}
 	claims.RegisteredClaims = registered(claims.AgentID.String(), AudienceBackupTicket, ttl)
 	signed, err := tm.sign(claims)
 	if err != nil {

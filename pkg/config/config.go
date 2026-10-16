@@ -133,8 +133,10 @@ type ServerConfig struct {
 	// TrustedProxies are the CIDRs of reverse proxies whose X-Forwarded-For entries are
 	// believed when determining a client's IP (default: loopback and private ranges)
 	TrustedProxies []string `yaml:"trusted_proxies" json:"trusted_proxies"`
-	JWTSecret      string   `yaml:"jwt_secret" json:"jwt_secret"`
-	DataDir        string   `yaml:"data_dir" json:"data_dir"`
+	// JWTSecret signs sessions, agent tokens and tickets; empty = generated into
+	// <data_dir>/jwt.secret on first start
+	JWTSecret string `yaml:"jwt_secret" json:"jwt_secret"`
+	DataDir   string `yaml:"data_dir" json:"data_dir"`
 	// AgentCABundlePath optionally points at a PEM bundle agents should trust for the
 	// public URL (private CAs); it is handed out at enrollment
 	AgentCABundlePath string `yaml:"agent_ca_bundle_path" json:"agent_ca_bundle_path"`
@@ -159,6 +161,15 @@ type SecurityConfig struct {
 	// MasterKey is the key itself (64 hex characters) for container deployments
 	// (FALLBCK_MASTER_KEY); it takes precedence over the file
 	MasterKey string `yaml:"master_key,omitempty" json:"-"`
+}
+
+// placeholderJWTSecret was the built-in default before 0.15; anyone with the source
+// could mint tokens for an instance still using it
+const placeholderJWTSecret = "change-me-in-production-fallbck-secret-key-32bytes"
+
+// EffectiveJWTSecretFile is where a generated JWT secret lives
+func (c *ServerConfig) EffectiveJWTSecretFile() string {
+	return filepath.Join(c.DataDir, "jwt.secret")
 }
 
 // EffectiveMasterKeyFile is the configured path or the default under the data directory
@@ -232,8 +243,7 @@ func DefaultServerConfig() *ServerConfig {
 			"127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
 			"::1/128", "fc00::/7",
 		},
-		JWTSecret: "change-me-in-production-fallbck-secret-key-32bytes",
-		DataDir:   "/var/lib/fallbck/server",
+		DataDir: "/var/lib/fallbck/server",
 		Auth: AuthConfig{
 			SessionTTL: 12 * time.Hour,
 		},
@@ -389,8 +399,11 @@ func (c *ServerConfig) Validate(dev bool) error {
 			return fmt.Errorf("trusted_proxies: %q is not a CIDR: %v", p, err)
 		}
 	}
-	if len(c.JWTSecret) < 32 {
-		return errors.New("jwt_secret must be at least 32 characters")
+	if c.JWTSecret != "" && len(c.JWTSecret) < 32 {
+		return errors.New("jwt_secret must be at least 32 characters (or empty to generate one)")
+	}
+	if c.JWTSecret == placeholderJWTSecret {
+		return errors.New("jwt_secret is the placeholder from older releases; remove it (a secret is then generated) or set your own")
 	}
 	if c.Timezone != "" {
 		if _, err := time.LoadLocation(c.Timezone); err != nil {
