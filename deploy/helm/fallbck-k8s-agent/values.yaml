@@ -26,8 +26,33 @@ stateSecretName: fallbck-k8s-agent-state
 
 image:
   repository: cr.osshield.eu/fallbck/k8s-agent
-  tag: latest
-  pullPolicy: Always
+  # Empty = the chart's appVersion (the release this chart shipped with)
+  tag: ""
+  pullPolicy: IfNotPresent
+
+# Pod/container hardening for the agent itself (workers have their own, see worker.*)
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10004
+  runAsGroup: 10004
+  fsGroup: 10004
+  seccompProfile:
+    type: RuntimeDefault
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+# NetworkPolicy for the agent pod: nothing may connect to it; outbound is limited to
+# DNS, the API server and the CIDRs you list (the FallBCK server, and PBS for direct
+# jobs). Off by default because the API server and server addresses differ per cluster.
+networkPolicy:
+  enabled: false
+  # Extra egress destinations, as NetworkPolicy egress rules (verbatim)
+  egress: []
+  #  - to: [{ipBlock: {cidr: 10.0.0.5/32}}]
+  #    ports: [{port: 443, protocol: TCP}]
 
 # Worker pods (one per volume, run in the volume's namespace)
 worker:

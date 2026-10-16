@@ -1,0 +1,33 @@
+{{- if .Values.networkPolicy.enabled }}
+# The agent only dials out (server, API server, DNS); nothing needs to reach it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "fallbck-k8s-agent.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "fallbck-k8s-agent.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Chart.Name }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    # DNS
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Kubernetes API (the endpoint IP is not known to the chart; most CNIs need it listed
+    # under networkPolicy.egress, this rule covers clusters that expose it on 443/6443)
+    - ports:
+        - port: 443
+          protocol: TCP
+        - port: 6443
+          protocol: TCP
+    {{- with .Values.networkPolicy.egress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}

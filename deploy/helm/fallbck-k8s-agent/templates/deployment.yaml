@@ -18,13 +18,20 @@ spec:
       labels: {{- include "fallbck-k8s-agent.labels" . | nindent 8 }}
     spec:
       serviceAccountName: {{ include "fallbck-k8s-agent.name" . }}
+      automountServiceAccountToken: true
+      {{- with .Values.podSecurityContext }}
+      securityContext: {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- with .Values.priorityClassName }}
       priorityClassName: {{ . }}
       {{- end }}
       containers:
         - name: agent
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.securityContext }}
+          securityContext: {{- toYaml . | nindent 12 }}
+          {{- end }}
           args: ["run"]
           env:
             - name: FALLBCK_AGENT_SERVER_URL
@@ -85,12 +92,16 @@ spec:
           volumeMounts:
             - name: spool
               mountPath: /var/lib/fallbck/k8s-agent
+            - name: tmp
+              mountPath: /tmp
             {{- if .Values.server.caCert }}
             - name: server-ca
               mountPath: /etc/fallbck
               readOnly: true
             {{- end }}
       volumes:
+        - name: tmp
+          emptyDir: {}
         - name: spool
           {{- if .Values.spool.existingClaim }}
           persistentVolumeClaim:
