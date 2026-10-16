@@ -39,8 +39,11 @@ func TestDBStateSecretRoundTrip(t *testing.T) {
 
 func TestReadSecretCredentials(t *testing.T) {
 	core := k8sfake.NewSimpleClientset(&corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "pg-creds", Namespace: "clusterdb"},
+		ObjectMeta: metav1.ObjectMeta{Name: "pg-creds", Namespace: "clusterdb", Labels: map[string]string{CredentialsLabel: "true"}},
 		Data:       map[string][]byte{"password": []byte("s3cret"), "username": []byte("backup")},
+	}, &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "unlabelled", Namespace: "clusterdb"},
+		Data:       map[string][]byte{"password": []byte("s3cret")},
 	})
 	ctx := context.Background()
 	pw, user, err := ReadSecretCredentials(ctx, core, "clusterdb", "pg-creds", "password", "username")
@@ -56,5 +59,8 @@ func TestReadSecretCredentials(t *testing.T) {
 	}
 	if _, _, err := ReadSecretCredentials(ctx, core, "clusterdb", "nope", "password", ""); err == nil {
 		t.Error("missing secret must fail")
+	}
+	if _, _, err := ReadSecretCredentials(ctx, core, "clusterdb", "unlabelled", "password", ""); err == nil {
+		t.Error("secret without the opt-in label must fail")
 	}
 }
