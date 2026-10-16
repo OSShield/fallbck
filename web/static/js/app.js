@@ -134,8 +134,107 @@ function resetTargetForm(form) {
   if (hint) hint.innerText = 'Encrypted on the server. Agents never receive this token directly.';
   form.elements['tls_verify'].checked = true;
   form.elements['encryption_mode'].value = 'none';
+  loadKeyRingOptions(form, null);
   updateTargetEncryption(form, null);
 }
+
+// loadKeyRingOptions fills the key ring selector: a new ring, or any existing one
+async function loadKeyRingOptions(form, t) {
+  const sel = form.elements && form.elements['key_ring_id'];
+  if (!sel) return;
+  const current = t && t.key_ring_id ? t.key_ring_id : '';
+  sel.innerHTML = '<option value="">New key ring for this target</option>';
+  try {
+    const resp = await apiFetch('/api/v1/keyrings');
+    if (!resp.ok) return;
+    for (const ring of await resp.json()) {
+      const opt = document.createElement('option');
+      opt.value = ring.id;
+      const fp = ring.key_fingerprint ? ring.key_fingerprint.replace(/:/g, '').slice(0, 8) : 'no key';
+      opt.textContent = `${ring.name} (${fp}, ${ring.targets.length} target${ring.targets.length === 1 ? '' : 's'})`;
+      sel.appendChild(opt);
+    }
+  } finally {
+    sel.value = current;
+    if (sel.value !== current) sel.value = '';
+  }
+}
+
+// loadKeyRings renders the key rings table on the Targets page
+async function loadKeyRings() {
+  const body = document.getElementById('keyrings-body');
+  if (!body) return;
+  try {
+    const resp = await apiFetch('/api/v1/keyrings');
+    if (!resp.ok) throw new Error('Failed to load key rings');
+    const rings = await resp.json();
+    if (!rings.length) {
+      body.innerHTML = '<tr><td colspan="5" style="color: var(--text-dim);">No key rings yet. One is created when you enable encryption on a target.</td></tr>';
+      return;
+    }
+    body.innerHTML = rings.map(r => {
+      const fp = r.key_fingerprint ? `<span class="badge badge-success" title="${rdEsc(r.key_fingerprint)}">&#128274; ${rdEsc(r.key_fingerprint.slice(0, 11))}</span>` : '<span style="color: var(--text-dim);">none</span>';
+      const used = r.targets.length > 0;
+      return `<tr>
+        <td>${rdEsc(r.name)}</td>
+        <td>${fp}${r.key_created_at ? ` <span style="font-size: 11px; color: var(--text-muted);">${rdEsc(new Date(r.key_created_at).toLocaleDateString())}</span>` : ''}</td>
+        <td>${used ? rdEsc(r.targets.join(', ')) : '<span style="color: var(--text-dim);">unused</span>'}</td>
+        <td>${r.master_public_key ? 'RSA master key' : '<span style="color: var(--text-dim);">no</span>'}</td>
+        <td style="text-align: right; white-space: nowrap;">
+          <button class="btn btn-secondary btn-sm" onclick="exportKeyRing('${r.id}', '${rdEsc(r.name)}')">Export</button>
+          <button class="btn btn-secondary btn-sm" onclick="rotateKeyRing('${r.id}', '${rdEsc(r.name)}', ${r.targets.length})">Rotate</button>
+          ${used ? '' : `<button class="btn btn-danger btn-sm" onclick="deleteKeyRing('${r.id}', '${rdEsc(r.name)}')">Delete</button>`}
+        </td>
+      </tr>`;
+    }).join('');
+  } catch (err) {
+    body.innerHTML = `<tr><td colspan="5" style="color: var(--danger-text);">${rdEsc(err.message)}</td></tr>`;
+  }
+}
+
+async function exportKeyRing(id, name) {
+  const passphrase = prompt(`Passphrase for the exported key file of ring "${name}" (at least 5 characters):`);
+  if (passphrase === null) return;
+  if (passphrase.length < 5) { showToast('Choose a passphrase of at least 5 characters for the key file', 'error'); return; }
+  try {
+    const resp = await apiFetch(`/api/v1/keyrings/${id}/export`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ passphrase })
+    });
+    if (!resp.ok) { const e = await resp.json().catch(() => ({})); throw new Error(e.error || 'Export failed'); }
+    const cd = resp.headers.get('Content-Disposition') || '';
+    const m = cd.match(/filename="([^"]+)"/);
+    downloadBlob(await resp.blob(), m ? m[1] : `fallbck-${name}.key.json`);
+    showToast('Key file downloaded. Store it and its passphrase separately from the server.', 'success');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function rotateKeyRing(id, name, targetCount) {
+  if (!confirm(`Generate a new key for ring "${name}"?\n\nEvery target on it (${targetCount}) switches to the new key: new snapshots do not deduplicate against the old ones. The old key is kept for the snapshots written with it and can still be exported.`)) return;
+  try {
+    const resp = await apiFetch(`/api/v1/keyrings/${id}/rotate`, { method: 'POST' });
+    if (!resp.ok) { const e = await resp.json().catch(() => ({})); throw new Error(e.error || 'Rotation failed'); }
+    showToast('Key rotated. Export the new key now.', 'success');
+    loadKeyRings();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function deleteKeyRing(id, name) {
+  if (!confirm(`Delete key ring "${name}" and its keys?\n\nNothing uses it, but any snapshot ever written with one of its keys becomes unreadable unless you exported the key file.`)) return;
+  try {
+    const resp = await apiFetch(`/api/v1/keyrings/${id}`, { method: 'DELETE' });
+    if (!resp.ok) { const e = await resp.json().catch(() => ({})); throw new Error(e.error || 'Delete failed'); }
+    showToast('Key ring deleted', 'success');
+    loadKeyRings();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+document.addEventListener('DOMContentLoaded', loadKeyRings);
 
 // updateTargetEncryption shows the encryption options for the chosen mode and, for a
 // stored target, the active key with its export / rotate / import actions
@@ -158,7 +257,7 @@ function updateTargetEncryption(form, t) {
   else if (!hasKey) status.innerText = 'Encryption is turned on when you save; the key is generated then.';
   else {
     const created = t.key_created_at ? new Date(t.key_created_at).toLocaleString() : '';
-    status.innerHTML = `Active key <code style="font-family:var(--font-mono);font-size:11px;">${rdEsc(t.key_fingerprint)}</code>${created ? ' created ' + rdEsc(created) : ''}.` +
+    status.innerHTML = `Key ring <strong>${rdEsc(t.key_ring_name || '')}</strong>, active key <code style="font-family:var(--font-mono);font-size:11px;">${rdEsc(t.key_fingerprint)}</code>${created ? ' created ' + rdEsc(created) : ''}.` +
       (form.dataset.keyNotice ? `<div style="color:var(--danger-text);margin-top:6px;">${rdEsc(form.dataset.keyNotice)}</div>` : '');
   }
 }
@@ -199,7 +298,7 @@ async function exportTargetKey(form) {
 async function rotateTargetKey(form) {
   const t = form._target;
   if (!t || !t.id) return;
-  if (!confirm('Generate a new key for this target?\n\nNew snapshots use the new key and do not deduplicate against the old ones. The old key is kept for the snapshots written with it and can still be exported.')) return;
+  if (!confirm(`Generate a new key for ring "${t.key_ring_name || t.name}"?\n\nEvery target on the ring switches to the new key: new snapshots do not deduplicate against the old ones. The old key is kept for the snapshots written with it and can still be exported.`)) return;
   try {
     const resp = await apiFetch(`/api/v1/targets/${t.id}/encryption/rotate`, { method: 'POST' });
     if (!resp.ok) { const e = await resp.json().catch(() => ({})); throw new Error(e.error || 'Rotation failed'); }
@@ -254,6 +353,7 @@ function loadTargetIntoForm(form, t) {
   if (hint) hint.innerText = 'Leave blank to keep the stored token, or enter a new one to replace it.';
   form.elements['encryption_mode'].value = t.encryption_mode || 'none';
   form.elements['master_public_key'].value = t.master_public_key || '';
+  loadKeyRingOptions(form, t);
   form.dataset.keyNotice = '';
   updateTargetEncryption(form, t);
 }
@@ -271,6 +371,7 @@ function buildTargetPayload(form) {
     tls_verify: fd.get('tls_verify') === 'on',
     pxar_format: fd.get('pxar_format') || 'v1',
     encryption_mode: fd.get('encryption_mode') || 'none',
+    key_ring_id: fd.get('key_ring_id') || '',
     master_public_key: (fd.get('master_public_key') || '').trim()
   };
 }

@@ -168,11 +168,14 @@ type CreateTargetRequest struct {
 	Fingerprint string `json:"fingerprint"`
 	TLSVerify   bool   `json:"tls_verify"`
 	PxarFormat  string `json:"pxar_format"`
-	// EncryptionMode none | encrypt ("" = none on create, unchanged on update);
-	// enabling generates the target's key server-side
+	// EncryptionMode none | encrypt ("" = none on create, unchanged on update).
+	// KeyRingID attaches the target to an existing key ring (shared key, shared
+	// dedup); empty with encrypt creates a ring named after the target.
 	EncryptionMode string `json:"encryption_mode"`
-	// MasterPublicKey (RSA, PEM) wraps the encryption key into every snapshot for
-	// recovery; nil on update keeps the stored one, "" clears it
+	KeyRingID      string `json:"key_ring_id"`
+	// MasterPublicKey (RSA, PEM) is stored on the target's key ring and wraps the
+	// encryption key into every snapshot for recovery; nil keeps the stored one, ""
+	// clears it
 	MasterPublicKey *string `json:"master_public_key"`
 }
 

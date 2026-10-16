@@ -6,7 +6,9 @@ Turn on **Client-side encryption** on a PBS target (or `encryption_mode: encrypt
 - the manifest is signed,
 - PBS only ever sees ciphertext. You'll get the lock icon on the snapshot.
 
-There's one key per target, shared by every job and host writing to it, so dedup keeps working across them. Different targets never share chunks anyway, so a key per target doesn't cost you anything.
+Keys live on **key rings**. A target is attached to one ring and encrypts with the ring's active key, so every job and host writing to that target deduplicates against each other. Several targets can share a ring, and should when they're namespaces of the same datastore: PBS dedups per datastore, and an encrypted chunk's digest depends on the key, so two namespaces with different keys store the same file twice. Targets on different PBS servers or datastores never share chunks anyway, so give those their own rings.
+
+When you enable encryption on a target without picking a ring, you get a new ring named after the target. Pick an existing ring instead to share its key. Cloning a target keeps its ring.
 
 ## Where the key lives
 
@@ -35,9 +37,14 @@ Optionally paste an **RSA master public key** (2048 bits or more) on the target.
 
 ## Rotation, import, disabling
 
+All of these act on the ring, so they apply to every target attached to it.
+
 - **Rotate key** makes a new key. The old one is retired, not deleted, because the snapshots written with it still need it. It stays exportable by fingerprint. New snapshots won't dedup against old ones.
-- **Import key file** adopts a key from `proxmox-backup-client` or another FallBCK target. That's how a cloned target shares its source's key. A clone copies the master public key but starts out unencrypted.
-- **Disabling** encryption keeps the keys around, for the same reason.
+- **Import key file** adopts a key from `proxmox-backup-client` or another ring. To make two existing targets share a key, attach one to the other's ring instead; it's the same thing without the file.
+- **Disabling** encryption on a target keeps it attached to its ring, for the same reason. Re-enabling picks up where it left off.
+- **Deleting a ring** only works once no target uses it. It takes the ring's keys with it, so export first.
+
+The *Key rings* table on the Targets page lists every ring with its fingerprint and targets.
 
 You can turn encryption on for a target that already holds plaintext snapshots. Each host just starts a new chunk history. Every run records which key fingerprint it used (`key_fingerprint`, shown on the run page).
 

@@ -91,7 +91,7 @@ func (u *selfUpdater) canSelfUpdate() bool {
 		return false
 	}
 	f.Close()
-	os.Remove(f.Name())
+	os.Remove(f.Name()) //nolint:errcheck
 	return true
 }
 
@@ -125,7 +125,7 @@ func (u *selfUpdater) apply(ctx context.Context, upd *api.AgentUpdate) error {
 		return errors.New("server offers no signed release (older server); update by hand")
 	}
 	archive := u.exe + ".new.tar.gz"
-	defer os.Remove(archive)
+	defer os.Remove(archive) //nolint:errcheck
 	gotSHA, err := u.download(ctx, upd.ArchiveURL, archive)
 	if err != nil {
 		return err

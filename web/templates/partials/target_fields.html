@@ -51,11 +51,18 @@
     <option value="none" selected>Off — snapshots are stored as uploaded</option>
     <option value="encrypt">Encrypt on the agent (AES-256-GCM; PBS never sees plaintext)</option>
   </select>
-  <span class="form-text">One key per target, generated and kept on the server (sealed with its master key) and handed to agents per run. Export the key file after saving: without it, or the server database plus master key, the backups cannot be restored.</span>
+  <span class="form-text">The key lives on a key ring, generated and kept on the server (sealed with its master key) and handed to agents per run. Export the key file after saving: without it, or the server database plus master key, the backups cannot be restored.</span>
 </div>
 <div class="target-encryption-opts" hidden>
   <div class="form-group">
-    <label>Master public key for recovery (RSA, PEM, optional)</label>
+    <label>Key ring</label>
+    <select name="key_ring_id" class="form-control">
+      <option value="">New key ring for this target</option>
+    </select>
+    <span class="form-text">Targets on one ring share the key, so namespaces of the same datastore deduplicate against each other. Separate rings keep targets isolated. Switching an encrypted target to another ring starts a new chunk history.</span>
+  </div>
+  <div class="form-group">
+    <label>Master public key for recovery (RSA, PEM, optional; a ring setting)</label>
     <textarea name="master_public_key" class="form-control" rows="3" placeholder="-----BEGIN PUBLIC KEY-----" style="font-family: var(--font-mono); font-size: 11px;"></textarea>
     <span class="form-text">Each snapshot then also carries the encryption key wrapped with this key, so the private key can recover the data if the key file is lost (proxmox-backup-client key import-with-master-key).</span>
   </div>
@@ -75,7 +82,7 @@
         <input type="file" name="key_file" accept=".json,application/json" style="font-size: 12px;">
         <button type="button" class="btn btn-secondary btn-sm" onclick="importTargetKey(this.form)">Import key file (uses the passphrase above)</button>
       </div>
-      <span class="form-text">Rotation starts a new chunk history (nothing deduplicates against the old key) and keeps the old key for the snapshots written with it. Import adopts a key from another FallBCK target or proxmox-backup-client.</span>
+      <span class="form-text">Both act on the key ring, so every target on it is affected. Rotation starts a new chunk history (nothing deduplicates against the old key) and keeps the old key for the snapshots written with it. Import adopts a key from another ring or proxmox-backup-client.</span>
     </details>
   </div>
 </div>

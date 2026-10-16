@@ -19,6 +19,8 @@ import (
 
 var (
 	ErrNotFound = errors.New("record not found")
+	// ErrInUse: the row is referenced by others and cannot be deleted
+	ErrInUse = errors.New("record is in use")
 )
 
 // ==========================================
@@ -341,7 +343,7 @@ func (d *DB) CreateTarget(ctx context.Context, target *BackupTarget) error {
 	target.UpdatedAt = now
 
 	query := `
-		INSERT INTO backup_targets (id, name, target_type, endpoint, datastore, namespace, auth_token_encrypted, fingerprint, tls_verify, pxar_format, created_at, updated_at, encryption_mode, master_public_key)
+		INSERT INTO backup_targets (id, name, target_type, endpoint, datastore, namespace, auth_token_encrypted, fingerprint, tls_verify, pxar_format, created_at, updated_at, encryption_mode, key_ring_id)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		RETURNING id
 	`
@@ -354,21 +356,21 @@ func (d *DB) CreateTarget(ctx context.Context, target *BackupTarget) error {
 	return d.Pool.QueryRow(ctx, query,
 		target.ID, target.Name, target.TargetType, target.Endpoint, target.Datastore,
 		target.Namespace, d.seal(target.AuthToken), target.Fingerprint, target.TLSVerify, target.PxarFormat,
-		target.CreatedAt, target.UpdatedAt, target.EncryptionMode, target.MasterPublicKey,
+		target.CreatedAt, target.UpdatedAt, target.EncryptionMode, target.KeyRingID,
 	).Scan(&target.ID)
 }
 
 // CloneTarget creates a new target from an existing one: same PBS endpoint,
-// datastore, API token (the sealed column is copied as is), fingerprint,
-// TLS setting, master public key and (unless overridden) pxar format, with a new name
-// and namespace. The encryption key is not copied: the clone starts unencrypted and
-// gets its own key when encryption is enabled on it (import the exported file to share one).
+// datastore, API token (the sealed column is copied as is), fingerprint, TLS setting,
+// encryption mode and key ring, and (unless overridden) pxar format, with a new name
+// and namespace. Sharing the ring is the point of a clone: another namespace of the
+// same datastore deduplicates against the source only with the same key.
 func (d *DB) CloneTarget(ctx context.Context, sourceID uuid.UUID, name, namespace, pxarFormat string) (*BackupTarget, error) {
 	id := uuid.New()
 	now := time.Now().UTC()
 	tag, err := d.Pool.Exec(ctx, `
-		INSERT INTO backup_targets (id, name, target_type, endpoint, datastore, namespace, auth_token_encrypted, fingerprint, tls_verify, pxar_format, created_at, updated_at, encryption_mode, master_public_key)
-		SELECT $1, $2, target_type, endpoint, datastore, $3, auth_token_encrypted, fingerprint, tls_verify, COALESCE(NULLIF($4::text, ''), pxar_format), $5, $5, 'none', master_public_key
+		INSERT INTO backup_targets (id, name, target_type, endpoint, datastore, namespace, auth_token_encrypted, fingerprint, tls_verify, pxar_format, created_at, updated_at, encryption_mode, key_ring_id)
+		SELECT $1, $2, target_type, endpoint, datastore, $3, auth_token_encrypted, fingerprint, tls_verify, COALESCE(NULLIF($4::text, ''), pxar_format), $5, $5, encryption_mode, key_ring_id
 		FROM backup_targets WHERE id = $6`,
 		id, name, namespace, pxarFormat, now, sourceID)
 	if err != nil {
@@ -381,8 +383,8 @@ func (d *DB) CloneTarget(ctx context.Context, sourceID uuid.UUID, name, namespac
 }
 
 // UpdateTarget replaces a target's editable fields (name, endpoint, datastore,
-// namespace, token, fingerprint, TLS, format, master public key); the encryption
-// mode and key change only through SetTargetEncryption. The caller supplies the final values,
+// namespace, token, fingerprint, TLS, format); the encryption mode and key ring
+// change only through SetTargetEncryption. The caller supplies the final values,
 // including AuthToken (kept unchanged by loading the existing row first when
 // the operator leaves the token field blank).
 func (d *DB) UpdateTarget(ctx context.Context, target *BackupTarget) error {
@@ -393,12 +395,10 @@ func (d *DB) UpdateTarget(ctx context.Context, target *BackupTarget) error {
 	tag, err := d.Pool.Exec(ctx, `
 		UPDATE backup_targets
 		SET name = $2, target_type = $3, endpoint = $4, datastore = $5, namespace = $6,
-		    auth_token_encrypted = $7, fingerprint = $8, tls_verify = $9, pxar_format = $10, updated_at = $11,
-		    master_public_key = $12
+		    auth_token_encrypted = $7, fingerprint = $8, tls_verify = $9, pxar_format = $10, updated_at = $11
 		WHERE id = $1`,
 		target.ID, target.Name, target.TargetType, target.Endpoint, target.Datastore, target.Namespace,
-		d.seal(target.AuthToken), target.Fingerprint, target.TLSVerify, target.PxarFormat, target.UpdatedAt,
-		target.MasterPublicKey)
+		d.seal(target.AuthToken), target.Fingerprint, target.TLSVerify, target.PxarFormat, target.UpdatedAt)
 	if err != nil {
 		return err
 	}
@@ -423,16 +423,16 @@ func (d *DB) GetTargetByID(ctx context.Context, id uuid.UUID) (*BackupTarget, er
 	return t.Sanitize(), nil
 }
 
-// targetSelect joins the active encryption key's fingerprint onto the target
+// targetSelect joins the key ring and its active key onto the target
 const targetSelect = `
 	SELECT t.id, t.name, t.target_type, t.endpoint, t.datastore, t.namespace, t.auth_token_encrypted, t.fingerprint, t.tls_verify, t.pxar_format, t.created_at, t.updated_at,
-	       t.encryption_mode, t.encryption_key_id, t.master_public_key, COALESCE(k.fingerprint, ''), k.created_at
-	FROM backup_targets t LEFT JOIN target_keys k ON k.id = t.encryption_key_id`
+	       t.encryption_mode, t.key_ring_id, COALESCE(r.name, ''), r.active_key_id, COALESCE(r.master_public_key, ''), COALESCE(k.fingerprint, ''), k.created_at
+	FROM backup_targets t LEFT JOIN key_rings r ON r.id = t.key_ring_id LEFT JOIN target_keys k ON k.id = r.active_key_id`
 
 func scanTarget(row pgx.Row) (*BackupTarget, error) {
 	var t BackupTarget
 	err := row.Scan(&t.ID, &t.Name, &t.TargetType, &t.Endpoint, &t.Datastore, &t.Namespace, &t.AuthToken, &t.Fingerprint, &t.TLSVerify, &t.PxarFormat, &t.CreatedAt, &t.UpdatedAt,
-		&t.EncryptionMode, &t.EncryptionKeyID, &t.MasterPublicKey, &t.KeyFingerprint, &t.KeyCreatedAt)
+		&t.EncryptionMode, &t.KeyRingID, &t.KeyRingName, &t.EncryptionKeyID, &t.MasterPublicKey, &t.KeyFingerprint, &t.KeyCreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -460,9 +460,105 @@ func (d *DB) ListTargets(ctx context.Context) ([]*BackupTarget, error) {
 	return targets, rows.Err()
 }
 
-// ---- Encryption keys --------------------------------------------------------
+// ---- Encryption key rings and keys ---------------------------------------------
 
-// CreateTargetKey stores a key (sealed) for a target
+const ringSelect = `
+	SELECT r.id, r.name, r.active_key_id, r.master_public_key, r.created_at, r.updated_at, r.created_by, COALESCE(k.fingerprint, ''), k.created_at,
+	       COALESCE((SELECT array_agg(t.name ORDER BY t.name) FROM backup_targets t WHERE t.key_ring_id = r.id), '{}')
+	FROM key_rings r LEFT JOIN target_keys k ON k.id = r.active_key_id`
+
+func scanRing(row pgx.Row) (*KeyRing, error) {
+	var r KeyRing
+	if err := row.Scan(&r.ID, &r.Name, &r.ActiveKeyID, &r.MasterPublicKey, &r.CreatedAt, &r.UpdatedAt, &r.CreatedBy, &r.KeyFingerprint, &r.KeyCreatedAt, &r.Targets); err != nil {
+		return nil, err
+	}
+	if r.Targets == nil {
+		r.Targets = []string{}
+	}
+	return &r, nil
+}
+
+// CreateKeyRing stores an empty ring (the caller activates a key next)
+func (d *DB) CreateKeyRing(ctx context.Context, r *KeyRing) error {
+	if r.ID == uuid.Nil {
+		r.ID = uuid.New()
+	}
+	now := time.Now().UTC()
+	r.CreatedAt, r.UpdatedAt = now, now
+	_, err := d.Pool.Exec(ctx, `INSERT INTO key_rings (id, name, active_key_id, master_public_key, created_at, updated_at, created_by) VALUES ($1, $2, NULL, $3, $4, $4, $5)`,
+		r.ID, r.Name, r.MasterPublicKey, now, r.CreatedBy)
+	return err
+}
+
+func (d *DB) GetKeyRing(ctx context.Context, id uuid.UUID) (*KeyRing, error) {
+	r, err := scanRing(d.Pool.QueryRow(ctx, ringSelect+` WHERE r.id = $1`, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return r, err
+}
+
+func (d *DB) ListKeyRings(ctx context.Context) ([]*KeyRing, error) {
+	rows, err := d.Pool.Query(ctx, ringSelect+` ORDER BY r.name ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []*KeyRing{}
+	for rows.Next() {
+		r, err := scanRing(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// UpdateKeyRing renames a ring and sets its master public key
+func (d *DB) UpdateKeyRing(ctx context.Context, id uuid.UUID, name, masterPublicKey string) error {
+	tag, err := d.Pool.Exec(ctx, `UPDATE key_rings SET name = $2, master_public_key = $3, updated_at = $4 WHERE id = $1`, id, name, masterPublicKey, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// DeleteKeyRing removes a ring and its keys; refused (ErrInUse) while a target uses it
+func (d *DB) DeleteKeyRing(ctx context.Context, id uuid.UUID) error {
+	var n int
+	if err := d.Pool.QueryRow(ctx, `SELECT count(*) FROM backup_targets WHERE key_ring_id = $1`, id).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return ErrInUse
+	}
+	tag, err := d.Pool.Exec(ctx, `DELETE FROM key_rings WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetRingActiveKey points the ring at a key (nil: no active key)
+func (d *DB) SetRingActiveKey(ctx context.Context, ringID uuid.UUID, keyID *uuid.UUID) error {
+	tag, err := d.Pool.Exec(ctx, `UPDATE key_rings SET active_key_id = $2, updated_at = $3 WHERE id = $1`, ringID, keyID, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// CreateTargetKey stores a key (sealed) on a ring
 func (d *DB) CreateTargetKey(ctx context.Context, k *TargetKey) error {
 	if k.ID == uuid.Nil {
 		k.ID = uuid.New()
@@ -471,9 +567,9 @@ func (d *DB) CreateTargetKey(ctx context.Context, k *TargetKey) error {
 		k.CreatedAt = time.Now().UTC()
 	}
 	_, err := d.Pool.Exec(ctx, `
-		INSERT INTO target_keys (id, target_id, key_sealed, fingerprint, created_at, retired_at, created_by)
+		INSERT INTO target_keys (id, ring_id, key_sealed, fingerprint, created_at, retired_at, created_by)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		k.ID, k.TargetID, d.seal(hex.EncodeToString(k.Key[:])), k.Fingerprint, k.CreatedAt, k.RetiredAt, k.CreatedBy)
+		k.ID, k.RingID, d.seal(hex.EncodeToString(k.Key[:])), k.Fingerprint, k.CreatedAt, k.RetiredAt, k.CreatedBy)
 	return err
 }
 
@@ -481,8 +577,8 @@ func (d *DB) CreateTargetKey(ctx context.Context, k *TargetKey) error {
 func (d *DB) GetTargetKey(ctx context.Context, id uuid.UUID) (*TargetKey, error) {
 	var k TargetKey
 	var sealed string
-	err := d.Pool.QueryRow(ctx, `SELECT id, target_id, key_sealed, fingerprint, created_at, retired_at, created_by FROM target_keys WHERE id = $1`, id).
-		Scan(&k.ID, &k.TargetID, &sealed, &k.Fingerprint, &k.CreatedAt, &k.RetiredAt, &k.CreatedBy)
+	err := d.Pool.QueryRow(ctx, `SELECT id, ring_id, key_sealed, fingerprint, created_at, retired_at, created_by FROM target_keys WHERE id = $1`, id).
+		Scan(&k.ID, &k.RingID, &sealed, &k.Fingerprint, &k.CreatedAt, &k.RetiredAt, &k.CreatedBy)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -501,17 +597,17 @@ func (d *DB) GetTargetKey(ctx context.Context, id uuid.UUID) (*TargetKey, error)
 	return &k, nil
 }
 
-// ListTargetKeys lists a target's keys (newest first) without their material
-func (d *DB) ListTargetKeys(ctx context.Context, targetID uuid.UUID) ([]*TargetKey, error) {
-	rows, err := d.Pool.Query(ctx, `SELECT id, target_id, fingerprint, created_at, retired_at, created_by FROM target_keys WHERE target_id = $1 ORDER BY created_at DESC`, targetID)
+// ListRingKeys lists a ring's keys (newest first) without their material
+func (d *DB) ListRingKeys(ctx context.Context, ringID uuid.UUID) ([]*TargetKey, error) {
+	rows, err := d.Pool.Query(ctx, `SELECT id, ring_id, fingerprint, created_at, retired_at, created_by FROM target_keys WHERE ring_id = $1 ORDER BY created_at DESC`, ringID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []*TargetKey
+	out := []*TargetKey{}
 	for rows.Next() {
 		var k TargetKey
-		if err := rows.Scan(&k.ID, &k.TargetID, &k.Fingerprint, &k.CreatedAt, &k.RetiredAt, &k.CreatedBy); err != nil {
+		if err := rows.Scan(&k.ID, &k.RingID, &k.Fingerprint, &k.CreatedAt, &k.RetiredAt, &k.CreatedBy); err != nil {
 			return nil, err
 		}
 		out = append(out, &k)
@@ -519,11 +615,12 @@ func (d *DB) ListTargetKeys(ctx context.Context, targetID uuid.UUID) ([]*TargetK
 	return out, rows.Err()
 }
 
-// SetTargetEncryption switches a target's mode and active key in one statement;
-// keyID nil clears the active key (mode none keeps the keys for old snapshots)
-func (d *DB) SetTargetEncryption(ctx context.Context, targetID uuid.UUID, mode string, keyID *uuid.UUID) error {
-	tag, err := d.Pool.Exec(ctx, `UPDATE backup_targets SET encryption_mode = $2, encryption_key_id = $3, updated_at = $4 WHERE id = $1`,
-		targetID, mode, keyID, time.Now().UTC())
+// SetTargetEncryption switches a target's mode and key ring in one statement; mode
+// none keeps the ring attached so re-enabling reuses it (and old snapshots keep
+// their keys)
+func (d *DB) SetTargetEncryption(ctx context.Context, targetID uuid.UUID, mode string, ringID *uuid.UUID) error {
+	tag, err := d.Pool.Exec(ctx, `UPDATE backup_targets SET encryption_mode = $2, key_ring_id = $3, updated_at = $4 WHERE id = $1`,
+		targetID, mode, ringID, time.Now().UTC())
 	if err != nil {
 		return err
 	}

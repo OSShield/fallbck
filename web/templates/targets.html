@@ -71,6 +71,29 @@
   </div>
 </div>
 
+<div class="card" id="keyrings-card" style="margin-top: 24px;">
+  <div class="card-header">
+    <h3 class="card-title">Encryption key rings</h3>
+    <span style="font-size: 12px; color: var(--text-muted);">Targets on one ring share a key and deduplicate against each other. Rotation and export act on the ring.</span>
+  </div>
+  <div class="table-container">
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Active key</th>
+          <th>Targets</th>
+          <th>Recovery key</th>
+          <th style="text-align: right;">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="keyrings-body">
+        <tr><td colspan="5" style="color: var(--text-dim);">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
 <!-- Add Target Modal -->
 <div id="modal-add-target" class="modal-backdrop">
   <div class="modal-content">

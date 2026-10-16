@@ -257,15 +257,18 @@ type BackupTarget struct {
 	CreatedAt   time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at" db:"updated_at"`
 
-	// Client-side encryption: EncryptionNone or EncryptionEncrypt; the active key is
-	// EncryptionKeyID (a target_keys row), MasterPublicKey an optional RSA public key
-	// (PEM) every snapshot wraps the encryption key with, for recovery
+	// Client-side encryption: EncryptionNone or EncryptionEncrypt. The key comes from
+	// the target's key ring (KeyRingID); targets on one ring share the active key and
+	// so deduplicate against each other on PBS. EncryptionKeyID, KeyFingerprint,
+	// KeyCreatedAt and MasterPublicKey are the ring's active key and RSA public key,
+	// joined on read.
 	EncryptionMode  string     `json:"encryption_mode" db:"encryption_mode"`
-	EncryptionKeyID *uuid.UUID `json:"encryption_key_id,omitempty" db:"encryption_key_id"`
-	MasterPublicKey string     `json:"master_public_key,omitempty" db:"master_public_key"`
-	// KeyFingerprint / KeyCreatedAt describe the active key (joined on read)
-	KeyFingerprint string     `json:"key_fingerprint,omitempty" db:"-"`
-	KeyCreatedAt   *time.Time `json:"key_created_at,omitempty" db:"-"`
+	KeyRingID       *uuid.UUID `json:"key_ring_id,omitempty" db:"key_ring_id"`
+	KeyRingName     string     `json:"key_ring_name,omitempty" db:"-"`
+	EncryptionKeyID *uuid.UUID `json:"encryption_key_id,omitempty" db:"-"`
+	MasterPublicKey string     `json:"master_public_key,omitempty" db:"-"`
+	KeyFingerprint  string     `json:"key_fingerprint,omitempty" db:"-"`
+	KeyCreatedAt    *time.Time `json:"key_created_at,omitempty" db:"-"`
 
 	// HasToken reports whether an API token is stored (the token itself is never returned)
 	HasToken bool `json:"has_token" db:"-"`
@@ -282,12 +285,32 @@ func (t *BackupTarget) Encrypted() bool {
 	return t != nil && t.EncryptionMode == EncryptionEncrypt && t.EncryptionKeyID != nil
 }
 
-// TargetKey is one encryption key of a target. Key is in clear in memory only; the
+// KeyRing is a set of encryption keys shared by the targets attached to it. Targets on
+// one ring encrypt with the same active key and therefore deduplicate against each
+// other on PBS (one datastore, many namespaces); targets on different rings never do.
+// Rotation retires the active key for every target on the ring at once. The optional
+// RSA master public key wraps the active key into every snapshot for recovery.
+type KeyRing struct {
+	ID              uuid.UUID  `json:"id"`
+	Name            string     `json:"name"`
+	ActiveKeyID     *uuid.UUID `json:"active_key_id,omitempty"`
+	MasterPublicKey string     `json:"master_public_key,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+	CreatedBy       string     `json:"created_by,omitempty"`
+	// KeyFingerprint / KeyCreatedAt describe the active key, Targets names the targets
+	// attached to the ring (joined on read)
+	KeyFingerprint string     `json:"key_fingerprint,omitempty"`
+	KeyCreatedAt   *time.Time `json:"key_created_at,omitempty"`
+	Targets        []string   `json:"targets"`
+}
+
+// TargetKey is one encryption key of a key ring. Key is in clear in memory only; the
 // repository seals it with the server master key (column key_sealed). A retired key
 // is kept because the snapshots written with it still need it.
 type TargetKey struct {
 	ID          uuid.UUID  `json:"id"`
-	TargetID    uuid.UUID  `json:"target_id"`
+	RingID      uuid.UUID  `json:"ring_id"`
 	Key         [32]byte   `json:"-"`
 	Fingerprint string     `json:"fingerprint"`
 	CreatedAt   time.Time  `json:"created_at"`

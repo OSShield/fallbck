@@ -94,10 +94,23 @@ The token is stored sealed and is never returned. Pin a self-signed PBS with `fi
 | Method | Path | Notes |
 |---|---|---|
 | `GET` | `/targets/{id}/encryption` | Mode, fingerprint, master key status. |
-| `PUT` | `/targets/{id}/encryption` | `{"mode": "encrypt" \| "none", "master_public_key": "<PEM or empty>"}` |
-| `POST` | `/targets/{id}/encryption/rotate` | New key. The old one gets retired, not deleted. |
+| `PUT` | `/targets/{id}/encryption` | `{"mode": "encrypt" \| "none", "key_ring_id": "<ring or empty>", "master_public_key": "<PEM or empty>"}`. Empty ring with `encrypt` creates one named after the target. |
+| `POST` | `/targets/{id}/encryption/rotate` | Rotates the target's ring: new key for every target on it. The old one gets retired, not deleted. |
 | `POST` | `/targets/{id}/encryption/export` | `{"passphrase", "hint", "key_id"}`. Returns a `proxmox-backup-client` key file. Leave `key_id` empty for the active key. |
-| `POST` | `/targets/{id}/encryption/import` | `{"keyfile", "passphrase"}` |
+| `POST` | `/targets/{id}/encryption/import` | `{"keyfile", "passphrase"}`, onto the target's ring. |
+
+Key rings hold the keys; targets attach to a ring and share its key (and PBS dedup) with every other target on it. `key_ring_id` is also accepted on `POST /targets` and `PUT /targets/{id}`.
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/keyrings` | Rings with fingerprint and attached targets. |
+| `POST` | `/keyrings` | `{"name", "master_public_key"}`. Generates the first key. |
+| `GET` | `/keyrings/{id}` | Ring plus key history. |
+| `PUT` | `/keyrings/{id}` | `{"name", "master_public_key"}` |
+| `DELETE` | `/keyrings/{id}` | Only when no target uses it. Deletes its keys. |
+| `POST` | `/keyrings/{id}/rotate` | |
+| `POST` | `/keyrings/{id}/export` | As for targets. |
+| `POST` | `/keyrings/{id}/import` | As for targets. |
 
 See [Encryption](../operations/encryption.md) for what all of this means.
 

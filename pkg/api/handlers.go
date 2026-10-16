@@ -126,6 +126,16 @@ func (s *ServerAPI) RegisterRoutes(r chi.Router, admin, agent Middleware) {
 			r.Post("/targets/{id}/encryption/import", s.HandleImportTargetKey)
 			r.Delete("/targets/{id}", s.HandleDeleteTarget)
 
+			// Encryption key rings (shared by the targets attached to them)
+			r.Get("/keyrings", s.HandleListKeyRings)
+			r.Post("/keyrings", s.HandleCreateKeyRing)
+			r.Get("/keyrings/{id}", s.HandleGetKeyRing)
+			r.Put("/keyrings/{id}", s.HandleUpdateKeyRing)
+			r.Delete("/keyrings/{id}", s.HandleDeleteKeyRing)
+			r.Post("/keyrings/{id}/rotate", s.HandleRotateKeyRing)
+			r.Post("/keyrings/{id}/export", s.HandleExportKeyRingKey)
+			r.Post("/keyrings/{id}/import", s.HandleImportKeyRingKey)
+
 			// Microsoft 365 tenants
 			r.Post("/m365/tenants", s.HandleCreateTenant)
 			r.Get("/m365/tenants", s.HandleListTenants)
@@ -754,46 +764,42 @@ func (s *ServerAPI) HandleCreateTarget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	master := ""
-	if req.MasterPublicKey != nil {
-		master = strings.TrimSpace(*req.MasterPublicKey)
-	}
-	if master != "" {
-		normalised, err := pbs.ValidateMasterPublicKey(master)
-		if err != nil {
-			s.writeError(w, http.StatusBadRequest, "Master public key: "+err.Error())
-			return
-		}
-		master = normalised
-	}
 	switch req.EncryptionMode {
 	case "", db.EncryptionNone, db.EncryptionEncrypt:
 	default:
 		s.writeError(w, http.StatusBadRequest, "encryption_mode must be none or encrypt")
 		return
 	}
+	ringID, err := parseOptionalUUID(req.KeyRingID)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "Invalid key ring ID")
+		return
+	}
 	target := &db.BackupTarget{
-		Name:            req.Name,
-		TargetType:      req.TargetType,
-		Endpoint:        strings.TrimRight(req.Endpoint, "/"),
-		Datastore:       req.Datastore,
-		Namespace:       req.Namespace,
-		AuthToken:       normalizedToken,
-		Fingerprint:     strings.TrimSpace(req.Fingerprint),
-		TLSVerify:       req.TLSVerify,
-		PxarFormat:      req.PxarFormat,
-		MasterPublicKey: master,
+		Name:        req.Name,
+		TargetType:  req.TargetType,
+		Endpoint:    strings.TrimRight(req.Endpoint, "/"),
+		Datastore:   req.Datastore,
+		Namespace:   req.Namespace,
+		AuthToken:   normalizedToken,
+		Fingerprint: strings.TrimSpace(req.Fingerprint),
+		TLSVerify:   req.TLSVerify,
+		PxarFormat:  req.PxarFormat,
 	}
 	if err := s.DB.CreateTarget(r.Context(), target); err != nil {
 		s.writeError(w, http.StatusInternalServerError, "Failed to create target")
 		return
 	}
 	if req.EncryptionMode == db.EncryptionEncrypt {
-		if _, err := s.newTargetKey(r, target); err != nil {
+		if err := s.applyEncryptionMode(r, target, db.EncryptionEncrypt, ringID); err != nil {
 			slog.Error("Enabling encryption on new target failed", "target", target.ID, "error", err)
 			s.writeError(w, http.StatusInternalServerError, "Target created, but enabling encryption failed")
 			return
 		}
+	}
+	if msg, ok := s.applyTargetMasterKey(r, target, req.MasterPublicKey); !ok {
+		s.writeError(w, http.StatusBadRequest, msg)
+		return
 	}
 
 	s.writeJSON(w, http.StatusCreated, target.Sanitize())
@@ -843,24 +849,15 @@ func (s *ServerAPI) HandleUpdateTarget(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, "pxar_format must be v1 or v2")
 		return
 	}
-	// Master public key: the field is authoritative when sent ("" clears it); an
-	// older client that omits it keeps the stored one
-	master := existing.MasterPublicKey
-	if req.MasterPublicKey != nil {
-		master = strings.TrimSpace(*req.MasterPublicKey)
-		if master != "" {
-			normalised, err := pbs.ValidateMasterPublicKey(master)
-			if err != nil {
-				s.writeError(w, http.StatusBadRequest, "Master public key: "+err.Error())
-				return
-			}
-			master = normalised
-		}
-	}
 	switch req.EncryptionMode {
 	case "", db.EncryptionNone, db.EncryptionEncrypt:
 	default:
 		s.writeError(w, http.StatusBadRequest, "encryption_mode must be none or encrypt")
+		return
+	}
+	ringID, err := parseOptionalUUID(req.KeyRingID)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "Invalid key ring ID")
 		return
 	}
 	target := &db.BackupTarget{
@@ -875,10 +872,12 @@ func (s *ServerAPI) HandleUpdateTarget(w http.ResponseWriter, r *http.Request) {
 		TLSVerify:       req.TLSVerify,
 		PxarFormat:      req.PxarFormat,
 		EncryptionMode:  existing.EncryptionMode,
+		KeyRingID:       existing.KeyRingID,
+		KeyRingName:     existing.KeyRingName,
 		EncryptionKeyID: existing.EncryptionKeyID,
 		KeyFingerprint:  existing.KeyFingerprint,
 		KeyCreatedAt:    existing.KeyCreatedAt,
-		MasterPublicKey: master,
+		MasterPublicKey: existing.MasterPublicKey,
 	}
 	if err := s.DB.UpdateTarget(r.Context(), target); err != nil {
 		if errors.Is(err, db.ErrNotFound) {
@@ -889,12 +888,22 @@ func (s *ServerAPI) HandleUpdateTarget(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, "Failed to update target")
 		return
 	}
-	if req.EncryptionMode != "" && req.EncryptionMode != existing.EncryptionMode {
-		if err := s.applyEncryptionMode(r, target, req.EncryptionMode); err != nil {
+	// Mode change, or a different ring while encrypted, goes through applyEncryptionMode
+	mode := req.EncryptionMode
+	if mode == "" {
+		mode = existing.EncryptionMode
+	}
+	ringChanged := ringID != nil && (existing.KeyRingID == nil || *existing.KeyRingID != *ringID)
+	if mode != existing.EncryptionMode || (mode == db.EncryptionEncrypt && ringChanged) {
+		if err := s.applyEncryptionMode(r, target, mode, ringID); err != nil {
 			slog.Error("Changing target encryption failed", "target", target.ID, "error", err)
 			s.writeError(w, http.StatusInternalServerError, "Target updated, but changing encryption failed")
 			return
 		}
+	}
+	if msg, ok := s.applyTargetMasterKey(r, target, req.MasterPublicKey); !ok {
+		s.writeError(w, http.StatusBadRequest, msg)
+		return
 	}
 	slog.Info("Backup target updated", "target_id", id, "name", target.Name, "namespace", target.Namespace, "encryption", target.EncryptionMode)
 	s.writeJSON(w, http.StatusOK, target.Sanitize())
