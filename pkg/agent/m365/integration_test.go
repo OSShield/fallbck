@@ -343,7 +343,7 @@ func TestRealTenantProbe(t *testing.T) {
 		t.Fatalf("collectDirectory: %v", err)
 	}
 	t.Logf("directory entries: %d, warnings: %v", len(entries), dwarn)
-	t.Logf("graph requests: %d, retries: %d", c.Stats.Requests, c.Stats.Retries)
+	t.Logf("graph requests: %d, retries: %d", c.Stats.Requests.Load(), c.Stats.Retries.Load())
 	fmt.Println()
 }
 

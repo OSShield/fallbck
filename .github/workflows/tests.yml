@@ -1,0 +1,80 @@
+name: Tests
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_call:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  unit:
+    name: Vet + unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Unit tests
+        run: go test -race ./...
+
+  integration:
+    name: Integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Integration tests (embedded Temporal on sqlite)
+        run: go test -tags sqlite -count=1 ./pkg/temporal/embedded/ ./pkg/integration/
+
+  db-engines:
+    name: Database engine tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install database client tools
+        run: |
+          set -e
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client mariadb-client curl
+          curl -fsSL https://fastdl.mongodb.org/tools/db/mongodb-database-tools-ubuntu2404-x86_64-100.10.0.deb -o /tmp/mongodb-tools.deb
+          sudo apt-get install -y /tmp/mongodb-tools.deb
+          pg_dump --version; mariadb-dump --version; mongodump --version
+
+      # The tests start their own postgres/mariadb/mongo containers with docker and
+      # skip when docker or a client tool is missing; no service containers needed
+      - name: Database engine tests against real servers
+        run: go test -tags dbintegration -count=1 -run 'TestIntegration' -v ./pkg/agent/dbbackup/

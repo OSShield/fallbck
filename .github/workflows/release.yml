@@ -10,77 +10,74 @@ on:
 
   workflow_dispatch:
 
-permissions:
-  contents: write
-  packages: read
+# Set empty permissions by default
+permissions: {}
 
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  test:
-    name: Test
-    runs-on: ubuntu-latest
-    steps:
+  # One definition of "tests pass": the PR gate in tests.yml
+  tests:
+    uses: ./.github/workflows/tests.yml
+    permissions:
+      contents: read
 
+  snapshot:
+    name: Snapshot build
+    runs-on: ubuntu-latest
+    needs: tests
+    if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0 # goreleaser wants the tag history
 
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
           cache: true
 
-      - name: Vet
-        run: go vet ./...
-
-      - name: Unit tests
-        run: go test ./...
-
-      - name: Integration tests (embedded Temporal on sqlite)
-        run: go test -tags sqlite -count=1 ./pkg/temporal/embedded/ ./pkg/integration/
-
-  # db-integration:
-  #   name: Database agent integration (docker)
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-  #     - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-  #       with:
-  #         go-version-file: go.mod
-  #         cache: true
-  #     - name: Install database client tools
-  #       run: |
-  #         set -e
-  #         sudo apt-get update
-  #         sudo apt-get install -y postgresql-client mariadb-client curl
-  #         curl -fsSL https://fastdl.mongodb.org/tools/db/mongodb-database-tools-ubuntu2404-x86_64-100.10.0.deb -o /tmp/mongodb-tools.deb
-  #         sudo apt-get install -y /tmp/mongodb-tools.deb
-  #         pg_dump --version; mariadb-dump --version; mongodump --version
-  #     - name: Database engine tests against real servers
-  #       run: go test -tags dbintegration -count=1 -run 'TestIntegration' -v ./pkg/agent/dbbackup/
+      # Nothing is published, signed or attested: no token needed
+      - name: Snapshot build
+        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --snapshot --clean --skip=publish,sign,sbom
 
   windows:
     name: Windows agent (vet, tests, MSI)
     runs-on: windows-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
+      
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
           cache: true
+      
       - name: Vet
         run: go vet ./cmd/fallbck-agent ./pkg/agent/... ./pkg/config ./pkg/db
+      
       - name: Unit tests (portable packages)
         run: go test ./pkg/config ./pkg/db ./pkg/agent/backup ./pkg/agent/runtime ./pkg/agent/vss
+      
       - name: Version
         id: version
         shell: bash
         run: |
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then v="${GITHUB_REF#refs/tags/v}"; else v="0.0.0"; fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
+      
       - name: Build agent
         shell: bash
         run: |
@@ -88,6 +85,7 @@ jobs:
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.AgentVersion=${{ steps.version.outputs.version }}" -o dist/fallbck-agent.exe ./cmd/fallbck-agent
 
       - name: Sign executable
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
         uses: ossign/ossign@be0132a1f578ee64f9f00aa24ac68c3493c43bed # main 2026-10
         with:
           config: ${{ secrets.OSSIGN_CONFIG }}
@@ -105,6 +103,7 @@ jobs:
           "$WIXDIR/light.exe" -nologo -ext WixUtilExtension -ext WixUIExtension -o dist/fallbck-agent_Windows_x86_64.msi dist/fallbck-agent.wixobj
       
       - name: Sign MSI
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
         uses: ossign/ossign@be0132a1f578ee64f9f00aa24ac68c3493c43bed # main 2026-10
         with:
           config: ${{ secrets.OSSIGN_CONFIG }}
@@ -127,23 +126,23 @@ jobs:
     permissions:
       contents: write
       packages: write
-      attestations: write
       id-token: write
+    needs: tests
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
     steps:
-      # Not needed on self-hosted runner
-      # - name: Prune unneccesary files to preserve disk space
-      #   run: |
-      #     echo "Removing .NET..."
-      #     sudo rm -rf /usr/share/dotnet || true
+      # Only GitHub-hosted runners are short on disk
+      - name: Prune unneccesary files to preserve disk space
+        if: ${{ runner.environment == 'github-hosted' }}
+        run: |
+          echo "Removing .NET..."
+          sudo rm -rf /usr/share/dotnet || true
 
-      #     echo "Removing Android SDK..."
-      #     sudo rm -rf /usr/local/lib/android || true
+          echo "Removing Android SDK..."
+          sudo rm -rf /usr/local/lib/android || true
 
-      #     echo "Removing GHC / Haskell..."
-      #     sudo rm -rf /opt/ghc || true
-      #     sudo rm -rf /usr/local/.ghcup || true
-
-      #     df -h
+          echo "Removing GHC / Haskell..."
+          sudo rm -rf /opt/ghc || true
+          sudo rm -rf /usr/local/.ghcup || true
 
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -177,18 +176,7 @@ jobs:
       - name: Install syft
         uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
 
-      - name: Snapshot build (PRs and main)
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
-        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
-        with:
-          distribution: goreleaser
-          version: "~> v2"
-          args: release --snapshot --clean --skip=publish,sign,sbom
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Release (tags)
-        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
         uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
           distribution: goreleaser
@@ -196,7 +184,7 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_RUN_ID: ${{ env.GITHUB_RUN_ID }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
           UPLOAD_DEBIAN_SECRET: ${{ secrets.PKG_UPLOAD_PASSWORD }}
           UPLOAD_ALPINE_SECRET: ${{ secrets.PKG_UPLOAD_PASSWORD }}
           UPLOAD_RHEL_SECRET: ${{ secrets.PKG_UPLOAD_PASSWORD }}
@@ -209,37 +197,43 @@ jobs:
           retention-days: 7
           path: dist/*
 
+  helm:
+    name: Helm Upload
+    runs-on: ubuntu-latest
+    needs: [ release ]
+    permissions:
+      packages: write
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        name: Setup helm
+
+      - name: Create and push helm package
+        run: |
+          helm package deploy/helm/fallbck-k8s-agent --version "${GITHUB_REF#refs/tags/v}" --app-version "${GITHUB_REF#refs/tags/v}"
+          curl --upload-file fallbck-k8s-agent-"${GITHUB_REF#refs/tags/v}".tgz --user "osshield_pkg:${{ secrets.PKG_UPLOAD_PASSWORD }}" https://helm.osshield.eu/upload
+          helm push fallbck-k8s-agent-"${GITHUB_REF#refs/tags/v}".tgz oci://ghcr.io/osshield/fallbck/k8s-agent --username "${{ github.actor }}" --password "${{ secrets.GITHUB_TOKEN }}"
+
+
   upload:
-    name: Helm & release
+    name: Attach MSI to release and upload to private winget repo
     runs-on: ubuntu-latest
     needs: [ windows, release ]
     permissions:
       contents: write
-      packages: write
-      attestations: write
-      id-token: write
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-  
-      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
-        name: Setup helm
-      
-      - name: Download GoReleaser artifact
-        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: goreleaser-${{ github.sha }}
-          path: dist/
 
       - name: Attach the Windows MSI to the release
-        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: windows-msi-${{ github.sha }}
           path: dist/msi
 
       - name: Upload MSI to the GitHub release and winget repository
-        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           W_VERSION: "${GITHUB_REF#refs/tags/v}"
@@ -249,22 +243,3 @@ jobs:
           export W_SHA256SUM=$(sha256sum dist/msi/fallbck-agent_Windows_x86_64.msi | cut -d ' ' -f 1)
           cat deploy/windows/winget.yaml | envsubst > dist/win-fallbck-agent-manifest.yaml
           curl -fsS -X PUT --user "osshield_pkg:${{ secrets.PKG_UPLOAD_PASSWORD }}" -F manifest=@dist/win-fallbck-agent-manifest.yaml -F installer=@dist/msi/fallbck-agent_Windows_x86_64.msi https://win.osshield.eu/upload
-
-      - name: Upload snapshot packages
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: packages-${{ github.sha }}
-          retention-days: 7
-          path: |
-            dist/*.deb
-            dist/*.rpm
-            dist/*.apk
-            dist/*.tar.gz
-            dist/*.dmg
-
-      - name: Create and push helm package
-        run: |
-          helm package deploy/helm/fallbck-k8s-agent --version "${GITHUB_REF#refs/tags/v}" --app-version "${GITHUB_REF#refs/tags/v}"
-          curl --upload-file fallbck-k8s-agent-"${GITHUB_REF#refs/tags/v}".tgz --user "osshield_pkg:${{ secrets.PKG_UPLOAD_PASSWORD }}" https://helm.osshield.eu/upload
-          helm push fallbck-k8s-agent-"${GITHUB_REF#refs/tags/v}".tgz oci://ghcr.io/osshield/fallbck/k8s-agent --username "${{ github.actor }}" --password "${{ secrets.GITHUB_TOKEN }}"

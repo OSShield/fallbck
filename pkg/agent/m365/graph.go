@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	spec "github.com/osshield/fallbck/pkg/m365"
@@ -79,11 +80,11 @@ type Client struct {
 	Stats Stats
 }
 
-// Stats are the client's request counters
+// Stats are the client's request counters; units run in parallel, so they are atomic
 type Stats struct {
-	Requests   int
-	Retries    int
-	Downloaded uint64
+	Requests   atomic.Int64
+	Retries    atomic.Int64
+	Downloaded atomic.Uint64
 }
 
 // NewClient builds a client from the tenant credentials. graphURL "" means GraphURL;
@@ -150,7 +151,7 @@ func (c *Client) do(ctx context.Context, method, url string, body []byte, header
 		for k, v := range headers {
 			req.Header.Set(k, v)
 		}
-		c.Stats.Requests++
+		c.Stats.Requests.Add(1)
 		resp, err := c.http.Do(req)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -168,7 +169,7 @@ func (c *Client) do(ctx context.Context, method, url string, body []byte, header
 		}
 		wait := retryAfter(lastErr, attempt)
 		slog.Debug("Graph request retried", "url", redact(url), "attempt", attempt, "wait", wait, "error", lastErr)
-		c.Stats.Retries++
+		c.Stats.Retries.Add(1)
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -310,7 +311,7 @@ func (c *Client) Download(ctx context.Context, url string) (io.ReadCloser, int64
 	if err != nil {
 		return nil, 0, err
 	}
-	c.Stats.Downloaded += uint64(max(resp.ContentLength, 0))
+	c.Stats.Downloaded.Add(uint64(max(resp.ContentLength, 0)))
 	return resp.Body, resp.ContentLength, nil
 }
 
