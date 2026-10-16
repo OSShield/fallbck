@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -156,6 +157,17 @@ func main() {
 		}
 	}
 
+	if cfg.JWTSecret == "" {
+		key, created, err := secrets.LoadOrCreateKeyFile(cfg.EffectiveJWTSecretFile())
+		if err != nil {
+			slog.Error("JWT secret unavailable", "error", err)
+			os.Exit(1)
+		}
+		cfg.JWTSecret = hex.EncodeToString(key)
+		if created {
+			slog.Warn("Generated a JWT secret; losing it signs every agent out", "path", cfg.EffectiveJWTSecretFile())
+		}
+	}
 	tokenManager := auth.NewTokenManager(cfg.JWTSecret)
 
 	// ---------------------------------------------------------------- Temporal

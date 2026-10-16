@@ -57,7 +57,8 @@ services:
       - FALLBCK_HTTP_PORT=8080
       - FALLBCK_HTTP_BIND=0.0.0.0
       - FALLBCK_PUBLIC_URL=${FALLBCK_PUBLIC_URL:-http://localhost:8080}
-      - FALLBCK_JWT_SECRET=${FALLBCK_JWT_SECRET:-change-me-in-production-fallbck-secret-key-32bytes}
+      # Empty: generated into the data volume on first start
+      - FALLBCK_JWT_SECRET=${FALLBCK_JWT_SECRET:-}
       - FALLBCK_DATA_DIR=/var/lib/fallbck/server
       - FALLBCK_DB_URL=postgres://fallbck:${POSTGRES_PASSWORD:-fallbck_password}@postgres:5432/fallbck?sslmode=disable
       - FALLBCK_TEMPORAL_MODE=embedded
