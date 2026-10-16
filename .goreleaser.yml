@@ -351,3 +351,21 @@ uploads:
 release:
   disable: "{{ eq (envOrDefault \"GITHUB_RUN_ID\" \"\") \"\" }}"
   github: {}
+
+# Keyless Sigstore signature over the checksums file (one bundle covers every archive
+# and package through its hash) and over the container images. The server and the
+# agents verify the bundle before mirroring or installing a release (pkg/releasesig).
+signs:
+  - id: checksums
+    cmd: cosign
+    artifacts: checksum
+    signature: "${artifact}.sigstore.json"
+    args: ["sign-blob", "--yes", "--new-bundle-format", "--bundle", "${signature}", "${artifact}"]
+
+docker_signs:
+  - cmd: cosign
+    artifacts: images
+    args: ["sign", "--yes", "${artifact}@${digest}"]
+
+sboms:
+  - artifacts: archive
