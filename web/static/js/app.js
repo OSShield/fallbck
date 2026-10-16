@@ -71,7 +71,7 @@ function showToast(message, type = 'info') {
   if (type === 'error') icon = '✕';
   if (type === 'warning') icon = '⚠';
 
-  toast.innerHTML = `<span>${icon}</span> <span>${message}</span>`;
+  toast.innerHTML = `<span>${icon}</span> <span>${rdEsc(message)}</span>`;
   container.appendChild(toast);
 
   setTimeout(() => {
@@ -1297,7 +1297,7 @@ function renderDBDetail(m) {
   if (m.mongodb) {
     html += rdCard('MongoDB', rdKV([
       ['Oplog', m.mongodb.oplog ? 'captured' : 'no'], ['Read preference', rdEsc(m.mongodb.read_preference || '')],
-      ['Databases', (m.mongodb.databases || []).join(', ')], ['Per-database', m.mongodb.per_database ? 'yes' : 'no'],
+      ['Databases', rdEsc((m.mongodb.databases || []).join(', '))], ['Per-database', m.mongodb.per_database ? 'yes' : 'no'],
     ]));
   }
   if ((m.warnings && m.warnings.length) || (m.notes && m.notes.length)) {
