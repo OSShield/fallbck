@@ -47,7 +47,7 @@ Same agent. Create a *Database* job for the `k8s-<cluster>` agent (onboarding â†
 
 - the namespace,
 - the Service to connect to (or an explicit host),
-- optionally a Secret holding the password (and user),
+- optionally a Secret holding the password (and user). The Secret must carry the label `fallbck.io/allow-db-credentials: "true"`, and a job that uses one has to name a Service, not a host. The agent can read every Secret in the cluster, so this label is what keeps a database job from shipping any other Secret somewhere else,
 - optionally a tools-image override.
 
 Each run starts a dump pod in that namespace. The main container is the **engine's own image** (`postgres:<major>`, `mariadb:<major>`, `mysql:<major>`, `mongo:<major>`), and an init container drops the agent binary into it. The agent probes the server version to pick the tag, so `pg_dump` always matches. MongoDB can't be probed and uses `latest`. The dump spools to an emptyDir (`worker.db.spoolSizeLimit`) and uploads exactly like a [regular DB backup](databases.md#what-lands-on-pbs).

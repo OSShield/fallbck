@@ -42,7 +42,7 @@ Start from [`deploy/server.yaml.example`](https://github.com/osshield/fallbck/bl
 
 ```yaml
 public_url: "https://backup.example.com"   # what users and agents type in
-jwt_secret: "<32+ random characters>"
+# jwt_secret is generated into data_dir on first start; set it only to manage it yourself
 database:
   url: "postgres://fallbck:...@db:5432/fallbck"
 auth:

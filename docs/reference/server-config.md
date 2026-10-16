@@ -12,8 +12,8 @@ Durations use Go syntax: `12h`, `90s`, `8760h`.
 | `http_bind` | `FALLBCK_HTTP_BIND` | `0.0.0.0` | Listen address. |
 | `public_url` | `FALLBCK_PUBLIC_URL` | `http://localhost:8080` | Your reverse proxy's URL. Used for the OIDC redirect, install scripts and enrollment. |
 | `trusted_proxies` | `FALLBCK_TRUSTED_PROXIES` | loopback + private ranges | CIDRs allowed to set `X-Forwarded-For`. |
-| `jwt_secret` | `FALLBCK_JWT_SECRET` | a placeholder | Signs sessions, agent tokens and tickets. **Change it**, 32+ chars. |
-| `data_dir` | `FALLBCK_DATA_DIR` | `/var/lib/fallbck/server` | Master key, agent release cache. |
+| `jwt_secret` | `FALLBCK_JWT_SECRET` | generated | Signs sessions, agent tokens and tickets. Leave it empty and the server writes one to `<data_dir>/jwt.secret` on first start; set your own (32+ chars) if you'd rather manage it. Losing it signs every agent out. |
+| `data_dir` | `FALLBCK_DATA_DIR` | `/var/lib/fallbck/server` | Master key, JWT secret, agent release cache. |
 | `agent_ca_bundle_path` | `FALLBCK_AGENT_CA_BUNDLE` | | PEM bundle handed to agents at enrollment. Only for private CAs on `public_url`. |
 | `timezone` | `FALLBCK_TIMEZONE` | `TZ` / host zone, else UTC | IANA zone for [cron schedules](../operations/scheduling.md). |
 

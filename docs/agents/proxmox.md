@@ -8,7 +8,7 @@ Install `fallbck-agent` on the PVE node. On its next heartbeat it reports itself
 
 ## What's in the snapshot
 
-Each run writes one `pve.pxar` into the group `host/<hostname>-pve`:
+Each run writes one `pve.pxar` into the group `host/<backup_id>-pve` (the job's `backup_id`, by default the agent ID; jobs from before 0.15 keep the hostname):
 
 - `/etc`, with `/etc/pve` copied out of the cluster filesystem and a consistent copy of `config.db`
 - `/root`
