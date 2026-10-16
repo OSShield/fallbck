@@ -6,12 +6,12 @@ If you just want to see a quick demo of the platform, use the setup in the `demo
 It will automatically enroll an agent when you start the demo container.
 
 ## Real Setup
-The fastest way to see FallBCK run is the Compose stack in `deploy/`. It brings up Postgres and the server in dev mode with login switched off, so don't put this on the internet.
+The fastest way to see FallBCK run is the Compose stack in `deploy/`. With the dev overlay it brings up Postgres and the server with login switched off, so don't put this on the internet. Without the overlay the server expects OIDC settings and refuses to start without them.
 
 ```bash
 git clone https://github.com/osshield/fallbck.git
 cd fallbck/deploy
-docker compose up -d
+docker compose -f docker-compose.yml -f compose.dev.yml up -d
 ```
 
 Open <http://localhost:8080> for the Web UI. The embedded Temporal UI is at <http://localhost:8080/temporal/> if you want to watch workflows go by.

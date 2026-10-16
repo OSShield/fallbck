@@ -12,6 +12,12 @@ An agent needs exactly one thing: the server's public URL. That's it, no extra p
 
 Tokens rotate on their own before they expire, so there's nothing to babysit.
 
+## What the server can tell an agent to do
+
+An enrolled agent runs whatever job the server hands it, with the agent's own privileges: as root on Linux, LocalSystem on Windows, cluster-wide read on Kubernetes. The server picks the paths, the database host and user, the dump options (from a per-engine allowlist) and where the data goes. There's no agent-side allowlist of paths or targets. So whoever controls the server, or holds an admin session or API key, can read anything the agent can read, on every host it's enrolled on.
+
+That's the model to plan around: treat the server like a domain controller. Put it behind SSO with `allowed_groups`, keep API keys short-lived and few, back up its master key, and don't enroll agents from hosts whose data shouldn't be readable by the people who run the server. If you need a host where the server is *not* trusted that far, don't enroll it; run a stand-alone proxmox-backup-client there instead.
+
 ## Onboarding
 
 The easy way in is **Onboarding** in the Web UI. You'll also find it as *Add New Agent* on the Agents page and *Set Up Backups* on the Backup Jobs page. It starts with one question:

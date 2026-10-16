@@ -56,8 +56,9 @@ WAL/binlog chain state is kept per job in the `stateSecretName` Secret, so conti
 
 ## Security, the honest version
 
-- The ClusterRole reads **everything, Secrets included**. That's what a DR backup needs. It can also create pods, PVCs and VolumeSnapshots cluster-wide, because workers have to run in each volume's namespace.
-- Worker pods carry short-lived credentials (2h ticket, 6h token) in their spec and have no Kubernetes API access.
+- The ClusterRole reads **everything, Secrets included**. That's what a DR backup needs. It can also create pods, PVCs, VolumeSnapshots and Secrets cluster-wide, because workers have to run in each volume's namespace.
+- Worker pods get their short-lived credentials (2h ticket, 6h token) from a per-run Secret in their namespace, not from `Pod.spec`, and have no Kubernetes API access. The Secret is deleted with the pod.
+- A database job may only read Secrets labelled `fallbck.io/allow-db-credentials: "true"`, and only to reach a Service in the same namespace.
 
 ## Restore
 
