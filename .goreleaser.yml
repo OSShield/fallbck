@@ -321,7 +321,7 @@ uploads:
     target: https://deb.osshield.eu/upload?dist=all&component=main
     custom_artifact_name: true
     custom_headers:
-      Authorization: "Bearer {{ .Env.REPO_TOKEN }}"
+      Authorization: "Bearer {{ .Env.TRUSTED_TOKEN }}"
 
   - name: "alpine"
     ids:
@@ -335,7 +335,7 @@ uploads:
     target: https://alpine.osshield.eu/upload?repo=all
     custom_artifact_name: true
     custom_headers:
-      Authorization: "Bearer {{ .Env.REPO_TOKEN }}"
+      Authorization: "Bearer {{ .Env.TRUSTED_TOKEN }}"
 
   - name: "rhel"
     ids:
@@ -349,9 +349,10 @@ uploads:
     target: https://rpm.osshield.eu/upload?repo=all
     custom_artifact_name: true
     custom_headers:
-      Authorization: "Bearer {{ .Env.REPO_TOKEN }}"
+      Authorization: "Bearer {{ .Env.TRUSTED_TOKEN }}"
 
 release:
+  # Disable release when not on Github
   disable: "{{ eq (envOrDefault \"GITHUB_RUN_ID\" \"\") \"\" }}"
   github: {}
 
