@@ -12,6 +12,49 @@ async function apiFetch(url, options = {}) {
   return resp;
 }
 
+// 0b. Access control. The server renders the principal's permissions (the union over
+// all its bindings) into <body data-perms>. Elements marked data-perm="a:b c:d" are
+// hidden unless one of those is held: that is what the user can never do. The
+// server checks every request anyway; labels decide per object.
+function userPerms() { return new Set((document.body.dataset.perms || '').split(' ').filter(Boolean)); }
+function can(perm) { return userPerms().has(perm); }
+function applyPermVisibility(root = document) {
+  const perms = userPerms();
+  root.querySelectorAll('[data-perm]').forEach(el => {
+    if (!el.dataset.perm.split(' ').some(p => perms.has(p))) el.style.display = 'none';
+  });
+}
+document.addEventListener('DOMContentLoaded', () => applyPermVisibility());
+
+// Labels: one key=value per line in forms, an object in the API
+function parseLabels(text) {
+  const out = {};
+  for (const raw of String(text || '').split('\n')) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const i = line.indexOf('=');
+    if (i <= 0) throw new Error(`Label "${line}" is not key=value`);
+    out[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+  }
+  return out;
+}
+function formatLabels(labels) {
+  return Object.keys(labels || {}).sort().map(k => `${k}=${labels[k]}`).join('\n');
+}
+// formLabels reads a labels textarea; undefined when the form has none (the server
+// then keeps the stored labels on update)
+function formLabels(form, name = 'labels') {
+  const el = form.querySelector(`[name="${name}"]`);
+  return el ? parseLabels(el.value) : undefined;
+}
+function setFormLabels(form, labels, name = 'labels') {
+  const el = form.querySelector(`[name="${name}"]`);
+  if (el) el.value = formatLabels(labels);
+}
+function labelChips(labels) {
+  return Object.keys(labels || {}).sort().map(k => `<span class="badge badge-neutral" style="font-family: var(--font-mono); font-size: 11px;">${rdEsc(k)}=${rdEsc(labels[k])}</span>`).join(' ');
+}
+
 async function logout() {
   try {
     await apiFetch('/auth/logout', { method: 'POST' });
@@ -175,15 +218,19 @@ async function loadKeyRings() {
     body.innerHTML = rings.map(r => {
       const fp = r.key_fingerprint ? `<span class="badge badge-success" title="${rdEsc(r.key_fingerprint)}">&#128274; ${rdEsc(r.key_fingerprint.slice(0, 11))}</span>` : '<span style="color: var(--text-dim);">none</span>';
       const used = r.targets.length > 0;
+      // Names go through data- attributes: an HTML-escaped quote inside an inline
+      // handler is decoded before the script runs
+      const btn = (perm, cls, fn, label) => can(perm)
+        ? `<button class="btn ${cls} btn-sm" data-id="${rdEsc(r.id)}" data-name="${rdEsc(r.name)}" data-targets="${r.targets.length}" onclick="${fn}(this.dataset.id, this.dataset.name, +this.dataset.targets)">${label}</button>` : '';
       return `<tr>
-        <td>${rdEsc(r.name)}</td>
+        <td>${rdEsc(r.name)}<br>${labelChips(r.labels)}</td>
         <td>${fp}${r.key_created_at ? ` <span style="font-size: 11px; color: var(--text-muted);">${rdEsc(new Date(r.key_created_at).toLocaleDateString())}</span>` : ''}</td>
         <td>${used ? rdEsc(r.targets.join(', ')) : '<span style="color: var(--text-dim);">unused</span>'}</td>
         <td>${r.master_public_key ? 'RSA master key' : '<span style="color: var(--text-dim);">no</span>'}</td>
         <td style="text-align: right; white-space: nowrap;">
-          <button class="btn btn-secondary btn-sm" onclick="exportKeyRing('${r.id}', '${rdEsc(r.name)}')">Export</button>
-          <button class="btn btn-secondary btn-sm" onclick="rotateKeyRing('${r.id}', '${rdEsc(r.name)}', ${r.targets.length})">Rotate</button>
-          ${used ? '' : `<button class="btn btn-danger btn-sm" onclick="deleteKeyRing('${r.id}', '${rdEsc(r.name)}')">Delete</button>`}
+          ${btn('keyrings:export', 'btn-secondary', 'exportKeyRing', 'Export')}
+          ${btn('keyrings:write', 'btn-secondary', 'rotateKeyRing', 'Rotate')}
+          ${used ? '' : btn('keyrings:delete', 'btn-danger', 'deleteKeyRing', 'Delete')}
         </td>
       </tr>`;
     }).join('');
@@ -353,6 +400,7 @@ function loadTargetIntoForm(form, t) {
   if (hint) hint.innerText = 'Leave blank to keep the stored token, or enter a new one to replace it.';
   form.elements['encryption_mode'].value = t.encryption_mode || 'none';
   form.elements['master_public_key'].value = t.master_public_key || '';
+  setFormLabels(form, t.labels);
   loadKeyRingOptions(form, t);
   form.dataset.keyNotice = '';
   updateTargetEncryption(form, t);
@@ -372,7 +420,8 @@ function buildTargetPayload(form) {
     pxar_format: fd.get('pxar_format') || 'v1',
     encryption_mode: fd.get('encryption_mode') || 'none',
     key_ring_id: fd.get('key_ring_id') || '',
-    master_public_key: (fd.get('master_public_key') || '').trim()
+    master_public_key: (fd.get('master_public_key') || '').trim(),
+    labels: formLabels(form)
   };
 }
 
@@ -630,6 +679,7 @@ function loadJobIntoForm(form, job) {
   form.elements['target_id'].value = job.target_id || '';
   form.elements['backup_paths'].value = (job.backup_paths || []).join('\n');
   form.elements['exclude_paths'].value = (job.exclude_paths || []).join('\n');
+  setFormLabels(form, job.labels);
   const hint = form.querySelector('#db-password-hint');
   if (hint) hint.hidden = true;
   if (jobType === 'pve') {
@@ -732,6 +782,7 @@ function buildJobPayload(form) {
     agent_id: fd.get('agent_id'),
     target_id: fd.get('target_id'),
     schedule_cron: fd.get('schedule_cron') || '',
+    labels: formLabels(form),
     backup_paths: formLines(fd, 'backup_paths'),
     exclude_paths: formLines(fd, 'exclude_paths'),
     enabled: fd.get('enabled') === 'on',
@@ -954,6 +1005,7 @@ const K8S_DEFAULT_NS_EXCLUDES = ['kube-system', 'kube-node-lease', 'kube-public'
 function loadK8sJobIntoForm(form, job) {
   form.reset();
   form.dataset.jobId = job.id;
+  setFormLabels(form, job.labels);
   form.elements['name'].value = job.name || '';
   form.elements['agent_id'].value = job.agent_id || '';
   form.elements['target_id'].value = job.target_id || '';
@@ -998,6 +1050,7 @@ function buildK8sPayload(form) {
     agent_id: fd.get('agent_id'),
     target_id: fd.get('target_id'),
     job_type: 'kubernetes',
+    labels: formLabels(form),
     schedule_cron: fd.get('schedule_cron') || '',
     backup_paths: [],
     exclude_paths: [],
@@ -1101,6 +1154,24 @@ async function loadAgentLogs(agentId) {
 }
 
 // Self-update: per-agent auto-update opt-in and a one-off "update now"
+async function submitAgentLabels(e, agentId) {
+  e.preventDefault();
+  try {
+    const resp = await apiFetch(`/api/v1/agents/${agentId}/labels`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ labels: formLabels(e.target) })
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to save labels');
+    }
+    showToast('Labels saved', 'success');
+    setTimeout(() => window.location.reload(), 500);
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
 async function toggleAgentAutoUpdate(agentId, enable) {
   try {
     const resp = await apiFetch(`/api/v1/agents/${agentId}/auto-update`, {
@@ -1620,7 +1691,8 @@ function buildTenantPayload(box) {
     name: v('tenant_name'), tenant_id: v('tenant_tenant_id'), client_id: v('tenant_client_id'),
     auth_method: v('tenant_auth_method') || 'secret',
     secret: tenantField(box, 'tenant_secret').value || '',
-    certificate_pem: v('tenant_certificate_pem'), key_pem: v('tenant_key_pem')
+    certificate_pem: v('tenant_certificate_pem'), key_pem: v('tenant_key_pem'),
+    labels: formLabels(box, 'tenant_labels')
   };
   const exp = v('tenant_secret_expires');
   if (exp && payload.auth_method === 'secret') payload.secret_expires = new Date(exp + 'T00:00:00Z').toISOString();
@@ -1638,6 +1710,7 @@ function resetTenantFields(box) {
 function loadTenantIntoFields(box, t) {
   resetTenantFields(box);
   tenantField(box, 'tenant_name').value = t.name || '';
+  setFormLabels(box, t.labels, 'tenant_labels');
   tenantField(box, 'tenant_tenant_id').value = t.tenant_id || '';
   tenantField(box, 'tenant_client_id').value = t.client_id || '';
   tenantField(box, 'tenant_auth_method').value = t.auth_method || 'secret';

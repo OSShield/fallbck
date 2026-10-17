@@ -42,6 +42,32 @@ func TestDefaultAndEnvironmentOverrides(t *testing.T) {
 	if !cfg.Auth.InsecureDisable {
 		t.Error("expected insecure_disable from env")
 	}
+	if !cfg.Temporal.UI.ReadOnly {
+		t.Error("the Temporal UI must default to read-only")
+	}
+}
+
+func TestTemporalUIReadOnlyOverrides(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "server.yaml")
+	if err := os.WriteFile(file, []byte("temporal:\n  ui:\n    read_only: false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadServerConfig(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Temporal.UI.ReadOnly {
+		t.Error("read_only: false in the file should enable write actions")
+	}
+
+	t.Setenv("FALLBCK_TEMPORAL_UI_READ_ONLY", "false")
+	if cfg, err = LoadServerConfig(""); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Temporal.UI.ReadOnly {
+		t.Error("FALLBCK_TEMPORAL_UI_READ_ONLY=false should enable write actions")
+	}
 }
 
 func TestConfigFileLoading(t *testing.T) {
@@ -86,6 +112,9 @@ temporal:
 	}
 	if cfg.Temporal.UI.Enabled {
 		t.Error("ui should be disabled by file")
+	}
+	if !cfg.Temporal.UI.ReadOnly {
+		t.Error("a ui block without read_only must keep the read-only default")
 	}
 	if cfg.ProxyURL() != "https://backup.example.com/pbs-proxy" {
 		t.Errorf("ProxyURL = %s", cfg.ProxyURL())

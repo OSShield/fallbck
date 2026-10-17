@@ -129,6 +129,14 @@
 
       <div class="wizard-page" data-step="3">
         <div id="ob-instructions"></div>
+        <details id="ob-labels-box" style="margin: 12px 0; font-size: 13px;">
+          <summary style="cursor: pointer; color: var(--text-muted);">Labels for this agent (access scope)</summary>
+          <div class="form-group" style="margin-top: 8px; max-width: 480px;">
+            <textarea id="ob-labels" class="form-control" rows="2" placeholder="team=web" style="font-family: var(--font-mono); font-size: 12px;"></textarea>
+            <span class="form-text">One key=value per line. The agent gets them when it enrolls, and its new jobs and targets start with them. If you can only work within some labels, set them here, then press <em>New token</em>.</span>
+            <button type="button" class="btn btn-secondary btn-sm" style="margin-top: 6px;" onclick="ob.token = null; obRenderInstructions()">New token with these labels</button>
+          </div>
+        </details>
         <div style="background-color: var(--bg-subtle); padding: 14px; border-radius: var(--radius-sm); font-size: 13px; color: var(--text-muted);">
           <strong>What happens during enrollment:</strong>
           <ol style="margin-left: 18px; margin-top: 6px; display: flex; flex-direction: column; gap: 4px;">
@@ -230,6 +238,7 @@
             <label>Job name</label>
             <input type="text" name="name" class="form-control" placeholder="e.g. Nightly files" required>
           </div>
+          {{template "labels-field" "labels"}}
           {{template "job-fields-filesystem" .}}
           {{template "job-fields-pve" .}}
           {{template "job-fields-docker" .}}

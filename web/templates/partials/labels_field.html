@@ -1,0 +1,11 @@
+{{/* Labels textarea, one key=value per line. Call with the field name: {{template "labels-field" "labels"}} */}}
+{{define "labels-field"}}
+<div class="form-group">
+  <label>Labels (one key=value per line)</label>
+  <textarea name="{{.}}" class="form-control" rows="2" placeholder="team=web&#10;env=prod" style="font-family: var(--font-mono); font-size: 12px;"></textarea>
+  <span class="form-text">Access bindings select objects by their labels. You can only set labels inside your own access scope.</span>
+</div>
+{{end}}
+
+{{/* Read-only label chips for list rows: {{template "label-chips" .Labels}} */}}
+{{define "label-chips"}}{{range labelList .}}<span class="badge badge-neutral" style="font-family: var(--font-mono); font-size: 11px; margin: 2px 2px 0 0;">{{.}}</span>{{end}}{{end}}

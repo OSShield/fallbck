@@ -1,0 +1,71 @@
+{{define "content"}}
+<div class="page-header-actions">
+  <p style="color: var(--text-muted); font-size: 14px;">Every change, credential reveal, key export, sign-in and access change, newest first. Entries keep the labels the object had at the time, and you see the entries within your audit scope.</p>
+</div>
+
+<div class="card" style="margin-bottom: 16px; padding: 12px 16px;">
+  <form id="audit-filters" onsubmit="event.preventDefault(); loadAudit();" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; align-items: end;">
+    <div class="form-group" style="margin: 0;"><label>Actor</label><input type="text" name="actor" class="form-control" placeholder="alice@"></div>
+    <div class="form-group" style="margin: 0;"><label>Action (prefix)</label><input type="text" name="action" class="form-control" placeholder="job. or keyring.export"></div>
+    <div class="form-group" style="margin: 0;"><label>Resource</label>
+      <select name="resource" class="form-control">
+        <option value="">any</option>
+        <option>agent</option><option>job</option><option>run</option><option>target</option><option>keyring</option>
+        <option>tenant</option><option>token</option><option>apikey</option><option>role</option><option>binding</option><option>user</option>
+      </select>
+    </div>
+    <div class="form-group" style="margin: 0;"><label>From</label><input type="date" name="from" class="form-control"></div>
+    <div class="form-group" style="margin: 0;"><label>To (exclusive)</label><input type="date" name="to" class="form-control"></div>
+    <div style="display: flex; gap: 8px;">
+      <button type="submit" class="btn btn-primary btn-sm">Filter</button>
+      <button type="button" class="btn btn-secondary btn-sm" onclick="exportAudit()">CSV</button>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <table class="data-table">
+    <thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Object</th><th>Source</th><th>Details</th></tr></thead>
+    <tbody id="audit-body"><tr><td colspan="6" style="color: var(--text-dim);">Loading…</td></tr></tbody>
+  </table>
+</div>
+
+<script>
+function auditQuery(extra) {
+  const fd = new FormData(document.getElementById('audit-filters'));
+  const q = new URLSearchParams();
+  for (const [k, v] of fd.entries()) if (v) q.set(k, v);
+  for (const [k, v] of Object.entries(extra || {})) q.set(k, v);
+  return q.toString();
+}
+
+async function loadAudit() {
+  const body = document.getElementById('audit-body');
+  try {
+    const resp = await apiFetch('/api/v1/audit?' + auditQuery());
+    const rows = await resp.json();
+    if (!resp.ok) throw new Error(rows.error || 'Failed to load the audit log');
+    if (!rows.length) {
+      body.innerHTML = '<tr><td colspan="6" style="color: var(--text-dim);">No entries match.</td></tr>';
+      return;
+    }
+    body.innerHTML = rows.map(e => `<tr>
+      <td style="white-space: nowrap; font-size: 12px;">${rdEsc(new Date(e.at).toLocaleString())}</td>
+      <td><span class="badge badge-neutral">${rdEsc(e.actor_kind)}</span> ${rdEsc(e.actor)}</td>
+      <td style="font-family: var(--font-mono); font-size: 12px;">${rdEsc(e.action)}</td>
+      <td>${rdEsc(e.resource_kind)} <strong>${rdEsc(e.resource_name)}</strong><br><span style="font-size: 11px; color: var(--text-dim);">${rdEsc(e.resource_id)}</span><br>${labelChips(e.labels)}</td>
+      <td style="font-family: var(--font-mono); font-size: 12px;">${rdEsc(e.source_ip)}</td>
+      <td style="font-family: var(--font-mono); font-size: 11px; max-width: 360px; word-break: break-all;">${e.details ? rdEsc(JSON.stringify(e.details)) : ''}</td>
+    </tr>`).join('');
+  } catch (err) {
+    body.innerHTML = `<tr><td colspan="6" style="color: var(--danger-text);">${rdEsc(err.message)}</td></tr>`;
+  }
+}
+
+function exportAudit() {
+  window.location.href = '/api/v1/audit?' + auditQuery({ format: 'csv', limit: 5000 });
+}
+
+document.addEventListener('DOMContentLoaded', loadAudit);
+</script>
+{{end}}

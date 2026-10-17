@@ -50,10 +50,13 @@ func (s *ServerAPI) validateJob(ctx context.Context, job *db.BackupJob, existing
 
 	// The agent type decides which shape a database job may take (a kubernetes agent
 	// needs the in-cluster target settings), so look it up before the per-type checks
+	// The agent, target and tenant must be readable by the principal: nobody points a
+	// job at an agent or target outside their scope
+	p := auth.PrincipalFrom(ctx)
 	agentType := jobType
 	var agent *db.Agent
 	if s.DB != nil {
-		a, err := s.DB.GetAgentByID(ctx, job.AgentID)
+		a, err := s.DB.GetAgentByID(ctx, job.AgentID, p.Scope(auth.PermAgentsRead))
 		if err != nil {
 			return "Agent not found", err
 		}
@@ -76,7 +79,7 @@ func (s *ServerAPI) validateJob(ctx context.Context, job *db.BackupJob, existing
 			return err.Error(), err
 		}
 		if s.DB != nil {
-			if _, err := s.DB.GetTenantByID(ctx, job.M365Config.TenantID); err != nil {
+			if _, err := s.DB.GetTenantByID(ctx, job.M365Config.TenantID, p.Scope(auth.PermTenantsRead)); err != nil {
 				return "Microsoft 365 tenant not found", err
 			}
 		}
@@ -192,7 +195,7 @@ func (s *ServerAPI) validateJob(ctx context.Context, job *db.BackupJob, existing
 	if !db.JobAllowedOnAgent(jobType, agentType) {
 		return "Agent " + agent.Hostname + " is a " + agentType + " agent and cannot run " + jobType + " jobs", errors.New("agent type mismatch")
 	}
-	if _, err := s.DB.GetTargetByID(ctx, job.TargetID); err != nil {
+	if _, err := s.DB.GetTargetByID(ctx, job.TargetID, p.Scope(auth.PermTargetsRead)); err != nil {
 		return "Backup target not found", err
 	}
 	return "", nil
@@ -222,7 +225,7 @@ func (s *ServerAPI) HandleDBCredentials(w http.ResponseWriter, r *http.Request) 
 		s.writeError(w, http.StatusForbidden, "backup ticket was not issued to this agent")
 		return
 	}
-	job, err := s.DB.GetJobByID(r.Context(), claims.JobID)
+	job, err := s.DB.GetJobByID(r.Context(), claims.JobID, db.Unscoped)
 	if err != nil {
 		s.writeError(w, http.StatusNotFound, "job not found")
 		return

@@ -31,7 +31,7 @@ const (
 
 // TargetStore looks up backup targets (implemented by *db.DB)
 type TargetStore interface {
-	GetTargetByID(ctx context.Context, id uuid.UUID) (*db.BackupTarget, error)
+	GetTargetByID(ctx context.Context, id uuid.UUID, scope db.Scope) (*db.BackupTarget, error)
 }
 
 // SessionOpener opens a PBS backup session for a target (OpenBackupSession by default)
@@ -109,7 +109,7 @@ func (t *BackupTunnel) Session(ss grpc.ServerStream) error {
 		return status.Error(codes.PermissionDenied, "backup ticket was not issued to this agent")
 	}
 
-	target, err := t.targets.GetTargetByID(ctx, claims.TargetID)
+	target, err := t.targets.GetTargetByID(ctx, claims.TargetID, db.Unscoped)
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			return status.Error(codes.NotFound, "backup target no longer exists")

@@ -61,7 +61,7 @@
             <td style="text-align: right; display: flex; justify-content: flex-end; gap: 8px;">
               <a href="/runs/{{.ID}}" class="btn btn-secondary btn-sm">Details</a>
               {{if .Status.IsActive}}
-              <button class="btn btn-sm btn-danger" onclick="cancelRun('{{.ID}}')">Cancel</button>
+              <button class="btn btn-sm btn-danger" data-perm="jobs:run" onclick="cancelRun('{{.ID}}')">Cancel</button>
               {{end}}
             </td>
           </tr>

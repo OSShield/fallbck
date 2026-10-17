@@ -63,17 +63,17 @@ func (s *ServerActivities) PrepareBackupSession(ctx context.Context, jobID uuid.
 		}, nil
 	}
 
-	job, err := s.DB.GetJobByID(ctx, jobID)
+	job, err := s.DB.GetJobByID(ctx, jobID, db.Unscoped)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch job: %w", err)
 	}
 
-	agent, err := s.DB.GetAgentByID(ctx, job.AgentID)
+	agent, err := s.DB.GetAgentByID(ctx, job.AgentID, db.Unscoped)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch agent: %w", err)
 	}
 
-	target, err := s.DB.GetTargetByID(ctx, job.TargetID)
+	target, err := s.DB.GetTargetByID(ctx, job.TargetID, db.Unscoped)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch backup target: %w", err)
 	}
@@ -113,7 +113,7 @@ func (s *ServerActivities) PrepareBackupSession(ctx context.Context, jobID uuid.
 			return nil, sdktemporal.NewNonRetryableApplicationError("Microsoft 365 job has no configuration", "job_invalid", nil)
 		}
 		m365Spec = job.M365Config
-		tenant, err := s.DB.GetTenantByID(ctx, m365Spec.TenantID)
+		tenant, err := s.DB.GetTenantByID(ctx, m365Spec.TenantID, db.Unscoped)
 		if err != nil {
 			return nil, sdktemporal.NewNonRetryableApplicationError(
 				fmt.Sprintf("the Microsoft 365 tenant of job %s no longer exists", job.Name), "job_invalid", nil)

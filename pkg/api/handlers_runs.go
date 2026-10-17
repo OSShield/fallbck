@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/osshield/fallbck/pkg/auth"
 	"github.com/osshield/fallbck/pkg/db"
 	"go.temporal.io/api/serviceerror"
 )
@@ -20,7 +21,7 @@ func (s *ServerAPI) HandleGetRun(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, "Invalid run ID")
 		return
 	}
-	run, err := s.DB.GetRunByID(r.Context(), id)
+	run, err := s.DB.GetRunByID(r.Context(), id, scope(r, auth.PermJobsRead))
 	if err != nil {
 		s.writeError(w, http.StatusNotFound, "Run not found")
 		return
@@ -38,9 +39,17 @@ func (s *ServerAPI) HandleCancelRun(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, "Invalid run ID")
 		return
 	}
-	run, err := s.DB.GetRunByID(r.Context(), id)
+	run, err := s.DB.GetRunByID(r.Context(), id, scope(r, auth.PermJobsRead))
 	if err != nil {
 		s.writeError(w, http.StatusNotFound, "Run not found")
+		return
+	}
+	job, err := s.DB.GetJobByID(r.Context(), run.JobID, db.Unscoped)
+	if err != nil {
+		s.writeError(w, http.StatusNotFound, "Run not found")
+		return
+	}
+	if !s.allow(w, r, auth.PermJobsRun, job.Labels) {
 		return
 	}
 	if !run.Status.IsActive() {
@@ -75,6 +84,7 @@ func (s *ServerAPI) HandleCancelRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slog.Info("Backup run cancellation requested", "run_id", run.ID, "workflow_id", run.WorkflowID, "status", status)
+	s.audit(r, "run.cancel", "run", run.ID.String(), job.Name, job.Labels, map[string]any{"job": job.ID, "status": status})
 	s.writeJSON(w, http.StatusOK, map[string]string{"status": string(status), "run_id": run.ID.String()})
 }
 
@@ -86,9 +96,12 @@ func (s *ServerAPI) HandleUpdateJob(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, "Invalid job ID")
 		return
 	}
-	existing, err := s.DB.GetJobByID(r.Context(), id)
+	existing, err := s.DB.GetJobByID(r.Context(), id, scope(r, auth.PermJobsRead))
 	if err != nil {
 		s.writeError(w, http.StatusNotFound, "Job not found")
+		return
+	}
+	if !s.allow(w, r, auth.PermJobsWrite, existing.Labels) {
 		return
 	}
 
@@ -97,6 +110,11 @@ func (s *ServerAPI) HandleUpdateJob(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
+	labels, ok := s.newLabels(w, r, auth.PermJobsWrite, existing.Labels, job.Labels)
+	if !ok {
+		return
+	}
+	job.Labels = labels
 	if msg, err := s.validateJob(r.Context(), &job, existing); err != nil {
 		s.writeError(w, http.StatusBadRequest, msg)
 		return
@@ -113,7 +131,8 @@ func (s *ServerAPI) HandleUpdateJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.syncJobSchedule(r.Context(), &job)
-	updated, err := s.DB.GetJobByID(r.Context(), job.ID)
+	s.audit(r, "job.update", "job", job.ID.String(), job.Name, job.Labels, map[string]any{"old_labels": existing.Labels, "agent": job.AgentID, "target": job.TargetID, "enabled": job.Enabled})
+	updated, err := s.DB.GetJobByID(r.Context(), job.ID, db.Unscoped)
 	if err != nil {
 		s.writeJSON(w, http.StatusOK, job.Sanitize())
 		return

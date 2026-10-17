@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/osshield/fallbck/pkg/auth"
+	"github.com/osshield/fallbck/pkg/db"
 )
 
 // EnrollRequest is sent by an agent to enroll with the central server
@@ -53,6 +55,8 @@ type CreateTokenRequest struct {
 	Name      string    `json:"name"`
 	MaxUses   int       `json:"max_uses"` // 0 for unlimited, default 1
 	ExpiresAt time.Time `json:"expires_at"`
+	// Labels are copied onto every agent enrolled with the token
+	Labels db.Labels `json:"labels"`
 }
 
 // CreateTokenResponse returns the raw one-time enrollment token to the admin
@@ -62,6 +66,7 @@ type CreateTokenResponse struct {
 	RawToken  string    `json:"raw_token"`
 	ExpiresAt time.Time `json:"expires_at"`
 	MaxUses   int       `json:"max_uses"`
+	Labels    db.Labels `json:"labels"`
 }
 
 // HeartbeatRequest is sent by an agent periodically
@@ -137,6 +142,11 @@ type SetAgentDebugRequest struct {
 type CreateAPIKeyRequest struct {
 	Name      string     `json:"name"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	// Role and Selector are the key's one binding; the creator must already hold
+	// every permission of the role on a selector this one narrows. Default: admin
+	// on everything.
+	Role     string    `json:"role"`
+	Selector db.Labels `json:"selector"`
 }
 
 // CreateAPIKeyResponse returns the raw key exactly once
@@ -145,6 +155,8 @@ type CreateAPIKeyResponse struct {
 	Name      string     `json:"name"`
 	RawKey    string     `json:"raw_key"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	Role      string     `json:"role"`
+	Selector  db.Labels  `json:"selector"`
 }
 
 // MeResponse describes the authenticated admin principal
@@ -153,6 +165,10 @@ type MeResponse struct {
 	Subject string `json:"subject"`
 	Email   string `json:"email,omitempty"`
 	Name    string `json:"name,omitempty"`
+	// Permissions is the union over every binding, whatever its selector: what the
+	// principal can do somewhere. The UI hides the rest; the server checks anyway.
+	Permissions []string       `json:"permissions"`
+	Bindings    []auth.Binding `json:"bindings"`
 }
 
 // CreateTargetRequest registers a backup target. AuthToken is the PBS API token
@@ -168,6 +184,8 @@ type CreateTargetRequest struct {
 	Fingerprint string `json:"fingerprint"`
 	TLSVerify   bool   `json:"tls_verify"`
 	PxarFormat  string `json:"pxar_format"`
+	// Labels: nil on update keeps the stored labels
+	Labels db.Labels `json:"labels"`
 	// EncryptionMode none | encrypt ("" = none on create, unchanged on update).
 	// KeyRingID attaches the target to an existing key ring (shared key, shared
 	// dedup); empty with encrypt creates a ring named after the target.

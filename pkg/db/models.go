@@ -203,9 +203,11 @@ type Agent struct {
 	InventoryDetail   json.RawMessage `json:"inventory_detail,omitempty" db:"inventory_detail"`
 	InventoryDetailAt *time.Time      `json:"inventory_detail_at,omitempty" db:"inventory_detail_at"`
 	Status            AgentStatus     `json:"status" db:"status"`
-	LastSeenAt        *time.Time      `json:"last_seen_at" db:"last_seen_at"`
-	CreatedAt         time.Time       `json:"created_at" db:"created_at"`
-	UpdatedAt         time.Time       `json:"updated_at" db:"updated_at"`
+	// Labels place the agent in access scopes; copied from the enrollment token
+	Labels     Labels     `json:"labels"`
+	LastSeenAt *time.Time `json:"last_seen_at" db:"last_seen_at"`
+	CreatedAt  time.Time  `json:"created_at" db:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at" db:"updated_at"`
 }
 
 // EnrollmentToken represents a one-time or multi-use token for agent onboarding
@@ -221,6 +223,8 @@ type EnrollmentToken struct {
 	AgentID *uuid.UUID `json:"agent_id,omitempty" db:"agent_id"`
 	// AgentHostname is joined for display; empty when no agent used the token
 	AgentHostname string `json:"agent_hostname,omitempty" db:"-"`
+	// Labels are copied onto every agent that enrolls with the token
+	Labels Labels `json:"labels"`
 }
 
 // Status describes whether the token can still be used
@@ -271,7 +275,8 @@ type BackupTarget struct {
 	KeyCreatedAt    *time.Time `json:"key_created_at,omitempty" db:"-"`
 
 	// HasToken reports whether an API token is stored (the token itself is never returned)
-	HasToken bool `json:"has_token" db:"-"`
+	HasToken bool   `json:"has_token" db:"-"`
+	Labels   Labels `json:"labels"`
 }
 
 // Encryption modes of a target
@@ -303,6 +308,7 @@ type KeyRing struct {
 	KeyFingerprint string     `json:"key_fingerprint,omitempty"`
 	KeyCreatedAt   *time.Time `json:"key_created_at,omitempty"`
 	Targets        []string   `json:"targets"`
+	Labels         Labels     `json:"labels"`
 }
 
 // TargetKey is one encryption key of a key ring. Key is in clear in memory only; the
@@ -377,6 +383,9 @@ type BackupJob struct {
 	M365Config *m365.Spec `json:"m365_config,omitempty" db:"m365_config"`
 	CreatedAt  time.Time  `json:"created_at" db:"created_at"`
 	UpdatedAt  time.Time  `json:"updated_at" db:"updated_at"`
+	// Labels place the job and all of its runs in access scopes. On update, an
+	// absent field (nil) keeps the stored labels; {} clears them.
+	Labels Labels `json:"labels"`
 
 	// Joined fields for display
 	AgentName  string `json:"agent_name,omitempty"`

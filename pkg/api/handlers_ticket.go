@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/osshield/fallbck/pkg/auth"
+	"github.com/osshield/fallbck/pkg/db"
 )
 
 // refreshedTicketTTL matches the session ticket lifetime issued by PrepareBackupSession
@@ -65,7 +66,7 @@ func (s *ServerAPI) HandleRefreshTicket(w http.ResponseWriter, r *http.Request) 
 	}
 	// The job may have been moved to another agent or target since the run started
 	if s.DB != nil {
-		job, err := s.DB.GetJobByID(r.Context(), claims.JobID)
+		job, err := s.DB.GetJobByID(r.Context(), claims.JobID, db.Unscoped)
 		if err != nil || job.AgentID != claims.AgentID || job.TargetID != claims.TargetID {
 			slog.Warn("Ticket refresh for a job that no longer belongs to this agent and target", "agent_id", agent.AgentID, "job_id", claims.JobID)
 			s.writeError(w, http.StatusForbidden, "job no longer belongs to this agent and target")

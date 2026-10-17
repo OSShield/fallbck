@@ -85,13 +85,16 @@ type APIKey struct {
 	LastUsedAt *time.Time `json:"last_used_at"`
 	ExpiresAt  *time.Time `json:"expires_at"`
 	RevokedAt  *time.Time `json:"revoked_at"`
+	// Role and Selector are the key's single access binding
+	Role     string `json:"role"`
+	Selector Labels `json:"selector"`
 }
 
-const apiKeyColumns = `id, name, key_hash, created_by, created_at, last_used_at, expires_at, revoked_at`
+const apiKeyColumns = `id, name, key_hash, created_by, created_at, last_used_at, expires_at, revoked_at, role, selector`
 
 func scanAPIKey(row pgx.Row) (*APIKey, error) {
 	var k APIKey
-	if err := row.Scan(&k.ID, &k.Name, &k.KeyHash, &k.CreatedBy, &k.CreatedAt, &k.LastUsedAt, &k.ExpiresAt, &k.RevokedAt); err != nil {
+	if err := row.Scan(&k.ID, &k.Name, &k.KeyHash, &k.CreatedBy, &k.CreatedAt, &k.LastUsedAt, &k.ExpiresAt, &k.RevokedAt, &k.Role, &k.Selector); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -105,9 +108,12 @@ func (d *DB) CreateAPIKey(ctx context.Context, key *APIKey) error {
 		key.ID = uuid.New()
 	}
 	key.CreatedAt = time.Now().UTC()
+	if key.Role == "" {
+		key.Role = "admin"
+	}
 	_, err := d.Pool.Exec(ctx,
-		`INSERT INTO api_keys (id, name, key_hash, created_by, created_at, expires_at) VALUES ($1, $2, $3, $4, $5, $6)`,
-		key.ID, key.Name, key.KeyHash, key.CreatedBy, key.CreatedAt, key.ExpiresAt)
+		`INSERT INTO api_keys (id, name, key_hash, created_by, created_at, expires_at, role, selector) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		key.ID, key.Name, key.KeyHash, key.CreatedBy, key.CreatedAt, key.ExpiresAt, key.Role, key.Selector.JSON())
 	return err
 }
 

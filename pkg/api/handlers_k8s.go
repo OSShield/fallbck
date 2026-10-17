@@ -76,7 +76,7 @@ func (s *ServerAPI) ticketContext(w http.ResponseWriter, r *http.Request) (*auth
 		s.writeError(w, http.StatusForbidden, "backup ticket was not issued to this agent")
 		return nil, nil, nil, false
 	}
-	row, err := s.DB.GetAgentByID(r.Context(), agent.AgentID)
+	row, err := s.DB.GetAgentByID(r.Context(), agent.AgentID, db.Unscoped)
 	if err != nil {
 		s.writeError(w, http.StatusNotFound, "agent not found")
 		return nil, nil, nil, false
@@ -129,7 +129,7 @@ func (s *ServerAPI) HandleSubTicket(w http.ResponseWriter, r *http.Request) {
 	if agentType, _ := db.NormalizeAgentType(row.AgentType); agentType == db.AgentTypeKubernetes {
 		prefix, hint = k8sbackup.VolumeGroupPrefix(claims.BackupID), "-pvc-<namespace>-<name>"
 	} else {
-		job, err := s.DB.GetJobByID(r.Context(), claims.JobID)
+		job, err := s.DB.GetJobByID(r.Context(), claims.JobID, db.Unscoped)
 		if err != nil {
 			s.writeError(w, http.StatusNotFound, "job not found")
 			return

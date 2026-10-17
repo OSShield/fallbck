@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/osshield/fallbck/pkg/auth"
+	"github.com/osshield/fallbck/pkg/db"
 	"github.com/osshield/fallbck/pkg/rundetail"
 )
 
@@ -47,7 +48,7 @@ func (s *ServerAPI) HandleRunProgress(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	run, err := s.DB.GetRunByID(r.Context(), req.RunID)
+	run, err := s.DB.GetRunByID(r.Context(), req.RunID, db.Unscoped)
 	if err != nil {
 		s.writeError(w, http.StatusNotFound, "run not found")
 		return

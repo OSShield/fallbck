@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/osshield/fallbck/pkg/auth"
 	"github.com/osshield/fallbck/pkg/db"
 	"github.com/osshield/fallbck/pkg/temporal"
 	"go.temporal.io/sdk/client"
@@ -68,10 +69,11 @@ func containsAny(s string, subs ...string) bool {
 
 // HandleAgentLogs fetches the agent's recent log lines (POST /agents/{id}/logs)
 func (s *ServerAPI) HandleAgentLogs(w http.ResponseWriter, r *http.Request) {
-	agent, ok := s.agentFromPath(w, r)
+	agent, ok := s.agentFromPath(w, r, auth.PermAgentsWrite)
 	if !ok {
 		return
 	}
+	s.audit(r, "agent.logs", "agent", agent.ID.String(), agent.Hostname, agent.Labels, nil)
 	res, err := s.runAgentOp(r.Context(), agent, "logs")
 	if err != nil {
 		code, msg := agentOpError(err)
@@ -85,7 +87,7 @@ func (s *ServerAPI) HandleAgentLogs(w http.ResponseWriter, r *http.Request) {
 // HandleAgentInventory refreshes the agent's full inventory and stores it
 // (POST /agents/{id}/inventory)
 func (s *ServerAPI) HandleAgentInventory(w http.ResponseWriter, r *http.Request) {
-	agent, ok := s.agentFromPath(w, r)
+	agent, ok := s.agentFromPath(w, r, auth.PermAgentsWrite)
 	if !ok {
 		return
 	}
@@ -111,15 +113,20 @@ func (s *ServerAPI) HandleAgentInventory(w http.ResponseWriter, r *http.Request)
 	s.writeJSON(w, http.StatusOK, res.Inventory)
 }
 
-func (s *ServerAPI) agentFromPath(w http.ResponseWriter, r *http.Request) (*db.Agent, bool) {
+// agentFromPath loads the agent named in the path within agents:read and checks perm
+// on its labels (404 when unreadable, 403 when readable but perm is missing)
+func (s *ServerAPI) agentFromPath(w http.ResponseWriter, r *http.Request, perm string) (*db.Agent, bool) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		s.writeError(w, http.StatusBadRequest, "Invalid agent ID")
 		return nil, false
 	}
-	agent, err := s.DB.GetAgentByID(r.Context(), id)
+	agent, err := s.DB.GetAgentByID(r.Context(), id, scope(r, auth.PermAgentsRead))
 	if err != nil {
 		s.writeError(w, http.StatusNotFound, "Agent not found")
+		return nil, false
+	}
+	if !s.allow(w, r, perm, agent.Labels) {
 		return nil, false
 	}
 	return agent, true

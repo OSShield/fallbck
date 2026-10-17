@@ -72,7 +72,7 @@
         {{if .Jobs}}
           {{range .Jobs}}
           <tr class="job-row" data-type="{{if .JobType}}{{.JobType}}{{else}}filesystem{{end}}" data-enabled="{{if .Enabled}}yes{{else}}no{{end}}" data-lastrun="{{if .LastRun}}{{.LastRun.Status}}{{else}}never{{end}}" data-agent="{{.AgentName}}" data-target="{{.TargetName}}" data-schedule="{{if .ScheduleCron}}scheduled{{else}}manual{{end}}">
-            <td><strong>{{.Name}}</strong></td>
+            <td><strong>{{.Name}}</strong><br>{{template "label-chips" .Labels}}</td>
             <td>
               {{if .IsKubernetes}}<span class="badge badge-info">Kubernetes</span>
               {{else if .IsDocker}}<span class="badge badge-info">Docker host</span>
@@ -134,9 +134,9 @@
               {{end}}
             </td>
             <td style="text-align: right; display: flex; justify-content: flex-end; gap: 8px;">
-              <button class="btn btn-primary btn-sm" onclick="triggerJobRun('{{.ID}}')">Run Now</button>
-              <button class="btn btn-secondary btn-sm" onclick="{{if .IsKubernetes}}editK8sJob{{else}}editJob{{end}}('{{.ID}}')">Edit</button>
-              <button class="btn btn-secondary btn-sm" style="color: var(--danger-text);" onclick="deleteResource('jobs', '{{.ID}}')">Delete</button>
+              <button class="btn btn-primary btn-sm" data-perm="jobs:run" onclick="triggerJobRun('{{.ID}}')">Run Now</button>
+              <button class="btn btn-secondary btn-sm" data-perm="jobs:write" onclick="{{if .IsKubernetes}}editK8sJob{{else}}editJob{{end}}('{{.ID}}')">Edit</button>
+              <button class="btn btn-secondary btn-sm" style="color: var(--danger-text);" data-perm="jobs:delete" onclick="deleteResource('jobs', '{{.ID}}')">Delete</button>
             </td>
           </tr>
           {{end}}
@@ -211,6 +211,7 @@
         {{template "job-fields-m365" .}}
         {{template "job-fields-database" .}}
         {{template "job-schedule" .}}
+        {{template "labels-field" "labels"}}
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" onclick="closeModal('modal-add-job')">Cancel</button>
@@ -257,6 +258,7 @@
 
         {{template "job-fields-kubernetes" .}}
         {{template "job-schedule" .}}
+        {{template "labels-field" "labels"}}
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" onclick="closeModal('modal-add-k8s-job')">Cancel</button>

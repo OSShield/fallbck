@@ -491,13 +491,33 @@ function obRenderPlatforms() {
   obMarkSelected('platform', ob.platform);
 }
 
+// obLabels are the labels typed on the install step: they go on the token (so the
+// agent enrolls with them) and prefill the new target and job forms
+function obLabels() {
+  const el = document.getElementById('ob-labels');
+  return el ? parseLabels(el.value) : {};
+}
+
+function obPrefillLabels(labels) {
+  for (const id of ['job-form', 'target-form']) {
+    const f = document.getElementById(id);
+    const el = f && f.querySelector('[name="labels"]');
+    if (el && !el.value.trim()) el.value = formatLabels(labels);
+  }
+}
+
 async function obMintToken() {
+  const labels = obLabels();
   const resp = await apiFetch('/api/v1/tokens', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: `Onboarding-${ob.type}-${new Date().toISOString().slice(0, 19)}`, max_uses: 1, expires_at: new Date(Date.now() + 24 * 3600 * 1000) })
+    body: JSON.stringify({ name: `Onboarding-${ob.type}-${new Date().toISOString().slice(0, 19)}`, max_uses: 1, expires_at: new Date(Date.now() + 24 * 3600 * 1000), labels })
   });
-  if (!resp.ok) throw new Error('Token generation failed');
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.error || 'Token generation failed');
+  }
+  obPrefillLabels(labels);
   const data = await resp.json();
   ob.tokenId = data.id;
   ob.token = data.raw_token;
@@ -586,6 +606,7 @@ async function obPoll() {
 async function obLoadAgent() {
   const resp = await apiFetch(`/api/v1/agents/${ob.agentId}`);
   ob.agent = resp.ok ? await resp.json() : null;
+  if (ob.agent) obPrefillLabels(ob.agent.labels);
 }
 
 function obAgentCaps(a) {

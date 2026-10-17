@@ -42,7 +42,7 @@ func (s *ServerAPI) tenantID(w http.ResponseWriter, r *http.Request) (uuid.UUID,
 
 // HandleListTenants returns every tenant (credentials redacted)
 func (s *ServerAPI) HandleListTenants(w http.ResponseWriter, r *http.Request) {
-	tenants, err := s.DB.ListTenants(r.Context())
+	tenants, err := s.DB.ListTenants(r.Context(), scope(r, auth.PermTenantsRead))
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, "Failed to list tenants")
 		return
@@ -55,16 +55,29 @@ func (s *ServerAPI) HandleListTenants(w http.ResponseWriter, r *http.Request) {
 
 // HandleGetTenant returns one tenant (credentials redacted)
 func (s *ServerAPI) HandleGetTenant(w http.ResponseWriter, r *http.Request) {
-	id, ok := s.tenantID(w, r)
+	t, ok := s.tenantFromPath(w, r, auth.PermTenantsRead)
 	if !ok {
 		return
 	}
-	t, err := s.DB.GetTenantByID(r.Context(), id)
+	s.writeJSON(w, http.StatusOK, t)
+}
+
+// tenantFromPath loads the tenant named in the path within tenants:read and checks
+// perm on its labels
+func (s *ServerAPI) tenantFromPath(w http.ResponseWriter, r *http.Request, perm string) (*m365.Tenant, bool) {
+	id, ok := s.tenantID(w, r)
+	if !ok {
+		return nil, false
+	}
+	t, err := s.DB.GetTenantByID(r.Context(), id, scope(r, auth.PermTenantsRead))
 	if err != nil {
 		s.writeError(w, http.StatusNotFound, "Tenant not found")
-		return
+		return nil, false
 	}
-	s.writeJSON(w, http.StatusOK, t)
+	if !s.allow(w, r, perm, t.Labels) {
+		return nil, false
+	}
+	return t, true
 }
 
 // HandleCreateTenant registers a tenant
@@ -77,6 +90,10 @@ func (s *ServerAPI) HandleCreateTenant(w http.ResponseWriter, r *http.Request) {
 	t := req.Tenant
 	t.ID = uuid.Nil
 	t.Secret, t.CertificatePEM, t.KeyPEM = req.Secret, req.CertificatePEM, req.KeyPEM
+	t.Labels = db.Labels(t.Labels).OrEmpty()
+	if !s.validLabels(w, t.Labels) || !s.allow(w, r, auth.PermTenantsWrite, t.Labels) {
+		return
+	}
 	if err := t.Validate(); err != nil {
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -87,26 +104,28 @@ func (s *ServerAPI) HandleCreateTenant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slog.Info("Microsoft 365 tenant created", "tenant", t.Name, "tenant_id", t.TenantID, "auth", t.AuthMethod)
+	s.audit(r, "tenant.create", "tenant", t.ID.String(), t.Name, t.Labels, map[string]any{"tenant_id": t.TenantID, "auth": t.AuthMethod})
 	s.writeJSON(w, http.StatusCreated, t.Sanitize())
 }
 
 // HandleUpdateTenant replaces a tenant's settings; blank credentials keep the stored ones
 func (s *ServerAPI) HandleUpdateTenant(w http.ResponseWriter, r *http.Request) {
-	id, ok := s.tenantID(w, r)
+	existing, ok := s.tenantFromPath(w, r, auth.PermTenantsWrite)
 	if !ok {
 		return
 	}
-	existing, err := s.DB.GetTenantByID(r.Context(), id)
-	if err != nil {
-		s.writeError(w, http.StatusNotFound, "Tenant not found")
-		return
-	}
+	id := existing.ID
 	var req TenantRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
+	labels, ok := s.newLabels(w, r, auth.PermTenantsWrite, existing.Labels, req.Labels)
+	if !ok {
+		return
+	}
 	t := req.Tenant
+	t.Labels = labels
 	t.ID, t.CreatedAt = existing.ID, existing.CreatedAt
 	t.Secret, t.CertificatePEM, t.KeyPEM = req.Secret, req.CertificatePEM, req.KeyPEM
 	if t.Secret == "" {
@@ -128,17 +147,19 @@ func (s *ServerAPI) HandleUpdateTenant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slog.Info("Microsoft 365 tenant updated", "tenant", t.Name, "auth", t.AuthMethod, "credential_changed", req.Secret != "" || req.KeyPEM != "")
+	s.audit(r, "tenant.update", "tenant", t.ID.String(), t.Name, t.Labels, map[string]any{"old_labels": existing.Labels, "credential_changed": req.Secret != "" || req.KeyPEM != ""})
 	s.writeJSON(w, http.StatusOK, t.Sanitize())
 }
 
 // HandleDeleteTenant removes a tenant no job references
 func (s *ServerAPI) HandleDeleteTenant(w http.ResponseWriter, r *http.Request) {
-	id, ok := s.tenantID(w, r)
+	t, ok := s.tenantFromPath(w, r, auth.PermTenantsDelete)
 	if !ok {
 		return
 	}
-	switch err := s.DB.DeleteTenant(r.Context(), id); {
+	switch err := s.DB.DeleteTenant(r.Context(), t.ID); {
 	case err == nil:
+		s.audit(r, "tenant.delete", "tenant", t.ID.String(), t.Name, t.Labels, nil)
 		s.writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 	case errors.Is(err, db.ErrTenantInUse):
 		s.writeError(w, http.StatusConflict, "The tenant is used by backup jobs; delete or re-point them first")
@@ -153,13 +174,8 @@ func (s *ServerAPI) HandleDeleteTenant(w http.ResponseWriter, r *http.Request) {
 // organization (POST /m365/tenants/{id}/test). The server itself talks to Microsoft
 // here, so a failure can also mean the server has no outbound HTTPS; the error says so.
 func (s *ServerAPI) HandleTestTenant(w http.ResponseWriter, r *http.Request) {
-	id, ok := s.tenantID(w, r)
+	t, ok := s.tenantFromPath(w, r, auth.PermTenantsWrite)
 	if !ok {
-		return
-	}
-	t, err := s.DB.GetTenantByID(r.Context(), id)
-	if err != nil {
-		s.writeError(w, http.StatusNotFound, "Tenant not found")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), tenantTestTimeout)
@@ -196,7 +212,7 @@ func (s *ServerAPI) HandleM365Credentials(w http.ResponseWriter, r *http.Request
 		s.writeError(w, http.StatusForbidden, "backup ticket was not issued to this agent")
 		return
 	}
-	job, err := s.DB.GetJobByID(r.Context(), claims.JobID)
+	job, err := s.DB.GetJobByID(r.Context(), claims.JobID, db.Unscoped)
 	if err != nil {
 		s.writeError(w, http.StatusNotFound, "job not found")
 		return
@@ -205,7 +221,7 @@ func (s *ServerAPI) HandleM365Credentials(w http.ResponseWriter, r *http.Request
 		s.writeError(w, http.StatusForbidden, "job is not a Microsoft 365 job")
 		return
 	}
-	t, err := s.DB.GetTenantByID(r.Context(), job.M365Config.TenantID)
+	t, err := s.DB.GetTenantByID(r.Context(), job.M365Config.TenantID, db.Unscoped)
 	if err != nil {
 		s.writeError(w, http.StatusNotFound, "the job's tenant no longer exists")
 		return

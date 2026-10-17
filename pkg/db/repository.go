@@ -39,17 +39,18 @@ func (d *DB) CreateAgent(ctx context.Context, agent *Agent) error {
 	agent.UpdatedAt = now
 
 	query := `
-		INSERT INTO agents (id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, pve_host, docker_host, db_tools, db_engines)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+		INSERT INTO agents (id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, pve_host, docker_host, db_tools, db_engines, labels)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 		RETURNING id, created_at, updated_at
 	`
 	if agent.AgentType == "" {
 		agent.AgentType = AgentTypeFilesystem
 	}
+	agent.Labels = agent.Labels.OrEmpty()
 	return d.Pool.QueryRow(ctx, query,
 		agent.ID, agent.Hostname, agent.IPAddress, agent.OS, agent.Arch,
 		agent.Version, agent.TaskQueue, agent.Status, agent.LastSeenAt,
-		agent.CreatedAt, agent.UpdatedAt, agent.AgentType, agent.PVEHost, agent.DockerHost, agent.DBTools, enginesOrEmpty(agent.DBEngines),
+		agent.CreatedAt, agent.UpdatedAt, agent.AgentType, agent.PVEHost, agent.DockerHost, agent.DBTools, enginesOrEmpty(agent.DBEngines), agent.Labels.JSON(),
 	).Scan(&agent.ID, &agent.CreatedAt, &agent.UpdatedAt)
 }
 
@@ -84,29 +85,31 @@ func (d *DB) UpsertAgent(ctx context.Context, agent *Agent) error {
 	).Scan(&agent.CreatedAt, &agent.UpdatedAt)
 }
 
-func (d *DB) GetAgentByID(ctx context.Context, id uuid.UUID) (*Agent, error) {
-	query := `
-		SELECT id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, debug_logging, pve_host, docker_host, db_tools, db_engines, inventory, inventory_at, inventory_detail, inventory_detail_at, auto_update, self_update, update_requested_at, update_error
-		FROM agents WHERE id = $1
-	`
-	row := d.Pool.QueryRow(ctx, query, id)
+const agentSelect = `SELECT id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, debug_logging, pve_host, docker_host, db_tools, db_engines, inventory, inventory_at, inventory_detail, inventory_detail_at, auto_update, self_update, update_requested_at, update_error, labels
+	FROM agents`
+
+func scanAgent(row pgx.Row) (*Agent, error) {
 	var a Agent
-	err := row.Scan(&a.ID, &a.Hostname, &a.IPAddress, &a.OS, &a.Arch, &a.Version, &a.TaskQueue, &a.Status, &a.LastSeenAt, &a.CreatedAt, &a.UpdatedAt, &a.AgentType, &a.DebugLogging, &a.PVEHost, &a.DockerHost, &a.DBTools, &a.DBEngines, &a.Inventory, &a.InventoryAt, &a.InventoryDetail, &a.InventoryDetailAt, &a.AutoUpdate, &a.SelfUpdate, &a.UpdateRequestedAt, &a.UpdateError)
+	err := row.Scan(&a.ID, &a.Hostname, &a.IPAddress, &a.OS, &a.Arch, &a.Version, &a.TaskQueue, &a.Status, &a.LastSeenAt, &a.CreatedAt, &a.UpdatedAt, &a.AgentType, &a.DebugLogging, &a.PVEHost, &a.DockerHost, &a.DBTools, &a.DBEngines, &a.Inventory, &a.InventoryAt, &a.InventoryDetail, &a.InventoryDetailAt, &a.AutoUpdate, &a.SelfUpdate, &a.UpdateRequestedAt, &a.UpdateError, &a.Labels)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrNotFound
-		}
 		return nil, err
 	}
 	return &a, nil
 }
 
-func (d *DB) ListAgents(ctx context.Context) ([]*Agent, error) {
-	query := `
-		SELECT id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, debug_logging, pve_host, docker_host, db_tools, db_engines, inventory, inventory_at, inventory_detail, inventory_detail_at, auto_update, self_update, update_requested_at, update_error
-		FROM agents ORDER BY hostname ASC
-	`
-	rows, err := d.Pool.Query(ctx, query)
+// GetAgentByID loads an agent within scope (ErrNotFound outside it)
+func (d *DB) GetAgentByID(ctx context.Context, id uuid.UUID, scope Scope) (*Agent, error) {
+	where, args := scope.SQL("labels", []any{id})
+	return scanAgent(d.Pool.QueryRow(ctx, agentSelect+` WHERE id = $1 AND `+where, args...))
+}
+
+// ListAgents lists the agents within scope
+func (d *DB) ListAgents(ctx context.Context, scope Scope) ([]*Agent, error) {
+	where, args := scope.SQL("labels", nil)
+	rows, err := d.Pool.Query(ctx, agentSelect+` WHERE `+where+` ORDER BY hostname ASC`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -114,13 +117,18 @@ func (d *DB) ListAgents(ctx context.Context) ([]*Agent, error) {
 
 	var agents []*Agent
 	for rows.Next() {
-		var a Agent
-		if err := rows.Scan(&a.ID, &a.Hostname, &a.IPAddress, &a.OS, &a.Arch, &a.Version, &a.TaskQueue, &a.Status, &a.LastSeenAt, &a.CreatedAt, &a.UpdatedAt, &a.AgentType, &a.DebugLogging, &a.PVEHost, &a.DockerHost, &a.DBTools, &a.DBEngines, &a.Inventory, &a.InventoryAt, &a.InventoryDetail, &a.InventoryDetailAt, &a.AutoUpdate, &a.SelfUpdate, &a.UpdateRequestedAt, &a.UpdateError); err != nil {
+		a, err := scanAgent(rows)
+		if err != nil {
 			return nil, err
 		}
-		agents = append(agents, &a)
+		agents = append(agents, a)
 	}
 	return agents, rows.Err()
+}
+
+// SetAgentLabels replaces an agent's labels
+func (d *DB) SetAgentLabels(ctx context.Context, id uuid.UUID, labels Labels) error {
+	return d.execAgent(ctx, `UPDATE agents SET labels = $2, updated_at = NOW() WHERE id = $1`, id, labels.JSON())
 }
 
 // UpdateAgentHeartbeat records the heartbeat (status, capabilities, version) and
@@ -235,11 +243,11 @@ func (d *DB) CreateEnrollmentToken(ctx context.Context, token *EnrollmentToken) 
 	token.CreatedAt = time.Now().UTC()
 
 	query := `
-		INSERT INTO enrollment_tokens (id, token_hash, name, max_uses, uses_count, expires_at, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO enrollment_tokens (id, token_hash, name, max_uses, uses_count, expires_at, created_at, labels)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 	`
 	_, err := d.Pool.Exec(ctx, query,
-		token.ID, token.TokenHash, token.Name, token.MaxUses, token.UsesCount, token.ExpiresAt, token.CreatedAt,
+		token.ID, token.TokenHash, token.Name, token.MaxUses, token.UsesCount, token.ExpiresAt, token.CreatedAt, token.Labels.JSON(),
 	)
 	return err
 }
@@ -261,11 +269,11 @@ func (d *DB) ValidateAndConsumeToken(ctx context.Context, tokenHash string) (*En
 		UPDATE enrollment_tokens
 		SET uses_count = uses_count + 1
 		WHERE token_hash = $1 AND expires_at > NOW() AND (max_uses = 0 OR uses_count < max_uses)
-		RETURNING id, token_hash, name, max_uses, uses_count, expires_at, created_at, agent_id
+		RETURNING id, token_hash, name, max_uses, uses_count, expires_at, created_at, agent_id, labels
 	`
 	row := d.Pool.QueryRow(ctx, query, tokenHash)
 	var t EnrollmentToken
-	err := row.Scan(&t.ID, &t.TokenHash, &t.Name, &t.MaxUses, &t.UsesCount, &t.ExpiresAt, &t.CreatedAt, &t.AgentID)
+	err := row.Scan(&t.ID, &t.TokenHash, &t.Name, &t.MaxUses, &t.UsesCount, &t.ExpiresAt, &t.CreatedAt, &t.AgentID, &t.Labels)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("invalid or expired token")
@@ -289,11 +297,13 @@ func (d *DB) DeleteEnrollmentToken(ctx context.Context, id uuid.UUID) error {
 }
 
 // tokenColumns joins the hostname of the agent that used the token
-const tokenColumns = `t.id, t.token_hash, t.name, t.max_uses, t.uses_count, t.expires_at, t.created_at, t.agent_id, COALESCE(a.hostname, '')
+const tokenColumns = `t.id, t.token_hash, t.name, t.max_uses, t.uses_count, t.expires_at, t.created_at, t.agent_id, COALESCE(a.hostname, ''), t.labels
 		FROM enrollment_tokens t LEFT JOIN agents a ON a.id = t.agent_id`
 
-func (d *DB) ListEnrollmentTokens(ctx context.Context) ([]*EnrollmentToken, error) {
-	rows, err := d.Pool.Query(ctx, `SELECT `+tokenColumns+` ORDER BY t.created_at DESC`)
+// ListEnrollmentTokens lists the tokens within scope
+func (d *DB) ListEnrollmentTokens(ctx context.Context, scope Scope) ([]*EnrollmentToken, error) {
+	where, args := scope.SQL("t.labels", nil)
+	rows, err := d.Pool.Query(ctx, `SELECT `+tokenColumns+` WHERE `+where+` ORDER BY t.created_at DESC`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -302,7 +312,7 @@ func (d *DB) ListEnrollmentTokens(ctx context.Context) ([]*EnrollmentToken, erro
 	var tokens []*EnrollmentToken
 	for rows.Next() {
 		var t EnrollmentToken
-		if err := rows.Scan(&t.ID, &t.TokenHash, &t.Name, &t.MaxUses, &t.UsesCount, &t.ExpiresAt, &t.CreatedAt, &t.AgentID, &t.AgentHostname); err != nil {
+		if err := rows.Scan(&t.ID, &t.TokenHash, &t.Name, &t.MaxUses, &t.UsesCount, &t.ExpiresAt, &t.CreatedAt, &t.AgentID, &t.AgentHostname, &t.Labels); err != nil {
 			return nil, err
 		}
 		tokens = append(tokens, &t)
@@ -310,11 +320,12 @@ func (d *DB) ListEnrollmentTokens(ctx context.Context) ([]*EnrollmentToken, erro
 	return tokens, rows.Err()
 }
 
-// GetEnrollmentToken loads one token (with the hostname of the agent that used it)
-func (d *DB) GetEnrollmentToken(ctx context.Context, id uuid.UUID) (*EnrollmentToken, error) {
+// GetEnrollmentToken loads one token within scope (with the hostname of the agent that used it)
+func (d *DB) GetEnrollmentToken(ctx context.Context, id uuid.UUID, scope Scope) (*EnrollmentToken, error) {
 	var t EnrollmentToken
-	err := d.Pool.QueryRow(ctx, `SELECT `+tokenColumns+` WHERE t.id = $1`, id).
-		Scan(&t.ID, &t.TokenHash, &t.Name, &t.MaxUses, &t.UsesCount, &t.ExpiresAt, &t.CreatedAt, &t.AgentID, &t.AgentHostname)
+	where, args := scope.SQL("t.labels", []any{id})
+	err := d.Pool.QueryRow(ctx, `SELECT `+tokenColumns+` WHERE t.id = $1 AND `+where, args...).
+		Scan(&t.ID, &t.TokenHash, &t.Name, &t.MaxUses, &t.UsesCount, &t.ExpiresAt, &t.CreatedAt, &t.AgentID, &t.AgentHostname, &t.Labels)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -343,10 +354,11 @@ func (d *DB) CreateTarget(ctx context.Context, target *BackupTarget) error {
 	target.UpdatedAt = now
 
 	query := `
-		INSERT INTO backup_targets (id, name, target_type, endpoint, datastore, namespace, auth_token_encrypted, fingerprint, tls_verify, pxar_format, created_at, updated_at, encryption_mode, key_ring_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+		INSERT INTO backup_targets (id, name, target_type, endpoint, datastore, namespace, auth_token_encrypted, fingerprint, tls_verify, pxar_format, created_at, updated_at, encryption_mode, key_ring_id, labels)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 		RETURNING id
 	`
+	target.Labels = target.Labels.OrEmpty()
 	if target.PxarFormat == "" {
 		target.PxarFormat = PxarFormatV1
 	}
@@ -356,21 +368,21 @@ func (d *DB) CreateTarget(ctx context.Context, target *BackupTarget) error {
 	return d.Pool.QueryRow(ctx, query,
 		target.ID, target.Name, target.TargetType, target.Endpoint, target.Datastore,
 		target.Namespace, d.seal(target.AuthToken), target.Fingerprint, target.TLSVerify, target.PxarFormat,
-		target.CreatedAt, target.UpdatedAt, target.EncryptionMode, target.KeyRingID,
+		target.CreatedAt, target.UpdatedAt, target.EncryptionMode, target.KeyRingID, target.Labels.JSON(),
 	).Scan(&target.ID)
 }
 
 // CloneTarget creates a new target from an existing one: same PBS endpoint,
 // datastore, API token (the sealed column is copied as is), fingerprint, TLS setting,
-// encryption mode and key ring, and (unless overridden) pxar format, with a new name
-// and namespace. Sharing the ring is the point of a clone: another namespace of the
-// same datastore deduplicates against the source only with the same key.
+// encryption mode, key ring and labels, and (unless overridden) pxar format, with a
+// new name and namespace. Sharing the ring is the point of a clone: another namespace
+// of the same datastore deduplicates against the source only with the same key.
 func (d *DB) CloneTarget(ctx context.Context, sourceID uuid.UUID, name, namespace, pxarFormat string) (*BackupTarget, error) {
 	id := uuid.New()
 	now := time.Now().UTC()
 	tag, err := d.Pool.Exec(ctx, `
-		INSERT INTO backup_targets (id, name, target_type, endpoint, datastore, namespace, auth_token_encrypted, fingerprint, tls_verify, pxar_format, created_at, updated_at, encryption_mode, key_ring_id)
-		SELECT $1, $2, target_type, endpoint, datastore, $3, auth_token_encrypted, fingerprint, tls_verify, COALESCE(NULLIF($4::text, ''), pxar_format), $5, $5, encryption_mode, key_ring_id
+		INSERT INTO backup_targets (id, name, target_type, endpoint, datastore, namespace, auth_token_encrypted, fingerprint, tls_verify, pxar_format, created_at, updated_at, encryption_mode, key_ring_id, labels)
+		SELECT $1, $2, target_type, endpoint, datastore, $3, auth_token_encrypted, fingerprint, tls_verify, COALESCE(NULLIF($4::text, ''), pxar_format), $5, $5, encryption_mode, key_ring_id, labels
 		FROM backup_targets WHERE id = $6`,
 		id, name, namespace, pxarFormat, now, sourceID)
 	if err != nil {
@@ -379,7 +391,7 @@ func (d *DB) CloneTarget(ctx context.Context, sourceID uuid.UUID, name, namespac
 	if tag.RowsAffected() == 0 {
 		return nil, ErrNotFound
 	}
-	return d.GetTargetByID(ctx, id)
+	return d.GetTargetByID(ctx, id, Unscoped)
 }
 
 // UpdateTarget replaces a target's editable fields (name, endpoint, datastore,
@@ -395,10 +407,10 @@ func (d *DB) UpdateTarget(ctx context.Context, target *BackupTarget) error {
 	tag, err := d.Pool.Exec(ctx, `
 		UPDATE backup_targets
 		SET name = $2, target_type = $3, endpoint = $4, datastore = $5, namespace = $6,
-		    auth_token_encrypted = $7, fingerprint = $8, tls_verify = $9, pxar_format = $10, updated_at = $11
+		    auth_token_encrypted = $7, fingerprint = $8, tls_verify = $9, pxar_format = $10, updated_at = $11, labels = $12
 		WHERE id = $1`,
 		target.ID, target.Name, target.TargetType, target.Endpoint, target.Datastore, target.Namespace,
-		d.seal(target.AuthToken), target.Fingerprint, target.TLSVerify, target.PxarFormat, target.UpdatedAt)
+		d.seal(target.AuthToken), target.Fingerprint, target.TLSVerify, target.PxarFormat, target.UpdatedAt, target.Labels.JSON())
 	if err != nil {
 		return err
 	}
@@ -408,8 +420,10 @@ func (d *DB) UpdateTarget(ctx context.Context, target *BackupTarget) error {
 	return nil
 }
 
-func (d *DB) GetTargetByID(ctx context.Context, id uuid.UUID) (*BackupTarget, error) {
-	row := d.Pool.QueryRow(ctx, targetSelect+` WHERE t.id = $1`, id)
+// GetTargetByID loads a target within scope (ErrNotFound outside it)
+func (d *DB) GetTargetByID(ctx context.Context, id uuid.UUID, scope Scope) (*BackupTarget, error) {
+	where, args := scope.SQL("t.labels", []any{id})
+	row := d.Pool.QueryRow(ctx, targetSelect+` WHERE t.id = $1 AND `+where, args...)
 	t, err := scanTarget(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -426,21 +440,23 @@ func (d *DB) GetTargetByID(ctx context.Context, id uuid.UUID) (*BackupTarget, er
 // targetSelect joins the key ring and its active key onto the target
 const targetSelect = `
 	SELECT t.id, t.name, t.target_type, t.endpoint, t.datastore, t.namespace, t.auth_token_encrypted, t.fingerprint, t.tls_verify, t.pxar_format, t.created_at, t.updated_at,
-	       t.encryption_mode, t.key_ring_id, COALESCE(r.name, ''), r.active_key_id, COALESCE(r.master_public_key, ''), COALESCE(k.fingerprint, ''), k.created_at
+	       t.encryption_mode, t.key_ring_id, COALESCE(r.name, ''), r.active_key_id, COALESCE(r.master_public_key, ''), COALESCE(k.fingerprint, ''), k.created_at, t.labels
 	FROM backup_targets t LEFT JOIN key_rings r ON r.id = t.key_ring_id LEFT JOIN target_keys k ON k.id = r.active_key_id`
 
 func scanTarget(row pgx.Row) (*BackupTarget, error) {
 	var t BackupTarget
 	err := row.Scan(&t.ID, &t.Name, &t.TargetType, &t.Endpoint, &t.Datastore, &t.Namespace, &t.AuthToken, &t.Fingerprint, &t.TLSVerify, &t.PxarFormat, &t.CreatedAt, &t.UpdatedAt,
-		&t.EncryptionMode, &t.KeyRingID, &t.KeyRingName, &t.EncryptionKeyID, &t.MasterPublicKey, &t.KeyFingerprint, &t.KeyCreatedAt)
+		&t.EncryptionMode, &t.KeyRingID, &t.KeyRingName, &t.EncryptionKeyID, &t.MasterPublicKey, &t.KeyFingerprint, &t.KeyCreatedAt, &t.Labels)
 	if err != nil {
 		return nil, err
 	}
 	return &t, nil
 }
 
-func (d *DB) ListTargets(ctx context.Context) ([]*BackupTarget, error) {
-	rows, err := d.Pool.Query(ctx, targetSelect+` ORDER BY t.name ASC`)
+// ListTargets lists the targets within scope
+func (d *DB) ListTargets(ctx context.Context, scope Scope) ([]*BackupTarget, error) {
+	where, args := scope.SQL("t.labels", nil)
+	rows, err := d.Pool.Query(ctx, targetSelect+` WHERE `+where+` ORDER BY t.name ASC`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -464,12 +480,12 @@ func (d *DB) ListTargets(ctx context.Context) ([]*BackupTarget, error) {
 
 const ringSelect = `
 	SELECT r.id, r.name, r.active_key_id, r.master_public_key, r.created_at, r.updated_at, r.created_by, COALESCE(k.fingerprint, ''), k.created_at,
-	       COALESCE((SELECT array_agg(t.name ORDER BY t.name) FROM backup_targets t WHERE t.key_ring_id = r.id), '{}')
+	       COALESCE((SELECT array_agg(t.name ORDER BY t.name) FROM backup_targets t WHERE t.key_ring_id = r.id), '{}'), r.labels
 	FROM key_rings r LEFT JOIN target_keys k ON k.id = r.active_key_id`
 
 func scanRing(row pgx.Row) (*KeyRing, error) {
 	var r KeyRing
-	if err := row.Scan(&r.ID, &r.Name, &r.ActiveKeyID, &r.MasterPublicKey, &r.CreatedAt, &r.UpdatedAt, &r.CreatedBy, &r.KeyFingerprint, &r.KeyCreatedAt, &r.Targets); err != nil {
+	if err := row.Scan(&r.ID, &r.Name, &r.ActiveKeyID, &r.MasterPublicKey, &r.CreatedAt, &r.UpdatedAt, &r.CreatedBy, &r.KeyFingerprint, &r.KeyCreatedAt, &r.Targets, &r.Labels); err != nil {
 		return nil, err
 	}
 	if r.Targets == nil {
@@ -485,21 +501,26 @@ func (d *DB) CreateKeyRing(ctx context.Context, r *KeyRing) error {
 	}
 	now := time.Now().UTC()
 	r.CreatedAt, r.UpdatedAt = now, now
-	_, err := d.Pool.Exec(ctx, `INSERT INTO key_rings (id, name, active_key_id, master_public_key, created_at, updated_at, created_by) VALUES ($1, $2, NULL, $3, $4, $4, $5)`,
-		r.ID, r.Name, r.MasterPublicKey, now, r.CreatedBy)
+	r.Labels = r.Labels.OrEmpty()
+	_, err := d.Pool.Exec(ctx, `INSERT INTO key_rings (id, name, active_key_id, master_public_key, created_at, updated_at, created_by, labels) VALUES ($1, $2, NULL, $3, $4, $4, $5, $6)`,
+		r.ID, r.Name, r.MasterPublicKey, now, r.CreatedBy, r.Labels.JSON())
 	return err
 }
 
-func (d *DB) GetKeyRing(ctx context.Context, id uuid.UUID) (*KeyRing, error) {
-	r, err := scanRing(d.Pool.QueryRow(ctx, ringSelect+` WHERE r.id = $1`, id))
+// GetKeyRing loads a ring within scope (ErrNotFound outside it)
+func (d *DB) GetKeyRing(ctx context.Context, id uuid.UUID, scope Scope) (*KeyRing, error) {
+	where, args := scope.SQL("r.labels", []any{id})
+	r, err := scanRing(d.Pool.QueryRow(ctx, ringSelect+` WHERE r.id = $1 AND `+where, args...))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	return r, err
 }
 
-func (d *DB) ListKeyRings(ctx context.Context) ([]*KeyRing, error) {
-	rows, err := d.Pool.Query(ctx, ringSelect+` ORDER BY r.name ASC`)
+// ListKeyRings lists the rings within scope
+func (d *DB) ListKeyRings(ctx context.Context, scope Scope) ([]*KeyRing, error) {
+	where, args := scope.SQL("r.labels", nil)
+	rows, err := d.Pool.Query(ctx, ringSelect+` WHERE `+where+` ORDER BY r.name ASC`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -515,9 +536,10 @@ func (d *DB) ListKeyRings(ctx context.Context) ([]*KeyRing, error) {
 	return out, rows.Err()
 }
 
-// UpdateKeyRing renames a ring and sets its master public key
-func (d *DB) UpdateKeyRing(ctx context.Context, id uuid.UUID, name, masterPublicKey string) error {
-	tag, err := d.Pool.Exec(ctx, `UPDATE key_rings SET name = $2, master_public_key = $3, updated_at = $4 WHERE id = $1`, id, name, masterPublicKey, time.Now().UTC())
+// UpdateKeyRing writes a ring's name, master public key and labels
+func (d *DB) UpdateKeyRing(ctx context.Context, r *KeyRing) error {
+	tag, err := d.Pool.Exec(ctx, `UPDATE key_rings SET name = $2, master_public_key = $3, labels = $4, updated_at = $5 WHERE id = $1`,
+		r.ID, r.Name, r.MasterPublicKey, r.Labels.JSON(), time.Now().UTC())
 	if err != nil {
 		return err
 	}
@@ -675,36 +697,35 @@ func (d *DB) CreateJob(ctx context.Context, job *BackupJob) error {
 	}
 
 	query := `
-		INSERT INTO backup_jobs (id, name, agent_id, target_id, schedule_cron, backup_paths, exclude_paths, enabled, direct_pbs, created_at, updated_at, job_type, db_config, k8s_config, pve_config, docker_config, m365_config, m365_tenant_id, backup_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+		INSERT INTO backup_jobs (id, name, agent_id, target_id, schedule_cron, backup_paths, exclude_paths, enabled, direct_pbs, created_at, updated_at, job_type, db_config, k8s_config, pve_config, docker_config, m365_config, m365_tenant_id, backup_id, labels)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
 		RETURNING id
 	`
+	job.Labels = job.Labels.OrEmpty()
 	return d.Pool.QueryRow(ctx, query,
 		job.ID, job.Name, job.AgentID, job.TargetID, job.ScheduleCron,
 		backupPathsJSON, excludePathsJSON, job.Enabled, job.DirectPBS,
-		job.CreatedAt, job.UpdatedAt, cols.jobType, cols.db, cols.k8s, cols.pve, cols.docker, cols.m365, cols.tenantID, job.BackupID,
+		job.CreatedAt, job.UpdatedAt, cols.jobType, cols.db, cols.k8s, cols.pve, cols.docker, cols.m365, cols.tenantID, job.BackupID, job.Labels.JSON(),
 	).Scan(&job.ID)
 }
 
-func (d *DB) GetJobByID(ctx context.Context, id uuid.UUID) (*BackupJob, error) {
-	query := `
-		SELECT j.id, j.name, j.agent_id, j.target_id, j.schedule_cron, j.backup_paths, j.exclude_paths,
-		       j.enabled, j.direct_pbs, j.created_at, j.updated_at,
-		       j.job_type, j.db_config, j.k8s_config, j.pve_config, j.docker_config, j.m365_config, j.backup_id,
-		       a.hostname as agent_name, t.name as target_name
-		FROM backup_jobs j
-		JOIN agents a ON j.agent_id = a.id
-		JOIN backup_targets t ON j.target_id = t.id
-		WHERE j.id = $1
-	`
-	row := d.Pool.QueryRow(ctx, query, id)
+const jobSelect = `
+	SELECT j.id, j.name, j.agent_id, j.target_id, j.schedule_cron, j.backup_paths, j.exclude_paths,
+	       j.enabled, j.direct_pbs, j.created_at, j.updated_at,
+	       j.job_type, j.db_config, j.k8s_config, j.pve_config, j.docker_config, j.m365_config, j.backup_id, j.labels,
+	       a.hostname as agent_name, t.name as target_name
+	FROM backup_jobs j
+	JOIN agents a ON j.agent_id = a.id
+	JOIN backup_targets t ON j.target_id = t.id`
+
+func (d *DB) scanJob(row pgx.Row) (*BackupJob, error) {
 	var j BackupJob
 	var backupPathsRaw, excludePathsRaw, dbConfigRaw, k8sConfigRaw, pveConfigRaw, dockerConfigRaw, m365ConfigRaw []byte
 	err := row.Scan(
 		&j.ID, &j.Name, &j.AgentID, &j.TargetID, &j.ScheduleCron,
 		&backupPathsRaw, &excludePathsRaw,
 		&j.Enabled, &j.DirectPBS, &j.CreatedAt, &j.UpdatedAt,
-		&j.JobType, &dbConfigRaw, &k8sConfigRaw, &pveConfigRaw, &dockerConfigRaw, &m365ConfigRaw, &j.BackupID,
+		&j.JobType, &dbConfigRaw, &k8sConfigRaw, &pveConfigRaw, &dockerConfigRaw, &m365ConfigRaw, &j.BackupID, &j.Labels,
 		&j.AgentName, &j.TargetName,
 	)
 	if err != nil {
@@ -713,7 +734,6 @@ func (d *DB) GetJobByID(ctx context.Context, id uuid.UUID) (*BackupJob, error) {
 		}
 		return nil, err
 	}
-
 	_ = json.Unmarshal(backupPathsRaw, &j.BackupPaths)
 	_ = json.Unmarshal(excludePathsRaw, &j.ExcludePaths)
 	if j.DBConfig, err = d.parseDBConfig(dbConfigRaw); err != nil {
@@ -723,22 +743,19 @@ func (d *DB) GetJobByID(ctx context.Context, id uuid.UUID) (*BackupJob, error) {
 	j.PVEConfig = parsePVEConfig(j.JobType, pveConfigRaw)
 	j.DockerConfig = parseDockerConfig(j.JobType, dockerConfigRaw)
 	j.M365Config = parseM365Config(j.JobType, m365ConfigRaw)
-
 	return &j, nil
 }
 
-func (d *DB) ListJobs(ctx context.Context) ([]*BackupJob, error) {
-	query := `
-		SELECT j.id, j.name, j.agent_id, j.target_id, j.schedule_cron, j.backup_paths, j.exclude_paths,
-		       j.enabled, j.direct_pbs, j.created_at, j.updated_at,
-		       j.job_type, j.db_config, j.k8s_config, j.pve_config, j.docker_config, j.m365_config, j.backup_id,
-		       a.hostname as agent_name, t.name as target_name
-		FROM backup_jobs j
-		JOIN agents a ON j.agent_id = a.id
-		JOIN backup_targets t ON j.target_id = t.id
-		ORDER BY j.name ASC
-	`
-	rows, err := d.Pool.Query(ctx, query)
+// GetJobByID loads a job within scope (ErrNotFound outside it)
+func (d *DB) GetJobByID(ctx context.Context, id uuid.UUID, scope Scope) (*BackupJob, error) {
+	where, args := scope.SQL("j.labels", []any{id})
+	return d.scanJob(d.Pool.QueryRow(ctx, jobSelect+` WHERE j.id = $1 AND `+where, args...))
+}
+
+// ListJobs lists the jobs within scope
+func (d *DB) ListJobs(ctx context.Context, scope Scope) ([]*BackupJob, error) {
+	where, args := scope.SQL("j.labels", nil)
+	rows, err := d.Pool.Query(ctx, jobSelect+` WHERE `+where+` ORDER BY j.name ASC`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -746,27 +763,11 @@ func (d *DB) ListJobs(ctx context.Context) ([]*BackupJob, error) {
 
 	var jobs []*BackupJob
 	for rows.Next() {
-		var j BackupJob
-		var backupPathsRaw, excludePathsRaw, dbConfigRaw, k8sConfigRaw, pveConfigRaw, dockerConfigRaw, m365ConfigRaw []byte
-		if err := rows.Scan(
-			&j.ID, &j.Name, &j.AgentID, &j.TargetID, &j.ScheduleCron,
-			&backupPathsRaw, &excludePathsRaw,
-			&j.Enabled, &j.DirectPBS, &j.CreatedAt, &j.UpdatedAt,
-			&j.JobType, &dbConfigRaw, &k8sConfigRaw, &pveConfigRaw, &dockerConfigRaw, &m365ConfigRaw, &j.BackupID,
-			&j.AgentName, &j.TargetName,
-		); err != nil {
+		j, err := d.scanJob(rows)
+		if err != nil {
 			return nil, err
 		}
-		_ = json.Unmarshal(backupPathsRaw, &j.BackupPaths)
-		_ = json.Unmarshal(excludePathsRaw, &j.ExcludePaths)
-		if j.DBConfig, err = d.parseDBConfig(dbConfigRaw); err != nil {
-			return nil, err
-		}
-		j.K8sConfig = parseK8sConfig(j.JobType, k8sConfigRaw)
-		j.PVEConfig = parsePVEConfig(j.JobType, pveConfigRaw)
-		j.DockerConfig = parseDockerConfig(j.JobType, dockerConfigRaw)
-		j.M365Config = parseM365Config(j.JobType, m365ConfigRaw)
-		jobs = append(jobs, &j)
+		jobs = append(jobs, j)
 	}
 	return jobs, rows.Err()
 }
@@ -960,48 +961,22 @@ func (d *DB) LatestRunByJob(ctx context.Context) (map[uuid.UUID]*JobLastRun, err
 	return out, rows.Err()
 }
 
-func (d *DB) ListRuns(ctx context.Context, limit int) ([]*BackupRun, error) {
-	if limit <= 0 {
-		limit = 50
-	}
-	query := `
-		SELECT r.id, r.job_id, r.agent_id, r.target_id, r.workflow_id, r.run_id, r.status,
-		       r.start_time, r.end_time, r.bytes_scanned, r.bytes_uploaded, r.dedup_ratio,
-		       r.chunk_count, r.error_message, r.pbs_snapshot_id, r.log_tail, r.created_at,
-		       j.name as job_name, a.hostname as agent_name
-		FROM backup_runs r
-		JOIN backup_jobs j ON r.job_id = j.id
-		JOIN agents a ON r.agent_id = a.id
-		ORDER BY r.created_at DESC
-		LIMIT $1
-	`
-	rows, err := d.Pool.Query(ctx, query, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var runs []*BackupRun
-	for rows.Next() {
-		var r BackupRun
-		if err := rows.Scan(
-			&r.ID, &r.JobID, &r.AgentID, &r.TargetID, &r.WorkflowID, &r.RunID, &r.Status,
-			&r.StartTime, &r.EndTime, &r.BytesScanned, &r.BytesUploaded, &r.DedupRatio,
-			&r.ChunkCount, &r.ErrorMessage, &r.PBSSnapshotID, &r.LogTail, &r.CreatedAt,
-			&r.JobName, &r.AgentName,
-		); err != nil {
-			return nil, err
-		}
-		runs = append(runs, &r)
-	}
-	return runs, rows.Err()
+// ListRuns lists the newest runs whose job is within scope. Runs have no labels of
+// their own: a run is visible exactly when its job is.
+func (d *DB) ListRuns(ctx context.Context, limit int, scope Scope) ([]*BackupRun, error) {
+	return d.listRuns(ctx, nil, limit, scope)
 }
 
 // ListRunsByAgent is ListRuns restricted to one agent (the agent status page)
-func (d *DB) ListRunsByAgent(ctx context.Context, agentID uuid.UUID, limit int) ([]*BackupRun, error) {
+func (d *DB) ListRunsByAgent(ctx context.Context, agentID uuid.UUID, limit int, scope Scope) ([]*BackupRun, error) {
+	return d.listRuns(ctx, &agentID, limit, scope)
+}
+
+func (d *DB) listRuns(ctx context.Context, agentID *uuid.UUID, limit int, scope Scope) ([]*BackupRun, error) {
 	if limit <= 0 {
 		limit = 50
 	}
+	where, args := scope.SQL("j.labels", []any{limit, agentID})
 	rows, err := d.Pool.Query(ctx, `
 		SELECT r.id, r.job_id, r.agent_id, r.target_id, r.workflow_id, r.run_id, r.status,
 		       r.start_time, r.end_time, r.bytes_scanned, r.bytes_uploaded, r.dedup_ratio,
@@ -1010,9 +985,9 @@ func (d *DB) ListRunsByAgent(ctx context.Context, agentID uuid.UUID, limit int) 
 		FROM backup_runs r
 		JOIN backup_jobs j ON r.job_id = j.id
 		JOIN agents a ON r.agent_id = a.id
-		WHERE r.agent_id = $1
+		WHERE ($2::uuid IS NULL OR r.agent_id = $2) AND `+where+`
 		ORDER BY r.created_at DESC
-		LIMIT $2`, agentID, limit)
+		LIMIT $1`, args...)
 	if err != nil {
 		return nil, err
 	}

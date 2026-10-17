@@ -35,7 +35,7 @@ func (s staticVerifier) Verify(_ context.Context, bearer string) (*auth.AgentCla
 
 type oneTarget struct{ target *db.BackupTarget }
 
-func (o oneTarget) GetTargetByID(_ context.Context, id uuid.UUID) (*db.BackupTarget, error) {
+func (o oneTarget) GetTargetByID(_ context.Context, id uuid.UUID, _ db.Scope) (*db.BackupTarget, error) {
 	if id == o.target.ID {
 		return o.target, nil
 	}

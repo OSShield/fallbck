@@ -3,7 +3,7 @@
   <div>
     <p style="color: var(--text-muted); font-size: 14px;">Configure Proxmox Backup Server (PBS) datastores for deduplicated chunk storage.</p>
   </div>
-  <button class="btn btn-primary" onclick="newTarget()">
+  <button class="btn btn-primary" data-perm="targets:write" onclick="newTarget()">
     <svg style="width: 16px; height: 16px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
     Add PBS Target
   </button>
@@ -33,7 +33,7 @@
         {{if .Targets}}
           {{range .Targets}}
           <tr>
-            <td><strong>{{.Name}}</strong></td>
+            <td><strong>{{.Name}}</strong><br>{{template "label-chips" .Labels}}</td>
             <td><span class="badge badge-info">{{.TargetType}}</span></td>
             <td style="font-family: var(--font-mono); font-size: 13px;">{{.Endpoint}}</td>
             <td><code>{{.Datastore}}</code></td>
@@ -49,9 +49,9 @@
               {{end}}
             </td>
             <td style="text-align: right; display: flex; justify-content: flex-end; gap: 8px;">
-              <button class="btn btn-secondary btn-sm" onclick="editTarget('{{.ID}}')">Edit</button>
-              <button class="btn btn-secondary btn-sm" title="Create a target on the same PBS and datastore with another namespace (the API token is copied on the server)" onclick="openCloneTarget('{{.ID}}', '{{.Name}}', '{{.Namespace}}')">Clone</button>
-              <button class="btn btn-secondary btn-sm" style="color: var(--danger-text);" onclick="deleteResource('targets', '{{.ID}}')">Delete</button>
+              <button class="btn btn-secondary btn-sm" data-perm="targets:write" onclick="editTarget('{{.ID}}')">Edit</button>
+              <button class="btn btn-secondary btn-sm" data-perm="targets:write" title="Create a target on the same PBS and datastore with another namespace (the API token is copied on the server)" onclick="openCloneTarget('{{.ID}}', '{{.Name}}', '{{.Namespace}}')">Clone</button>
+              <button class="btn btn-secondary btn-sm" style="color: var(--danger-text);" data-perm="targets:delete" onclick="deleteResource('targets', '{{.ID}}')">Delete</button>
             </td>
           </tr>
           {{end}}
@@ -61,7 +61,7 @@
               <div class="empty-state">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/></svg>
                 <p>No PBS backup targets configured.</p>
-                <button class="btn btn-primary btn-sm" onclick="newTarget()">Add your first PBS Target</button>
+                <button class="btn btn-primary btn-sm" data-perm="targets:write" onclick="newTarget()">Add your first PBS Target</button>
               </div>
             </td>
           </tr>

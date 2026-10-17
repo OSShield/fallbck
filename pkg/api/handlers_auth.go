@@ -53,7 +53,11 @@ func (s *ServerAPI) HandleMe(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	s.writeJSON(w, http.StatusOK, MeResponse{Kind: string(p.Kind), Subject: p.Subject, Email: p.Email, Name: p.Name})
+	bindings := p.Bindings
+	if bindings == nil {
+		bindings = []auth.Binding{}
+	}
+	s.writeJSON(w, http.StatusOK, MeResponse{Kind: string(p.Kind), Subject: p.Subject, Email: p.Email, Name: p.Name, Permissions: p.Permissions(), Bindings: bindings})
 }
 
 // HandleCreateAPIKey mints an admin API key
@@ -71,20 +75,39 @@ func (s *ServerAPI) HandleCreateAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	createdBy := "unknown"
-	if p := auth.PrincipalFrom(r.Context()); p != nil {
-		createdBy = p.Display()
+	if req.Role == "" {
+		req.Role = auth.RoleAdmin
 	}
-	raw, key, err := auth.NewAPIKey(req.Name, createdBy, req.ExpiresAt)
+	req.Selector = req.Selector.OrEmpty()
+	if !s.validLabels(w, req.Selector) {
+		return
+	}
+	role, err := s.DB.GetRole(r.Context(), req.Role)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "Unknown role "+req.Role)
+		return
+	}
+	// A key never reaches further than its creator (and a key creating keys never
+	// further than itself): every permission of the role must already be held on a
+	// selector the key's selector narrows
+	p := auth.PrincipalFrom(r.Context())
+	if err := auth.Narrower(p, role.Permissions, req.Selector); err != nil {
+		s.writeError(w, http.StatusForbidden, "The key would reach further than you: "+err.Error())
+		return
+	}
+
+	raw, key, err := auth.NewAPIKey(req.Name, principalName(r), req.ExpiresAt)
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, "Failed to generate API key")
 		return
 	}
+	key.Role, key.Selector = role.Name, req.Selector
 	if err := s.DB.CreateAPIKey(r.Context(), key); err != nil {
 		s.writeError(w, http.StatusInternalServerError, "Failed to save API key")
 		return
 	}
-	s.writeJSON(w, http.StatusCreated, CreateAPIKeyResponse{ID: key.ID, Name: key.Name, RawKey: raw, ExpiresAt: key.ExpiresAt})
+	s.audit(r, "apikey.create", "apikey", key.ID.String(), key.Name, nil, map[string]any{"role": key.Role, "selector": key.Selector, "expires_at": key.ExpiresAt})
+	s.writeJSON(w, http.StatusCreated, CreateAPIKeyResponse{ID: key.ID, Name: key.Name, RawKey: raw, ExpiresAt: key.ExpiresAt, Role: key.Role, Selector: key.Selector})
 }
 
 // HandleListAPIKeys lists API keys (hashes are never returned)
@@ -115,5 +138,6 @@ func (s *ServerAPI) HandleRevokeAPIKey(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, "Failed to revoke API key")
 		return
 	}
+	s.audit(r, "apikey.revoke", "apikey", id.String(), "", nil, nil)
 	s.writeJSON(w, http.StatusOK, map[string]string{"status": "revoked"})
 }

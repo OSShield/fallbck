@@ -57,6 +57,8 @@ type TargetEncryption struct {
 type KeyRingRequest struct {
 	Name            string  `json:"name"`
 	MasterPublicKey *string `json:"master_public_key"`
+	// Labels: nil on update keeps the stored labels
+	Labels db.Labels `json:"labels"`
 }
 
 // KeyRingResponse is a ring with its key history
@@ -90,43 +92,55 @@ type AgentEncryptionKey struct {
 }
 
 func principalName(r *http.Request) string {
-	if p := auth.PrincipalFrom(r.Context()); p != nil && p.Name != "" {
-		return p.Name
+	if d := auth.PrincipalFrom(r.Context()).Display(); d != "" {
+		return d
 	}
-	return "api-key"
+	return "unknown"
 }
 
-func (s *ServerAPI) targetFromPath(w http.ResponseWriter, r *http.Request) (*db.BackupTarget, bool) {
+// targetFromPath loads the target named in the path within targets:read and checks
+// perm on its labels (404 when unreadable, 403 when readable but perm is missing)
+func (s *ServerAPI) targetFromPath(w http.ResponseWriter, r *http.Request, perm string) (*db.BackupTarget, bool) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		s.writeError(w, http.StatusBadRequest, "Invalid target ID")
 		return nil, false
 	}
-	target, err := s.DB.GetTargetByID(r.Context(), id)
+	target, err := s.DB.GetTargetByID(r.Context(), id, scope(r, auth.PermTargetsRead))
 	if err != nil {
 		s.writeError(w, http.StatusNotFound, "Target not found")
+		return nil, false
+	}
+	if !s.allow(w, r, perm, target.Labels) {
 		return nil, false
 	}
 	return target, true
 }
 
-func (s *ServerAPI) ringFromPath(w http.ResponseWriter, r *http.Request) (*db.KeyRing, bool) {
+// ringFromPath loads the ring named in the path within keyrings:read and checks perm
+// on its labels
+func (s *ServerAPI) ringFromPath(w http.ResponseWriter, r *http.Request, perm string) (*db.KeyRing, bool) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		s.writeError(w, http.StatusBadRequest, "Invalid key ring ID")
 		return nil, false
 	}
-	ring, err := s.DB.GetKeyRing(r.Context(), id)
+	ring, err := s.DB.GetKeyRing(r.Context(), id, scope(r, auth.PermKeyringsRead))
 	if err != nil {
 		s.writeError(w, http.StatusNotFound, "Key ring not found")
+		return nil, false
+	}
+	if !s.allow(w, r, perm, ring.Labels) {
 		return nil, false
 	}
 	return ring, true
 }
 
-// targetRing resolves the ring behind a target endpoint
-func (s *ServerAPI) targetRing(w http.ResponseWriter, r *http.Request) (*db.BackupTarget, *db.KeyRing, bool) {
-	target, ok := s.targetFromPath(w, r)
+// targetRing resolves the ring behind a target endpoint: the target must be readable,
+// and perm (a key ring permission: the action affects every target on the ring) is
+// checked on the ring's labels
+func (s *ServerAPI) targetRing(w http.ResponseWriter, r *http.Request, perm string) (*db.BackupTarget, *db.KeyRing, bool) {
+	target, ok := s.targetFromPath(w, r, auth.PermTargetsRead)
 	if !ok {
 		return nil, nil, false
 	}
@@ -134,12 +148,45 @@ func (s *ServerAPI) targetRing(w http.ResponseWriter, r *http.Request) (*db.Back
 		s.writeError(w, http.StatusConflict, "This target has no encryption key ring; enable encryption first")
 		return nil, nil, false
 	}
-	ring, err := s.DB.GetKeyRing(r.Context(), *target.KeyRingID)
+	ring, err := s.DB.GetKeyRing(r.Context(), *target.KeyRingID, db.Unscoped)
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, "Failed to load the target's key ring")
 		return nil, nil, false
 	}
+	if !s.allow(w, r, perm, ring.Labels) {
+		return nil, nil, false
+	}
 	return target, ring, true
+}
+
+// checkEncryptionAccess runs before a target create/update/encryption change writes
+// anything. Attaching a named ring needs keyrings:read on it; encrypting without a
+// ring creates one with the target's labels and needs keyrings:write on those;
+// changing the master public key of an existing ring needs keyrings:write on it.
+func (s *ServerAPI) checkEncryptionAccess(w http.ResponseWriter, r *http.Request, mode string, ringID, currentRing *uuid.UUID, labels db.Labels, masterKey *string) bool {
+	effective := currentRing
+	if ringID != nil && (currentRing == nil || *ringID != *currentRing) {
+		ring, err := s.DB.GetKeyRing(r.Context(), *ringID, scope(r, auth.PermKeyringsRead))
+		if err != nil {
+			s.writeError(w, http.StatusNotFound, "Key ring not found")
+			return false
+		}
+		effective = &ring.ID
+	}
+	if mode == db.EncryptionEncrypt && effective == nil && !s.allow(w, r, auth.PermKeyringsWrite, labels) {
+		return false
+	}
+	if masterKey != nil && effective != nil {
+		ring, err := s.DB.GetKeyRing(r.Context(), *effective, db.Unscoped)
+		if err != nil {
+			s.writeError(w, http.StatusInternalServerError, "Failed to load the key ring")
+			return false
+		}
+		if strings.TrimSpace(*masterKey) != ring.MasterPublicKey && !s.allow(w, r, auth.PermKeyringsWrite, ring.Labels) {
+			return false
+		}
+	}
+	return true
 }
 
 // ---- ring key management -------------------------------------------------------
@@ -194,9 +241,10 @@ func (s *ServerAPI) ensureRingKey(r *http.Request, ring *db.KeyRing) error {
 	return err
 }
 
-// createRingFor makes a ring named after a target (suffixing the name when taken)
+// createRingFor makes a ring named after a target, with its labels (suffixing the
+// name when taken)
 func (s *ServerAPI) createRingFor(r *http.Request, target *db.BackupTarget, masterPublicKey string) (*db.KeyRing, error) {
-	ring := &db.KeyRing{Name: target.Name, MasterPublicKey: masterPublicKey, CreatedBy: principalName(r), Targets: []string{target.Name}}
+	ring := &db.KeyRing{Name: target.Name, MasterPublicKey: masterPublicKey, CreatedBy: principalName(r), Targets: []string{target.Name}, Labels: target.Labels.OrEmpty()}
 	err := s.DB.CreateKeyRing(r.Context(), ring)
 	if err != nil && isUniqueViolation(err) {
 		ring.Name = target.Name + " (" + target.ID.String()[:8] + ")"
@@ -205,6 +253,7 @@ func (s *ServerAPI) createRingFor(r *http.Request, target *db.BackupTarget, mast
 	if err != nil {
 		return nil, err
 	}
+	s.audit(r, "keyring.create", "keyring", ring.ID.String(), ring.Name, ring.Labels, map[string]any{"for_target": target.ID})
 	return ring, nil
 }
 
@@ -213,7 +262,8 @@ func isUniqueViolation(err error) bool {
 }
 
 // applyEncryptionMode switches a target between none and encrypt and, for encrypt,
-// attaches ringID (or keeps the target's ring, or creates one). Idempotent.
+// attaches ringID (or keeps the target's ring, or creates one). Idempotent. Access is
+// checked by the caller (checkEncryptionAccess) before anything is written.
 func (s *ServerAPI) applyEncryptionMode(r *http.Request, target *db.BackupTarget, mode string, ringID *uuid.UUID) error {
 	ctx := r.Context()
 	switch mode {
@@ -222,11 +272,11 @@ func (s *ServerAPI) applyEncryptionMode(r *http.Request, target *db.BackupTarget
 		var err error
 		switch {
 		case ringID != nil:
-			if ring, err = s.DB.GetKeyRing(ctx, *ringID); err != nil {
+			if ring, err = s.DB.GetKeyRing(ctx, *ringID, db.Unscoped); err != nil {
 				return fmt.Errorf("key ring %s: %w", ringID, err)
 			}
 		case target.KeyRingID != nil:
-			if ring, err = s.DB.GetKeyRing(ctx, *target.KeyRingID); err != nil {
+			if ring, err = s.DB.GetKeyRing(ctx, *target.KeyRingID, db.Unscoped); err != nil {
 				return err
 			}
 		default:
@@ -274,10 +324,13 @@ func (s *ServerAPI) setRingMasterKey(r *http.Request, ring *db.KeyRing, pemText 
 	if master == ring.MasterPublicKey {
 		return nil
 	}
-	if err := s.DB.UpdateKeyRing(r.Context(), ring.ID, ring.Name, master); err != nil {
+	old := ring.MasterPublicKey
+	ring.MasterPublicKey = master
+	if err := s.DB.UpdateKeyRing(r.Context(), ring); err != nil {
+		ring.MasterPublicKey = old
 		return err
 	}
-	ring.MasterPublicKey = master
+	s.audit(r, "keyring.master_key", "keyring", ring.ID.String(), ring.Name, ring.Labels, map[string]any{"set": master != ""})
 	return nil
 }
 
@@ -286,7 +339,7 @@ func (s *ServerAPI) encryptionInfo(r *http.Request, target *db.BackupTarget) (*T
 	if target.KeyRingID == nil {
 		return info, nil
 	}
-	ring, err := s.DB.GetKeyRing(r.Context(), *target.KeyRingID)
+	ring, err := s.DB.GetKeyRing(r.Context(), *target.KeyRingID, db.Unscoped)
 	if err != nil {
 		return nil, err
 	}
@@ -310,7 +363,7 @@ func (s *ServerAPI) writeEncryptionInfo(w http.ResponseWriter, r *http.Request, 
 }
 
 func (s *ServerAPI) writeRing(w http.ResponseWriter, r *http.Request, ring *db.KeyRing, status int) {
-	fresh, err := s.DB.GetKeyRing(r.Context(), ring.ID)
+	fresh, err := s.DB.GetKeyRing(r.Context(), ring.ID, db.Unscoped)
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, "Failed to load key ring")
 		return
@@ -331,6 +384,7 @@ func (s *ServerAPI) rotateRing(w http.ResponseWriter, r *http.Request, ring *db.
 		s.writeError(w, http.StatusInternalServerError, "Failed to rotate the key")
 		return false
 	}
+	s.audit(r, "keyring.rotate", "keyring", ring.ID.String(), ring.Name, ring.Labels, map[string]any{"fingerprint": ring.KeyFingerprint, "targets": ring.Targets})
 	return true
 }
 
@@ -364,6 +418,7 @@ func (s *ServerAPI) exportRingKey(w http.ResponseWriter, r *http.Request, ring *
 		return
 	}
 	slog.Warn("Backup encryption key exported", "key_ring", ring.Name, "ring_id", ring.ID, "fingerprint", key.Fingerprint, "principal", principalName(r))
+	s.audit(r, "keyring.export", "keyring", ring.ID.String(), ring.Name, ring.Labels, map[string]any{"fingerprint": key.Fingerprint})
 	short := strings.ReplaceAll(key.Fingerprint, ":", "")
 	if len(short) > 16 {
 		short = short[:16]
@@ -402,6 +457,7 @@ func (s *ServerAPI) importRingKey(w http.ResponseWriter, r *http.Request, ring *
 		s.writeError(w, http.StatusInternalServerError, "Failed to import the key")
 		return false
 	}
+	s.audit(r, "keyring.import", "keyring", ring.ID.String(), ring.Name, ring.Labels, map[string]any{"fingerprint": imp.Fingerprint})
 	return true
 }
 
@@ -409,7 +465,7 @@ func (s *ServerAPI) importRingKey(w http.ResponseWriter, r *http.Request, ring *
 
 // HandleGetTargetEncryption returns the mode, ring, active key fingerprint and key history
 func (s *ServerAPI) HandleGetTargetEncryption(w http.ResponseWriter, r *http.Request) {
-	target, ok := s.targetFromPath(w, r)
+	target, ok := s.targetFromPath(w, r, auth.PermTargetsRead)
 	if !ok {
 		return
 	}
@@ -419,7 +475,7 @@ func (s *ServerAPI) HandleGetTargetEncryption(w http.ResponseWriter, r *http.Req
 // HandleSetTargetEncryption switches the mode, attaches a ring and sets or clears the
 // ring's master public key
 func (s *ServerAPI) HandleSetTargetEncryption(w http.ResponseWriter, r *http.Request) {
-	target, ok := s.targetFromPath(w, r)
+	target, ok := s.targetFromPath(w, r, auth.PermTargetsWrite)
 	if !ok {
 		return
 	}
@@ -440,6 +496,10 @@ func (s *ServerAPI) HandleSetTargetEncryption(w http.ResponseWriter, r *http.Req
 		}
 		ringID = &id
 	}
+	if !s.checkEncryptionAccess(w, r, req.Mode, ringID, target.KeyRingID, target.Labels, req.MasterPublicKey) {
+		return
+	}
+	oldMode := target.EncryptionMode
 	if err := s.applyEncryptionMode(r, target, req.Mode, ringID); err != nil {
 		switch {
 		case strings.Contains(err.Error(), "not one of"):
@@ -452,8 +512,9 @@ func (s *ServerAPI) HandleSetTargetEncryption(w http.ResponseWriter, r *http.Req
 		}
 		return
 	}
+	s.audit(r, "target.encryption", "target", target.ID.String(), target.Name, target.Labels, map[string]any{"old_mode": oldMode, "mode": target.EncryptionMode, "key_ring": target.KeyRingName})
 	if req.MasterPublicKey != nil && target.KeyRingID != nil {
-		ring, err := s.DB.GetKeyRing(r.Context(), *target.KeyRingID)
+		ring, err := s.DB.GetKeyRing(r.Context(), *target.KeyRingID, db.Unscoped)
 		if err != nil {
 			s.writeError(w, http.StatusInternalServerError, "Failed to load the target's key ring")
 			return
@@ -468,7 +529,7 @@ func (s *ServerAPI) HandleSetTargetEncryption(w http.ResponseWriter, r *http.Req
 
 // HandleRotateTargetKey rotates the target's ring (every target on it switches key)
 func (s *ServerAPI) HandleRotateTargetKey(w http.ResponseWriter, r *http.Request) {
-	target, ring, ok := s.targetRing(w, r)
+	target, ring, ok := s.targetRing(w, r, auth.PermKeyringsWrite)
 	if !ok {
 		return
 	}
@@ -483,7 +544,7 @@ func (s *ServerAPI) HandleRotateTargetKey(w http.ResponseWriter, r *http.Request
 
 // HandleExportTargetKey returns a key of the target's ring as a key file download
 func (s *ServerAPI) HandleExportTargetKey(w http.ResponseWriter, r *http.Request) {
-	target, ring, ok := s.targetRing(w, r)
+	target, ring, ok := s.targetRing(w, r, auth.PermKeyringsExport)
 	if !ok {
 		return
 	}
@@ -492,7 +553,7 @@ func (s *ServerAPI) HandleExportTargetKey(w http.ResponseWriter, r *http.Request
 
 // HandleImportTargetKey adopts a key file as the active key of the target's ring
 func (s *ServerAPI) HandleImportTargetKey(w http.ResponseWriter, r *http.Request) {
-	target, ring, ok := s.targetRing(w, r)
+	target, ring, ok := s.targetRing(w, r, auth.PermKeyringsWrite)
 	if !ok {
 		return
 	}
@@ -504,7 +565,7 @@ func (s *ServerAPI) HandleImportTargetKey(w http.ResponseWriter, r *http.Request
 // ---- ring endpoints ------------------------------------------------------------
 
 func (s *ServerAPI) HandleListKeyRings(w http.ResponseWriter, r *http.Request) {
-	rings, err := s.DB.ListKeyRings(r.Context())
+	rings, err := s.DB.ListKeyRings(r.Context(), scope(r, auth.PermKeyringsRead))
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, "Failed to list key rings")
 		return
@@ -524,7 +585,11 @@ func (s *ServerAPI) HandleCreateKeyRing(w http.ResponseWriter, r *http.Request) 
 		s.writeError(w, http.StatusBadRequest, "Name is required")
 		return
 	}
-	ring := &db.KeyRing{Name: req.Name, CreatedBy: principalName(r), Targets: []string{}}
+	req.Labels = req.Labels.OrEmpty()
+	if !s.validLabels(w, req.Labels) || !s.allow(w, r, auth.PermKeyringsWrite, req.Labels) {
+		return
+	}
+	ring := &db.KeyRing{Name: req.Name, CreatedBy: principalName(r), Targets: []string{}, Labels: req.Labels}
 	if req.MasterPublicKey != nil && strings.TrimSpace(*req.MasterPublicKey) != "" {
 		normalised, err := pbs.ValidateMasterPublicKey(strings.TrimSpace(*req.MasterPublicKey))
 		if err != nil {
@@ -545,11 +610,12 @@ func (s *ServerAPI) HandleCreateKeyRing(w http.ResponseWriter, r *http.Request) 
 		s.writeError(w, http.StatusInternalServerError, "Key ring created, but generating its key failed")
 		return
 	}
+	s.audit(r, "keyring.create", "keyring", ring.ID.String(), ring.Name, ring.Labels, map[string]any{"fingerprint": ring.KeyFingerprint})
 	s.writeRing(w, r, ring, http.StatusCreated)
 }
 
 func (s *ServerAPI) HandleGetKeyRing(w http.ResponseWriter, r *http.Request) {
-	ring, ok := s.ringFromPath(w, r)
+	ring, ok := s.ringFromPath(w, r, auth.PermKeyringsRead)
 	if !ok {
 		return
 	}
@@ -558,7 +624,7 @@ func (s *ServerAPI) HandleGetKeyRing(w http.ResponseWriter, r *http.Request) {
 
 // HandleUpdateKeyRing renames a ring and sets or clears its master public key
 func (s *ServerAPI) HandleUpdateKeyRing(w http.ResponseWriter, r *http.Request) {
-	ring, ok := s.ringFromPath(w, r)
+	ring, ok := s.ringFromPath(w, r, auth.PermKeyringsWrite)
 	if !ok {
 		return
 	}
@@ -567,6 +633,12 @@ func (s *ServerAPI) HandleUpdateKeyRing(w http.ResponseWriter, r *http.Request) 
 		s.writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
+	oldLabels := ring.Labels
+	labels, ok := s.newLabels(w, r, auth.PermKeyringsWrite, ring.Labels, req.Labels)
+	if !ok {
+		return
+	}
+	ring.Labels = labels
 	if name := strings.TrimSpace(req.Name); name != "" {
 		ring.Name = name
 	}
@@ -578,7 +650,7 @@ func (s *ServerAPI) HandleUpdateKeyRing(w http.ResponseWriter, r *http.Request) 
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := s.DB.UpdateKeyRing(r.Context(), ring.ID, ring.Name, ring.MasterPublicKey); err != nil {
+	if err := s.DB.UpdateKeyRing(r.Context(), ring); err != nil {
 		if isUniqueViolation(err) {
 			s.writeError(w, http.StatusConflict, "A key ring with that name exists")
 			return
@@ -586,12 +658,13 @@ func (s *ServerAPI) HandleUpdateKeyRing(w http.ResponseWriter, r *http.Request) 
 		s.writeError(w, http.StatusInternalServerError, "Failed to update key ring")
 		return
 	}
+	s.audit(r, "keyring.update", "keyring", ring.ID.String(), ring.Name, ring.Labels, map[string]any{"old_labels": oldLabels})
 	s.writeRing(w, r, ring, http.StatusOK)
 }
 
 // HandleDeleteKeyRing deletes an unused ring and its keys
 func (s *ServerAPI) HandleDeleteKeyRing(w http.ResponseWriter, r *http.Request) {
-	ring, ok := s.ringFromPath(w, r)
+	ring, ok := s.ringFromPath(w, r, auth.PermKeyringsDelete)
 	if !ok {
 		return
 	}
@@ -604,11 +677,12 @@ func (s *ServerAPI) HandleDeleteKeyRing(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	slog.Warn("Backup encryption key ring deleted with its keys", "key_ring", ring.Name, "ring_id", ring.ID, "principal", principalName(r))
+	s.audit(r, "keyring.delete", "keyring", ring.ID.String(), ring.Name, ring.Labels, nil)
 	s.writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
 func (s *ServerAPI) HandleRotateKeyRing(w http.ResponseWriter, r *http.Request) {
-	ring, ok := s.ringFromPath(w, r)
+	ring, ok := s.ringFromPath(w, r, auth.PermKeyringsWrite)
 	if !ok {
 		return
 	}
@@ -618,7 +692,7 @@ func (s *ServerAPI) HandleRotateKeyRing(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *ServerAPI) HandleExportKeyRingKey(w http.ResponseWriter, r *http.Request) {
-	ring, ok := s.ringFromPath(w, r)
+	ring, ok := s.ringFromPath(w, r, auth.PermKeyringsExport)
 	if !ok {
 		return
 	}
@@ -626,7 +700,7 @@ func (s *ServerAPI) HandleExportKeyRingKey(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *ServerAPI) HandleImportKeyRingKey(w http.ResponseWriter, r *http.Request) {
-	ring, ok := s.ringFromPath(w, r)
+	ring, ok := s.ringFromPath(w, r, auth.PermKeyringsWrite)
 	if !ok {
 		return
 	}
@@ -661,7 +735,7 @@ func (s *ServerAPI) HandleAgentEncryptionKey(w http.ResponseWriter, r *http.Requ
 		s.writeError(w, http.StatusForbidden, "backup ticket was not issued to this agent")
 		return
 	}
-	target, err := s.DB.GetTargetByID(r.Context(), claims.TargetID)
+	target, err := s.DB.GetTargetByID(r.Context(), claims.TargetID, db.Unscoped)
 	if err != nil {
 		s.writeError(w, http.StatusNotFound, "backup target not found")
 		return
@@ -690,7 +764,7 @@ func (s *ServerAPI) applyTargetMasterKey(r *http.Request, target *db.BackupTarge
 	if pemText == nil || target.KeyRingID == nil {
 		return "", true
 	}
-	ring, err := s.DB.GetKeyRing(r.Context(), *target.KeyRingID)
+	ring, err := s.DB.GetKeyRing(r.Context(), *target.KeyRingID, db.Unscoped)
 	if err != nil {
 		return "Failed to load the target's key ring", false
 	}
