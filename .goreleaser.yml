@@ -59,10 +59,8 @@ builds:
       - -s -w
     goos:
       - linux
-      - darwin
     goarch:
       - amd64
-      - arm64
     binary: fallbck-ctl
 
 archives:

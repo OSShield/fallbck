@@ -16,7 +16,7 @@ concurrency:
 jobs:
   unit:
     name: Vet + unit tests
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.actor == 'scheibling' && 'ubicloud-standard-8' || 'ubuntu-latest' }}
     timeout-minutes: 15
     permissions:
       contents: read
@@ -36,7 +36,7 @@ jobs:
 
   integration:
     name: Integration tests
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.actor == 'scheibling' && 'ubicloud-standard-8' || 'ubuntu-latest' }}
     timeout-minutes: 20
     permissions:
       contents: read
