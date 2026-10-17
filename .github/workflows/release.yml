@@ -196,6 +196,10 @@ jobs:
           username: "_token"
           password: ${{ env.REPO_TOKEN }}
           registry: cr.osshield.eu
+      
+      - name: Manual login
+        run: |
+          cosign login cr.osshield.eu -u _token -p "${{ env.REPO_TOKEN }}"
 
       - name: Release (tags)
         uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
