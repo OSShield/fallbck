@@ -190,7 +190,7 @@ jobs:
 
       - name: Get trusted token
         id: trusted_token
-        uses: OSSign/actions/github-trusted@v3
+        uses: OSSign/actions/github-trusted@main
         with:
           audience: "https://pkg.osshield.eu"
           exchange: "https://pkg.osshield.eu/api/v1/auth/github/exchange"
@@ -249,7 +249,7 @@ jobs:
 
       - name: Get trusted token
         id: trusted_token
-        uses: OSSign/actions/github-trusted@v3
+        uses: OSSign/actions/github-trusted@main
         with:
           audience: "https://pkg.osshield.eu"
           exchange: "https://pkg.osshield.eu/api/v1/auth/github/exchange"
