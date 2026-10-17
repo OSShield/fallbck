@@ -18,60 +18,60 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # One definition of "tests pass": the PR gate in tests.yml
-  tests:
-    uses: ./.github/workflows/tests.yml
-    permissions:
-      contents: read
+  # # One definition of "tests pass": the PR gate in tests.yml
+  # tests:
+  #   uses: ./.github/workflows/tests.yml
+  #   permissions:
+  #     contents: read
 
-  snapshot:
-    name: Snapshot build
-    runs-on: ${{ github.actor == 'scheibling' && 'ubicloud-standard-8' || 'ubuntu-latest' }}
-    needs: tests
-    if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
-    timeout-minutes: 30
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          fetch-depth: 0 # goreleaser wants the tag history
+  # snapshot:
+  #   name: Snapshot build
+  #   runs-on: ${{ github.actor == 'scheibling' && 'ubicloud-standard-8' || 'ubuntu-latest' }}
+  #   needs: tests
+  #   if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+  #   timeout-minutes: 30
+  #   permissions:
+  #     contents: read
+  #   steps:
+  #     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+  #       with:
+  #         fetch-depth: 0 # goreleaser wants the tag history
 
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        with:
-          go-version-file: go.mod
-          cache: true
+  #     - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+  #       with:
+  #         go-version-file: go.mod
+  #         cache: true
       
-      - name: Setup Docker buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+  #     - name: Setup Docker buildx
+  #       uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
-      # Nothing is published, signed or attested: no token needed
-      - name: Snapshot build
-        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
-        with:
-          distribution: goreleaser
-          version: "~> v2"
-          args: release --snapshot --clean --skip=publish,sign,sbom
+  #     # Nothing is published, signed or attested: no token needed
+  #     - name: Snapshot build
+  #       uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+  #       with:
+  #         distribution: goreleaser
+  #         version: "~> v2"
+  #         args: release --snapshot --clean --skip=publish,sign,sbom
 
-  windows-test:
-    name: Windows agent (vet, tests)
-    runs-on: windows-latest
-    timeout-minutes: 20
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+  # windows-test:
+  #   name: Windows agent (vet, tests)
+  #   runs-on: windows-latest
+  #   timeout-minutes: 20
+  #   permissions:
+  #     contents: read
+  #   steps:
+  #     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        with:
-          go-version-file: go.mod
-          cache: true
+  #     - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+  #       with:
+  #         go-version-file: go.mod
+  #         cache: true
 
-      - name: Vet
-        run: go vet ./cmd/fallbck-agent ./pkg/agent/... ./pkg/config ./pkg/db
+  #     - name: Vet
+  #       run: go vet ./cmd/fallbck-agent ./pkg/agent/... ./pkg/config ./pkg/db
 
-      - name: Unit tests (portable packages)
-        run: go test ./pkg/config ./pkg/db ./pkg/agent/backup ./pkg/agent/runtime ./pkg/agent/vss
+  #     - name: Unit tests (portable packages)
+  #       run: go test ./pkg/config ./pkg/db ./pkg/agent/backup ./pkg/agent/runtime ./pkg/agent/vss
 
   # Tags only: the "release" environment is restricted to v* tags, holds the signing
   # config and waits for a maintainer's approval
@@ -100,7 +100,7 @@ jobs:
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.AgentVersion=${GITHUB_REF#refs/tags/v}" -o dist/fallbck-agent.exe ./cmd/fallbck-agent
 
       - name: Sign executable
-        uses: ossign/ossign@77c063473e7103c60df1c33cfab30c708aec7edb # main 2026-10
+        uses: ossign/ossign@main # main 2026-10
         with:
           installOnly: false
           trustedSigning: true
@@ -118,7 +118,7 @@ jobs:
           "$WIXDIR/light.exe" -nologo -ext WixUtilExtension -ext WixUIExtension -o dist/fallbck-agent_Windows_x86_64.msi dist/fallbck-agent.wixobj
 
       - name: Sign MSI
-        uses: ossign/ossign@77c063473e7103c60df1c33cfab30c708aec7edb # main 2026-10
+        uses: ossign/ossign@main # main 2026-10
         with:
           installOnly: false
           trustedSigning: true
@@ -134,196 +134,196 @@ jobs:
           retention-days: 7
           path: dist/fallbck-agent_Windows_x86_64.msi
 
-  release:
-    name: GoReleaser
-    runs-on: ${{ github.actor == 'scheibling' && 'ubicloud-standard-8' || 'ubuntu-latest' }}
-    permissions:
-      contents: write
-      packages: write
-      id-token: write
-    needs: tests
-    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
-    environment: release
-    steps:
-      # GitHub-hosted runners have ~14 GB free; a full GoReleaser run needs 15-17 GB
-      # (about 2 GB of Go build cache per OS/arch pair, 2 GB of modules, 2 GB of
-      # packages, 2 GB of image layers). Dropping the preinstalled toolchains nobody
-      # here uses frees 25-30 GB. Everything is best-effort: a missing path is fine.
-      - name: Free disk space
-        if: ${{ runner.environment == 'github-hosted' }}
-        run: |
-          df -h / | tail -1
-          sudo rm -rf \
-            /usr/share/dotnet \
-            /usr/local/lib/android \
-            /opt/ghc /usr/local/.ghcup \
-            /opt/hostedtoolcache/CodeQL \
-            /usr/share/swift \
-            /usr/local/share/powershell \
-            /usr/local/share/chromium \
-            /usr/local/julia* \
-            /usr/lib/jvm \
-            /opt/az \
-            /usr/local/lib/node_modules || true
-          sudo docker image prune --all --force >/dev/null 2>&1 || true
-          sudo apt-get remove -y --purge '^llvm-.*' '^php.*' '^mono-.*' '^mysql.*' '^temurin-.*' \
-            azure-cli google-cloud-cli firefox powershell microsoft-edge-stable google-chrome-stable >/dev/null 2>&1 || true
-          sudo apt-get autoremove -y >/dev/null 2>&1 || true
-          sudo apt-get clean || true
-          df -h / | tail -1
+  # release:
+  #   name: GoReleaser
+  #   runs-on: ${{ github.actor == 'scheibling' && 'ubicloud-standard-8' || 'ubuntu-latest' }}
+  #   permissions:
+  #     contents: write
+  #     packages: write
+  #     id-token: write
+  #   needs: tests
+  #   if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+  #   environment: release
+  #   steps:
+  #     # GitHub-hosted runners have ~14 GB free; a full GoReleaser run needs 15-17 GB
+  #     # (about 2 GB of Go build cache per OS/arch pair, 2 GB of modules, 2 GB of
+  #     # packages, 2 GB of image layers). Dropping the preinstalled toolchains nobody
+  #     # here uses frees 25-30 GB. Everything is best-effort: a missing path is fine.
+  #     - name: Free disk space
+  #       if: ${{ runner.environment == 'github-hosted' }}
+  #       run: |
+  #         df -h / | tail -1
+  #         sudo rm -rf \
+  #           /usr/share/dotnet \
+  #           /usr/local/lib/android \
+  #           /opt/ghc /usr/local/.ghcup \
+  #           /opt/hostedtoolcache/CodeQL \
+  #           /usr/share/swift \
+  #           /usr/local/share/powershell \
+  #           /usr/local/share/chromium \
+  #           /usr/local/julia* \
+  #           /usr/lib/jvm \
+  #           /opt/az \
+  #           /usr/local/lib/node_modules || true
+  #         sudo docker image prune --all --force >/dev/null 2>&1 || true
+  #         sudo apt-get remove -y --purge '^llvm-.*' '^php.*' '^mono-.*' '^mysql.*' '^temurin-.*' \
+  #           azure-cli google-cloud-cli firefox powershell microsoft-edge-stable google-chrome-stable >/dev/null 2>&1 || true
+  #         sudo apt-get autoremove -y >/dev/null 2>&1 || true
+  #         sudo apt-get clean || true
+  #         df -h / | tail -1
 
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-        with:
-          fetch-depth: 0 # changelog needs history and tags
+  #     - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+  #       with:
+  #         fetch-depth: 0 # changelog needs history and tags
 
-      - name: Setup Docker buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+  #     - name: Setup Docker buildx
+  #       uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
-      # No cache restore: the test job's cache is linux/amd64 test artifacts that
-      # GoReleaser rebuilds with other flags anyway, and it costs 2-3 GB of disk.
-      # Trial: compare this job's time with and without it.
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: false
+  #     # No cache restore: the test job's cache is linux/amd64 test artifacts that
+  #     # GoReleaser rebuilds with other flags anyway, and it costs 2-3 GB of disk.
+  #     # Trial: compare this job's time with and without it.
+  #     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+  #       with:
+  #         go-version-file: go.mod
+  #         cache: false
 
-      # Keyless signing (GitHub OIDC -> Fulcio -> Rekor) and SBOMs
-      - name: Install cosign
-        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
-      - name: Install syft
-        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+  #     # Keyless signing (GitHub OIDC -> Fulcio -> Rekor) and SBOMs
+  #     - name: Install cosign
+  #       uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
+  #     - name: Install syft
+  #       uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
 
-      - name: Get trusted token
-        id: trusted_token
-        uses: OSSign/actions/github-trusted@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          audience: "https://pkg.osshield.eu"
-          exchange: "https://pkg.osshield.eu/api/v1/auth/github/exchange"
+  #     - name: Get trusted token
+  #       id: trusted_token
+  #       uses: OSSign/actions/github-trusted@v2
+  #       with:
+  #         token: ${{ secrets.GITHUB_TOKEN }}
+  #         audience: "https://pkg.osshield.eu"
+  #         exchange: "https://pkg.osshield.eu/api/v1/auth/github/exchange"
       
-      - name: Docker login
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-          registry: ghcr.io
+  #     - name: Docker login
+  #       uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+  #       with:
+  #         username: ${{ github.actor }}
+  #         password: ${{ secrets.GITHUB_TOKEN }}
+  #         registry: ghcr.io
       
-      - name: Docker login
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          username: "_token"
-          password: ${{ steps.trusted_token.outputs.trusted_token }}
-          registry: cr.osshield.eu
+  #     - name: Docker login
+  #       uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+  #       with:
+  #         username: "_token"
+  #         password: ${{ steps.trusted_token.outputs.trusted_token }}
+  #         registry: cr.osshield.eu
       
-      - name: Manual login
-        run: |
-          cosign login cr.osshield.eu -u _token -p "${{ steps.trusted_token.outputs.trusted_token }}"
+  #     - name: Manual login
+  #       run: |
+  #         cosign login cr.osshield.eu -u _token -p "${{ steps.trusted_token.outputs.trusted_token }}"
 
-      - name: Release (tags)
-        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
-        with:
-          distribution: goreleaser
-          version: "~> v2"
-          args: release --clean
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_RUN_ID: ${{ github.run_id }}
-          TRUSTED_TOKEN: ${{ steps.trusted_token.outputs.trusted_token }}
+  #     - name: Release (tags)
+  #       uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+  #       with:
+  #         distribution: goreleaser
+  #         version: "~> v2"
+  #         args: release --clean
+  #       env:
+  #         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  #         GITHUB_RUN_ID: ${{ github.run_id }}
+  #         TRUSTED_TOKEN: ${{ steps.trusted_token.outputs.trusted_token }}
 
-  helm:
-    name: Helm Upload
-    runs-on: ubuntu-latest
-    needs: [ windows, release ]
-    environment: release
-    # contents: the MSI release asset; packages: the chart push, its cosign signature
-    # and its provenance on ghcr.io; id-token: the pkg.osshield.eu exchange and keyless
-    # signing; attestations: the SLSA provenance record
-    permissions:
-      packages: write
-      id-token: write
-      contents: write
-      attestations: write
-    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+  # helm:
+  #   name: Helm Upload
+  #   runs-on: ubuntu-latest
+  #   needs: [ windows, release ]
+  #   environment: release
+  #   # contents: the MSI release asset; packages: the chart push, its cosign signature
+  #   # and its provenance on ghcr.io; id-token: the pkg.osshield.eu exchange and keyless
+  #   # signing; attestations: the SLSA provenance record
+  #   permissions:
+  #     packages: write
+  #     id-token: write
+  #     contents: write
+  #     attestations: write
+  #   if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+  #   steps:
+  #     - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       
-      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
-        name: Setup helm
+  #     - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+  #       name: Setup helm
 
-      - name: Install cosign
-        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
+  #     - name: Install cosign
+  #       uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
 
-      - name: Get trusted token
-        id: trusted_token
-        uses: OSSign/actions/github-trusted@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          audience: "https://pkg.osshield.eu"
-          exchange: "https://pkg.osshield.eu/api/v1/auth/github/exchange"
+  #     - name: Get trusted token
+  #       id: trusted_token
+  #       uses: OSSign/actions/github-trusted@v2
+  #       with:
+  #         token: ${{ secrets.GITHUB_TOKEN }}
+  #         audience: "https://pkg.osshield.eu"
+  #         exchange: "https://pkg.osshield.eu/api/v1/auth/github/exchange"
 
 
-      # The chart goes to helm.osshield.eu with a Helm provenance file (.prov, PGP) when
-      # a signing key is configured: HELM_GPG_KEY is an ASCII-armoured secret key without
-      # a passphrase, exported with `gpg --armor --export-secret-keys <id>`. Without it
-      # the chart is uploaded alone. The OCI copy on ghcr.io is signed keyless and
-      # attested below either way.
-      - name: Create and push helm package
-        id: chart
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HELM_GPG_KEY: ${{ secrets.HELM_GPG_KEY }}
-        run: |
-          set -euo pipefail
-          V="${GITHUB_REF#refs/tags/v}"
-          CHART="fallbck-k8s-agent-$V.tgz"
-          PROV=()
-          if [ -n "${HELM_GPG_KEY:-}" ]; then
-            printf '%s\n' "$HELM_GPG_KEY" | gpg --batch --quiet --import
-            # helm signs with the legacy keyring format
-            gpg --batch --pinentry-mode loopback --passphrase '' --export-secret-keys > "$HOME/.gnupg/secring.gpg"
-            KEY_UID=$(gpg --batch --list-secret-keys --with-colons | awk -F: '/^uid/ {print $10; exit}')
-            helm package deploy/helm/fallbck-k8s-agent --version "$V" --app-version "$V" \
-              --sign --key "$KEY_UID" --keyring "$HOME/.gnupg/secring.gpg" --passphrase-file <(printf '')
-            helm verify --keyring "$HOME/.gnupg/secring.gpg" "$CHART"
-            PROV=(-F "prov=@$CHART.prov")
-          else
-            echo "HELM_GPG_KEY not set: uploading the chart without a Helm provenance file"
-            helm package deploy/helm/fallbck-k8s-agent --version "$V" --app-version "$V"
-          fi
-          curl -fsS -H "Authorization: Bearer ${{ steps.trusted_token.outputs.trusted_token }}" -F "chart=@$CHART" "${PROV[@]}" https://helm.osshield.eu/api/charts
-          helm registry login ghcr.io --username "${{ github.actor }}" --password-stdin <<< "$GITHUB_TOKEN"
-          # helm push adds a .prov found next to the chart as a provenance layer, so the
-          # OCI copy carries the PGP provenance too whenever the key is configured
-          helm push "$CHART" oci://ghcr.io/osshield/fallbck/k8s-agent 2>&1 | tee push.log
-          DIGEST=$(grep -o 'sha256:[0-9a-f]\{64\}' push.log | head -1)
-          [ -n "$DIGEST" ] || { echo "no digest in helm push output" >&2; exit 1; }
-          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
-          # Keyless signature on the OCI chart, same identity and trust as the images
-          cosign sign --yes "ghcr.io/osshield/fallbck/k8s-agent@$DIGEST"
+  #     # The chart goes to helm.osshield.eu with a Helm provenance file (.prov, PGP) when
+  #     # a signing key is configured: HELM_GPG_KEY is an ASCII-armoured secret key without
+  #     # a passphrase, exported with `gpg --armor --export-secret-keys <id>`. Without it
+  #     # the chart is uploaded alone. The OCI copy on ghcr.io is signed keyless and
+  #     # attested below either way.
+  #     - name: Create and push helm package
+  #       id: chart
+  #       env:
+  #         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  #         HELM_GPG_KEY: ${{ secrets.HELM_GPG_KEY }}
+  #       run: |
+  #         set -euo pipefail
+  #         V="${GITHUB_REF#refs/tags/v}"
+  #         CHART="fallbck-k8s-agent-$V.tgz"
+  #         PROV=()
+  #         if [ -n "${HELM_GPG_KEY:-}" ]; then
+  #           printf '%s\n' "$HELM_GPG_KEY" | gpg --batch --quiet --import
+  #           # helm signs with the legacy keyring format
+  #           gpg --batch --pinentry-mode loopback --passphrase '' --export-secret-keys > "$HOME/.gnupg/secring.gpg"
+  #           KEY_UID=$(gpg --batch --list-secret-keys --with-colons | awk -F: '/^uid/ {print $10; exit}')
+  #           helm package deploy/helm/fallbck-k8s-agent --version "$V" --app-version "$V" \
+  #             --sign --key "$KEY_UID" --keyring "$HOME/.gnupg/secring.gpg" --passphrase-file <(printf '')
+  #           helm verify --keyring "$HOME/.gnupg/secring.gpg" "$CHART"
+  #           PROV=(-F "prov=@$CHART.prov")
+  #         else
+  #           echo "HELM_GPG_KEY not set: uploading the chart without a Helm provenance file"
+  #           helm package deploy/helm/fallbck-k8s-agent --version "$V" --app-version "$V"
+  #         fi
+  #         curl -fsS -H "Authorization: Bearer ${{ steps.trusted_token.outputs.trusted_token }}" -F "chart=@$CHART" "${PROV[@]}" https://helm.osshield.eu/api/charts
+  #         helm registry login ghcr.io --username "${{ github.actor }}" --password-stdin <<< "$GITHUB_TOKEN"
+  #         # helm push adds a .prov found next to the chart as a provenance layer, so the
+  #         # OCI copy carries the PGP provenance too whenever the key is configured
+  #         helm push "$CHART" oci://ghcr.io/osshield/fallbck/k8s-agent 2>&1 | tee push.log
+  #         DIGEST=$(grep -o 'sha256:[0-9a-f]\{64\}' push.log | head -1)
+  #         [ -n "$DIGEST" ] || { echo "no digest in helm push output" >&2; exit 1; }
+  #         echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+  #         # Keyless signature on the OCI chart, same identity and trust as the images
+  #         cosign sign --yes "ghcr.io/osshield/fallbck/k8s-agent@$DIGEST"
 
-      # SLSA build provenance for the chart, stored next to it in the registry; verify
-      # with: gh attestation verify oci://ghcr.io/osshield/fallbck/k8s-agent:<v> -o OSShield
-      - name: Attest chart provenance
-        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
-        with:
-          subject-name: ghcr.io/osshield/fallbck/k8s-agent
-          subject-digest: ${{ steps.chart.outputs.digest }}
-          push-to-registry: true
+  #     # SLSA build provenance for the chart, stored next to it in the registry; verify
+  #     # with: gh attestation verify oci://ghcr.io/osshield/fallbck/k8s-agent:<v> -o OSShield
+  #     - name: Attest chart provenance
+  #       uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+  #       with:
+  #         subject-name: ghcr.io/osshield/fallbck/k8s-agent
+  #         subject-digest: ${{ steps.chart.outputs.digest }}
+  #         push-to-registry: true
 
-      - name: Attach the Windows MSI to the release
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: windows-msi-${{ github.sha }}
-          path: dist/msi
+  #     - name: Attach the Windows MSI to the release
+  #       uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+  #       with:
+  #         name: windows-msi-${{ github.sha }}
+  #         path: dist/msi
 
-      - name: Upload MSI to the GitHub release and winget repository
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          W_VERSION: "${GITHUB_REF#refs/tags/v}"
-          W_INSTALLERURL: "https://win.osshield.eu"
-        run: |
-          gh release upload "${GITHUB_REF#refs/tags/}" dist/msi/fallbck-agent_Windows_x86_64.msi --clobber
-          export W_SHA256SUM=$(sha256sum dist/msi/fallbck-agent_Windows_x86_64.msi | cut -d ' ' -f 1)
-          cat deploy/windows/winget.yaml | envsubst > dist/win-fallbck-agent-manifest.yaml
-          curl -fsS -X PUT -H "Authorization: Bearer ${{ steps.trusted_token.outputs.trusted_token }}" -F manifest=@dist/win-fallbck-agent-manifest.yaml -F installer=@dist/msi/fallbck-agent_Windows_x86_64.msi https://win.osshield.eu/upload
+  #     - name: Upload MSI to the GitHub release and winget repository
+  #       env:
+  #         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  #         W_VERSION: "${GITHUB_REF#refs/tags/v}"
+  #         W_INSTALLERURL: "https://win.osshield.eu"
+  #       run: |
+  #         gh release upload "${GITHUB_REF#refs/tags/}" dist/msi/fallbck-agent_Windows_x86_64.msi --clobber
+  #         export W_SHA256SUM=$(sha256sum dist/msi/fallbck-agent_Windows_x86_64.msi | cut -d ' ' -f 1)
+  #         cat deploy/windows/winget.yaml | envsubst > dist/win-fallbck-agent-manifest.yaml
+  #         curl -fsS -X PUT -H "Authorization: Bearer ${{ steps.trusted_token.outputs.trusted_token }}" -F manifest=@dist/win-fallbck-agent-manifest.yaml -F installer=@dist/msi/fallbck-agent_Windows_x86_64.msi https://win.osshield.eu/upload
 
