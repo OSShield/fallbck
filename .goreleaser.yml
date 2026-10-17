@@ -304,7 +304,7 @@ dockers_v2:
     dockerfile: Dockerfile.ctl
     images: [ghcr.io/osshield/fallbck/ctl, cr.osshield.eu/fallbck/ctl ]
     tags: ["{{ .Version }}", latest]
-    platforms: [linux/amd64, linux/arm64]
+    platforms: [linux/amd64]
 
 uploads:
   - name: "debian"
