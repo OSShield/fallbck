@@ -173,7 +173,9 @@ func Run(ctx context.Context, o RunOptions) (*temporal.BackupExecutionResult, er
 			} else {
 				err = stageVolume(sctx, access, files, v, dst)
 			}
-			if serr := stopWatch(); serr != nil {
+			// A copy that finished stands even if the disk filled right after it;
+			// the space error only explains a copy that failed
+			if serr := stopWatch(); serr != nil && err != nil {
 				err = serr
 			}
 			if err != nil {
@@ -219,7 +221,7 @@ func Run(ctx context.Context, o RunOptions) (*temporal.BackupExecutionResult, er
 			if err == nil {
 				sctx, stopWatch := space.watch(ctx)
 				err = extractViaHelper(sctx, files, hp, dst)
-				if serr := stopWatch(); serr != nil {
+				if serr := stopWatch(); serr != nil && err != nil {
 					err = serr
 				}
 			}

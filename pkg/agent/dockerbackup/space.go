@@ -40,12 +40,15 @@ func (g *spaceGuard) room(need int64) error {
 }
 
 // watch returns a context cancelled when free space drops under min, for copies of
-// unknown size; stop ends the watch and returns the space error if it fired
+// unknown size. stop ends the watch and waits for its goroutine, so no check runs
+// after it returns; it then returns the space error if the watch cancelled the copy.
 func (g *spaceGuard) watch(ctx context.Context) (context.Context, func() error) {
 	ctx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
-	fired := make(chan error, 1)
+	exited := make(chan struct{})
+	var fired error // written by the goroutine before exited closes, read after
 	go func() {
+		defer close(exited)
 		t := time.NewTicker(g.every)
 		defer t.Stop()
 		for {
@@ -56,7 +59,7 @@ func (g *spaceGuard) watch(ctx context.Context) (context.Context, func() error) 
 				return
 			case <-t.C:
 				if err := g.room(0); err != nil {
-					fired <- err
+					fired = err
 					cancel()
 					return
 				}
@@ -65,12 +68,8 @@ func (g *spaceGuard) watch(ctx context.Context) (context.Context, func() error) 
 	}()
 	return ctx, func() error {
 		close(done)
+		<-exited
 		cancel()
-		select {
-		case err := <-fired:
-			return err
-		default:
-			return nil
-		}
+		return fired
 	}
 }
