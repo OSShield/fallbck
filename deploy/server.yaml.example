@@ -57,3 +57,4 @@ temporal:
   ui:
     enabled: true                                # embedded Temporal Web UI under /temporal/
     port: 8233                                   # loopback
+    read_only: true                              # no terminate/cancel/signal/reset; the UI isn't label-scoped

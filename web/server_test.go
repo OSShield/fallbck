@@ -264,3 +264,32 @@ func TestAgentDetailRenders(t *testing.T) {
 		t.Error("page contains a password field")
 	}
 }
+
+func TestLoginRefusalReasons(t *testing.T) {
+	cases := []struct {
+		id   auth.Identity
+		want string
+	}{
+		{auth.Identity{Email: "a@example.com"}, "no_access"},
+		{auth.Identity{Email: "a@example.com", EmailUnverified: true}, "email_unverified"},
+		{auth.Identity{}, "no_email"},
+		{auth.Identity{EmailUnverified: true}, "no_email"},
+	}
+	for _, tc := range cases {
+		if got := refusalReason(&tc.id); got != tc.want {
+			t.Errorf("%+v: %s, want %s", tc.id, got, tc.want)
+		}
+	}
+
+	tm := auth.NewTokenManager("test-secret-key-must-be-very-long-123456")
+	ui := NewUIHandler(nil, config.DefaultServerConfig(), Deps{TokenManager: tm, Admin: auth.NewAdminAuth(tm, nil, false)})
+	r := chi.NewRouter()
+	ui.RegisterRoutes(r)
+	for key, text := range map[string]string{"email_unverified": "marks your email address as unverified", "no_email": "sent no email address", "failed": "Sign-in failed"} {
+		rr := httptest.NewRecorder()
+		r.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/login?error="+key, nil))
+		if !strings.Contains(rr.Body.String(), text) {
+			t.Errorf("login page for %s does not explain it (want %q)", key, text)
+		}
+	}
+}

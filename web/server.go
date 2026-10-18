@@ -211,6 +211,10 @@ func (u *UIHandler) HandleLoginPage(w http.ResponseWriter, r *http.Request) {
 		"expired":        "The sign-in attempt expired. Please try again.",
 		"denied":         "Sign-in was cancelled at the identity provider.",
 		"no_access":      "Your account has no role on this server. Ask an administrator to grant you access.",
+		"email_unverified": "Your identity provider marks your email address as unverified, so access granted to your email does not apply (and the first sign-in cannot become the administrator). " +
+			"Mark the email as verified at the provider, or ask an administrator for a group binding.",
+		"no_email": "Your identity provider sent no email address, so access granted to an email does not apply (and the first sign-in cannot become the administrator). " +
+			"Add the email scope or claim at the provider, or ask an administrator for a group binding.",
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = tmpl.ExecuteTemplate(w, "login", map[string]any{
@@ -297,8 +301,8 @@ func (u *UIHandler) HandleAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ok := u.authorizeLogin(w, r, identity); !ok {
-		fail("no_access")
+	if reason := u.authorizeLogin(r, identity); reason != "" {
+		fail(reason)
 		return
 	}
 
@@ -314,12 +318,26 @@ func (u *UIHandler) HandleAuthCallback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, safeNext(state.Next), http.StatusFound)
 }
 
+// refusalReason names why an identity without bindings was refused: an email the
+// provider calls unverified or no email at all both keep user bindings (and the
+// first-admin bootstrap) from applying, which is worth saying on the login page
+func refusalReason(id *auth.Identity) string {
+	switch {
+	case id.Email == "":
+		return "no_email"
+	case id.EmailUnverified:
+		return "email_unverified"
+	}
+	return "no_access"
+}
+
 // authorizeLogin resolves the identity's role bindings: no binding means no access.
+// It returns "" when the sign-in may proceed, else the login page error key.
 // On a fresh instance (no binding at all) the first identity with an email becomes
 // the global admin. Both outcomes go to the audit log.
-func (u *UIHandler) authorizeLogin(w http.ResponseWriter, r *http.Request, id *auth.Identity) bool {
+func (u *UIHandler) authorizeLogin(r *http.Request, id *auth.Identity) string {
 	if u.DB == nil || u.deps.Admin.RBAC == nil {
-		return true
+		return ""
 	}
 	ctx := r.Context()
 	p := &auth.Principal{Kind: auth.PrincipalSession, Subject: id.Subject, Email: id.Email, Name: id.Name}
@@ -333,7 +351,7 @@ func (u *UIHandler) authorizeLogin(w http.ResponseWriter, r *http.Request, id *a
 		created, err := u.DB.BootstrapAdmin(ctx, id.Email, auth.RoleAdmin)
 		if err != nil {
 			slog.Error("Bootstrapping the first administrator failed", "error", err)
-			return false
+			return "failed"
 		}
 		if created {
 			u.deps.Admin.RBAC.Flush()
@@ -344,15 +362,17 @@ func (u *UIHandler) authorizeLogin(w http.ResponseWriter, r *http.Request, id *a
 	bindings, err := u.deps.Admin.RBAC.Session(ctx, id.Email, id.EmailUnverified, id.Groups)
 	if err != nil {
 		slog.Error("Resolving role bindings failed", "error", err)
-		return false
+		return "failed"
 	}
 	if len(bindings) == 0 {
-		slog.Warn("Sign-in refused: no role binding", "subject", id.Subject, "email", id.Email, "groups", id.Groups)
-		audit("auth.denied", map[string]any{"groups": id.Groups, "email_unverified": id.EmailUnverified})
-		return false
+		reason := refusalReason(id)
+		slog.Warn("Sign-in refused: no role binding", "reason", reason, "subject", id.Subject, "email", id.Email,
+			"email_unverified", id.EmailUnverified, "groups", id.Groups)
+		audit("auth.denied", map[string]any{"reason": reason, "groups": id.Groups, "email_unverified": id.EmailUnverified})
+		return reason
 	}
 	audit("auth.login", map[string]any{"groups": id.Groups})
-	return true
+	return ""
 }
 
 // HandleLogout clears the session (called via fetch from the UI)
