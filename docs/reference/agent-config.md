@@ -23,6 +23,7 @@ Mostly written at enrollment.
 | `enrollment_key` | `FALLBCK_AGENT_ENROLLMENT_KEY` | Self-enroll on first start. |
 | `log_level` | `FALLBCK_AGENT_LOG_LEVEL` | `debug`, `info`, `warn` or `error`. `DEBUG=true` overrides it. |
 | `vss` | `FALLBCK_AGENT_VSS` | Windows only. Shadow copies, default `true`. |
+| `max_concurrent_activities` | `FALLBCK_AGENT_MAX_CONCURRENT_ACTIVITIES` | How many jobs, volume uploads and log or inventory requests run at once. Default `16`. More wait their turn (backups for up to 12 hours; *View logs* and *Refresh inventory* give up after 20 seconds, so keep some headroom). |
 
 ## `db_backup`
 
@@ -60,3 +61,4 @@ See [Docker hosts](../agents/docker.md).
 | `volume_access` | `FALLBCK_AGENT_DOCKER_VOLUME_ACCESS` | `auto` | `auto`, `direct` or `helper`. |
 | `helper_image` | `FALLBCK_AGENT_DOCKER_HELPER_IMAGE` | `alpine:3.24` | Image for helper containers. |
 | `socket` | `FALLBCK_AGENT_DOCKER_SOCKET` | `DOCKER_HOST` or `/var/run/docker.sock` | Unix sockets only. |
+| `min_free_bytes` | `FALLBCK_AGENT_DOCKER_MIN_FREE_BYTES` | `1073741824` (1 GiB) | Free space a run leaves in the spool. A run won't start below it, an image that wouldn't fit isn't saved, a volume copy that wouldn't fit is skipped, and a helper copy is stopped when the disk drops under it. Each one shows as a warning on the run. |

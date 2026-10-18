@@ -171,7 +171,8 @@ Common fields:
   "enabled": true,
   "direct_pbs": false,
   "backup_paths": ["/etc", "/srv"],
-  "exclude_paths": ["*.tmp"]
+  "exclude_paths": ["*.tmp"],
+  "one_file_system": false
 }
 ```
 

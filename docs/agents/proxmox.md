@@ -19,6 +19,8 @@ Each run writes one `pve.pxar` into the group `host/<backup_id>-pve` (the job's 
 
 **Data paths** are optional: mounted storages like `/var/lib/vz`, archived file by file. Guest disk images under them (`images/`, `private/`, `subvol-*`) are skipped unless the job says otherwise. Guest disks are never part of this backup.
 
+The inventory is collected into the agent's data directory first. It's small, but a run won't start with less than 256 MiB free there: a full disk on a hypervisor is worse than a skipped backup.
+
 ## Restore
 
 Restore onto a **fresh install of the same PVE major version**. Pull the archive with PBS's client and run the generated runbook that's inside it:

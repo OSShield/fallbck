@@ -281,3 +281,15 @@ func TestMergeAgentValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestHealthReportsBuildVersion(t *testing.T) {
+	api := NewServerAPI(nil, nil, config.DefaultServerConfig(), auth.NewTokenManager("test-secret-key-must-be-very-long-123456"), nil)
+	api.Version = "1.2.3"
+	r := chi.NewRouter()
+	api.RegisterRoutes(r, passthrough, passthrough)
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/v1/health", nil))
+	if !strings.Contains(rr.Body.String(), `"version":"1.2.3"`) {
+		t.Errorf("health: %s", rr.Body.String())
+	}
+}

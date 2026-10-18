@@ -233,3 +233,14 @@ func TestTrustedProxiesDefaultLoopbackOnly(t *testing.T) {
 		}
 	}
 }
+
+func TestAgentConcurrencyAndDockerSpaceDefaults(t *testing.T) {
+	var c AgentConfig
+	if c.EffMaxConcurrentActivities() != DefaultMaxConcurrentActivities || c.DockerBackup.EffMinFreeBytes() != 1<<30 {
+		t.Errorf("defaults: %d %d", c.EffMaxConcurrentActivities(), c.DockerBackup.EffMinFreeBytes())
+	}
+	c.MaxConcurrentActivities, c.DockerBackup.MinFreeBytes = 4, 5<<30
+	if c.EffMaxConcurrentActivities() != 4 || c.DockerBackup.EffMinFreeBytes() != 5<<30 {
+		t.Error("configured values are not used")
+	}
+}

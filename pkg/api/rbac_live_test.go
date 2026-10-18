@@ -598,3 +598,27 @@ func TestLiveSessionRevocation(t *testing.T) {
 		t.Errorf("%d session audit entries, want 2", len(entries))
 	}
 }
+
+func TestLiveJobOneFileSystem(t *testing.T) {
+	d := liveDB(t)
+	f := seed(t, d)
+	h := liveRouter(d, &auth.Principal{Kind: auth.PrincipalSession, Email: "root@example.com", Bindings: auth.AdminBindings()})
+	job := db.BackupJob{Name: "root-fs", AgentID: f.agentA.ID, TargetID: f.targetA.ID, BackupPaths: []string{"/"}, OneFileSystem: true}
+	code, body := call(t, h, http.MethodPost, "/api/v1/jobs", job)
+	if code != http.StatusCreated {
+		t.Fatalf("create: %d %s", code, body)
+	}
+	var created db.BackupJob
+	_ = json.Unmarshal(body, &created)
+	stored, err := d.GetJobByID(context.Background(), created.ID, db.Unscoped)
+	if err != nil || !stored.OneFileSystem {
+		t.Fatalf("stored one_file_system: %+v %v", stored, err)
+	}
+	stored.OneFileSystem = false
+	if code, body := call(t, h, http.MethodPut, "/api/v1/jobs/"+created.ID.String(), stored); code != http.StatusOK {
+		t.Fatalf("update: %d %s", code, body)
+	}
+	if again, _ := d.GetJobByID(context.Background(), created.ID, db.Unscoped); again.OneFileSystem {
+		t.Error("one_file_system did not switch off")
+	}
+}

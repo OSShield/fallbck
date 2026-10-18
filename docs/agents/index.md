@@ -55,6 +55,8 @@ A file job takes one or more paths plus optional excludes.
 
 **Excludes** use the same syntax as `proxmox-backup-client --exclude`: `*.tmp`, `/var/cache` (anchored to the backup path), `**/node_modules`. They're recorded in the archive just like the official client does it, and `.pxarexclude` files in the tree are honored too. With several paths, patterns match against the archive-relative path, so a root stored as `etc-mydir` gets matched as `/etc-mydir/...`.
 
+**Other filesystems.** On Linux, kernel filesystems (`/proc`, `/sys`, `/dev`, `/dev/pts`, cgroups and the like) are always left out, wherever they're mounted, even under a host root mounted into the agent's container. Everything else mounted below a backup path, such as NFS shares, data disks and bind mounts, is backed up unless you tick **Stay on one filesystem** (`one_file_system` in the API). Then it works like `proxmox-backup-client` without `--all-file-systems`: each mount point below a backup path is left out along with its contents, and the agent log names it. Btrfs subvolumes count as separate filesystems here, same as in PBS's client. Back them up as paths of their own if you want them.
+
 ### Incremental runs on pxar v2
 
 On a **pxar v2** target the agent does metadata change detection, the same thing as `proxmox-backup-client --change-detection-mode metadata`:
