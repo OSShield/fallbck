@@ -1,4 +1,10 @@
 {{define "content"}}
+{{if .TokenWarnings}}
+<div style="display: flex; gap: 12px; align-items: center; padding: 10px 14px; margin-bottom: 16px; border-radius: var(--radius-sm); border: 1px solid var(--warning-border); background: var(--warning-bg); font-size: 13px;">
+  <span class="badge badge-warning">PBS tokens</span>
+  <span>{{.TokenWarnings}} backup target{{if gt .TokenWarnings 1}}s have API tokens{{else}} has an API token{{end}} with more than Datastore.Backup, without it, or not checkable. <a href="/targets">Open Targets</a> to see what PBS reports and how to fix it.</span>
+</div>
+{{end}}
 <div class="metrics-grid">
   <div class="metric-card">
     <div class="metric-header">

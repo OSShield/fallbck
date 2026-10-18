@@ -34,6 +34,7 @@ import (
 	"github.com/osshield/fallbck/pkg/temporal/scheduler"
 	temporalui "github.com/osshield/fallbck/pkg/temporal/ui"
 	"github.com/osshield/fallbck/pkg/temporal/workflows"
+	"github.com/osshield/fallbck/pkg/tokencheck"
 	"github.com/osshield/fallbck/web"
 	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
@@ -311,6 +312,8 @@ func main() {
 			os.Exit(1)
 		}
 		go audit.RunPruner(ctx, database, cfg.Audit.Retention, auditExport, audit.Redact(cfg.Audit.Export))
+		// PBS token least privilege: every target's token, every few hours
+		go tokencheck.Run(ctx, database)
 	}
 	adminAuth := auth.NewAdminAuth(tokenManager, keyStore, cfg.Auth.InsecureDisable)
 	adminAuth.RBAC = rbac

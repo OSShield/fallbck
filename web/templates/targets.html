@@ -40,7 +40,7 @@
             <td>{{if .Namespace}}<code>{{.Namespace}}</code>{{else}}<span style="color: var(--text-dim);">root</span>{{end}}</td>
             <td><span class="badge badge-info">pxar {{if .PxarFormat}}{{.PxarFormat}}{{else}}v1{{end}}</span></td>
             <td>{{if and (eq .EncryptionMode "encrypt") .KeyFingerprint}}<span class="badge badge-success" title="Key {{.KeyFingerprint}}">&#128274; {{printf "%.11s" .KeyFingerprint}}</span>{{else}}<span style="color: var(--text-dim);">off</span>{{end}}</td>
-            <td>{{if .HasToken}}<span class="badge badge-success">set</span>{{else}}<span class="badge badge-danger">missing</span>{{end}}</td>
+            <td>{{if .HasToken}}<span class="badge badge-success">set</span>{{else}}<span class="badge badge-danger">missing</span>{{end}} {{template "token-check-badge" .TokenCheck}}</td>
             <td>
               {{if .TLSVerify}}
                 <span class="badge badge-success">Verified</span>
