@@ -268,9 +268,9 @@ async function loadKeyRings() {
 }
 
 async function exportKeyRing(id, name) {
-  const passphrase = prompt(`Passphrase for the exported key file of ring "${name}" (at least 5 characters):`);
+  const passphrase = prompt(`Passphrase for the exported key file of ring "${name}" (at least 12 characters):`);
   if (passphrase === null) return;
-  if (passphrase.length < 5) { showToast('Choose a passphrase of at least 5 characters for the key file', 'error'); return; }
+  if (passphrase.length < 12) { showToast('Choose a passphrase of at least 12 characters for the key file', 'error'); return; }
   try {
     const resp = await apiFetch(`/api/v1/keyrings/${id}/export`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ passphrase })
@@ -350,7 +350,7 @@ async function exportTargetKey(form) {
   const t = form._target;
   const passphrase = form.elements['key_passphrase'].value;
   if (!t || !t.id) return;
-  if (passphrase.length < 5) { showToast('Choose a passphrase of at least 5 characters for the key file', 'error'); return; }
+  if (passphrase.length < 12) { showToast('Choose a passphrase of at least 12 characters for the key file', 'error'); return; }
   try {
     const resp = await apiFetch(`/api/v1/targets/${t.id}/encryption/export`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ passphrase })

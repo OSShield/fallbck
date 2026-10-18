@@ -21,7 +21,7 @@ Agents fetch the key per run with their backup ticket and keep it in memory for 
 !!! danger "Seriously, do this first"
     Without the key file, or the server database **plus** its master key, nothing on that target can be restored. Not by you, not by anyone.
 
-Hit *Export key file* on the target form. You get a passphrase-protected (scrypt) key file in `proxmox-backup-client` format, named after the target and key fingerprint. Keep it, and its passphrase, somewhere that isn't the backup server. Onboarding won't let you past a freshly encrypted target until you've downloaded it.
+Hit *Export key file* on the target form. You get a passphrase-protected (scrypt) key file in `proxmox-backup-client` format (the passphrase needs 12 characters or more), named after the target and key fingerprint. Keep it, and its passphrase, somewhere that isn't the backup server. Onboarding won't let you past a freshly encrypted target until you've downloaded it.
 
 Restore with:
 

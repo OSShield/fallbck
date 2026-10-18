@@ -97,6 +97,14 @@ The onboarding page has a labels box on the install step. It goes on the token, 
 
 Jobs don't inherit an agent's labels on the server. Set them on the job. Onboarding prefills them from the agent so you don't have to think about it.
 
+## Sessions
+
+Every browser sign-in gets a session on the server, and the cookie only works while that session does. Signing out ends it on the server, so a copied cookie dies with it. The *Access* page lists who's signed in, from where and when they were last active. *Revoke* ends one session, *Sign out everywhere* ends all of a user's.
+
+Either takes effect within 30 seconds on every server. That's also the fix when you've removed someone from a group at your IdP and don't want to wait for their session to run out: sign them out everywhere, and their next sign-in reads the groups again.
+
+The first time a server with session tracking starts, everyone signs in once more. Older cookies don't name a session.
+
 ## API keys
 
 An API key has exactly one role and one selector. You can't mint a key that reaches further than you do: every permission of the role has to be one you already hold on a selector the key's selector narrows. A `viewer` key on `team=web` is fine for a team operator, while an `admin` key on everything isn't.
@@ -136,5 +144,5 @@ With `auth.insecure_disable` (only under `--dev`), every request is the global a
 
 - The Temporal UI isn't scoped, which is why `temporal:ui` is global only. It's also read-only by default (`temporal.ui.read_only`). Turn that off and whoever can open it can terminate or cancel any workflow.
 - A key ring's list of attached targets shows every target name on the ring, scoped or not.
-- Groups and claims come from the sign-in and live in the session. Someone removed from a group at your IdP keeps that group's access until their session ends (12 hours by default). Removing the *binding* takes effect within 30 seconds.
+- Groups and claims come from the sign-in and live in the session. Someone removed from a group at your IdP keeps that group's access until their session ends (12 hours by default), unless you sign them out everywhere. Removing the *binding* takes effect within 30 seconds.
 - There's no directory sync (SCIM or Graph). Suggestions only know what sign-ins have shown.

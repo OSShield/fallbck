@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -62,7 +63,7 @@ func TestRequireAdmin(t *testing.T) {
 	}
 	_ = store.CreateAPIKey(context.Background(), key)
 
-	session, _, err := tm.CreateSession(&Identity{Subject: "sub-1", Email: "alice@example.com"}, time.Hour)
+	session, _, err := tm.CreateSession(&Identity{Subject: "sub-1", Email: "alice@example.com"}, "", time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,5 +181,57 @@ func TestSessionCookies(t *testing.T) {
 	ClearSessionCookie(w, CookieOptions{})
 	if w.Result().Cookies()[0].MaxAge != -1 {
 		t.Error("clear should expire the cookie")
+	}
+}
+
+// fakeSessions is a SessionStore with a revocation switch and a call counter
+type fakeSessions struct {
+	revoked map[string]bool
+	calls   int
+}
+
+func (f *fakeSessions) TouchAdminSession(_ context.Context, id string) (bool, error) {
+	f.calls++
+	return id != "" && !f.revoked[id], nil
+}
+
+func TestSessionRevocation(t *testing.T) {
+	tm := NewTokenManager("test-secret-key-must-be-very-long-123456")
+	store := &fakeSessions{revoked: map[string]bool{}}
+	a := NewAdminAuth(tm, nil, false)
+	a.Sessions = NewSessionChecker(store, time.Minute)
+	request := func(sid string) *http.Request {
+		token, _, err := tm.CreateSession(&Identity{Subject: "s", Email: "a@example.com"}, sid, time.Hour)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
+		r.AddCookie(&http.Cookie{Name: SessionCookieName, Value: token})
+		return r
+	}
+
+	p, err := a.Authenticate(request("s1"))
+	if err != nil || p.SessionID != "s1" {
+		t.Fatalf("valid session: %v %+v", err, p)
+	}
+	// Cached: a second request inside the TTL does not hit the store
+	_, _ = a.Authenticate(request("s1"))
+	if store.calls != 1 {
+		t.Errorf("store called %d times, want 1 (cache)", store.calls)
+	}
+	// Revoked elsewhere: still cached here until Forget (or the TTL) ...
+	store.revoked["s1"] = true
+	a.Sessions.Forget("s1")
+	if _, err := a.Authenticate(request("s1")); !errors.Is(err, ErrInvalidToken) {
+		t.Errorf("revoked session: %v, want ErrInvalidToken", err)
+	}
+	// A session cookie from before server-side tracking (no id) must sign in again
+	if _, err := a.Authenticate(request("")); !errors.Is(err, ErrInvalidToken) {
+		t.Errorf("session without id: %v, want ErrInvalidToken", err)
+	}
+	// Without a store (tests, no database) the cookie alone counts, as before
+	a.Sessions = nil
+	if _, err := a.Authenticate(request("")); err != nil {
+		t.Errorf("no session store: %v", err)
 	}
 }

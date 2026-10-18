@@ -202,7 +202,7 @@ func TestAuthenticateResolvesBindings(t *testing.T) {
 		t.Errorf("API key bindings: %+v", p.Bindings)
 	}
 
-	session, _, _ := tm.CreateSession(&Identity{Subject: "s", Email: "bob@example.com", Groups: []string{"ops"}}, 0)
+	session, _, _ := tm.CreateSession(&Identity{Subject: "s", Email: "bob@example.com", Groups: []string{"ops"}}, "", 0)
 	r = httptest.NewRequest(http.MethodGet, "/dashboard", nil)
 	r.AddCookie(&http.Cookie{Name: SessionCookieName, Value: session})
 	if p, err = a.Authenticate(r); err != nil {

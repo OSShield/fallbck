@@ -1,8 +1,10 @@
 package auth
 
 import (
+	"context"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -31,8 +33,10 @@ type SessionClaims struct {
 	jwt.RegisteredClaims
 }
 
-// CreateSession mints a session token for an authenticated admin identity
-func (tm *TokenManager) CreateSession(id *Identity, ttl time.Duration) (string, time.Time, error) {
+// CreateSession mints a session token for an authenticated admin identity. sessionID
+// (the jti) names the server-side session row; "" only where no session store checks
+// it (tests, development).
+func (tm *TokenManager) CreateSession(id *Identity, sessionID string, ttl time.Duration) (string, time.Time, error) {
 	if ttl <= 0 {
 		ttl = DefaultSessionTTL
 	}
@@ -44,6 +48,7 @@ func (tm *TokenManager) CreateSession(id *Identity, ttl time.Duration) (string, 
 		BindingClaims:    id.Claims,
 		RegisteredClaims: registered(id.Subject, AudienceSession, ttl),
 	}
+	claims.ID = sessionID
 	signed, err := tm.sign(claims)
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("failed to sign session: %w", err)
@@ -149,4 +154,72 @@ func ClearLoginStateCookie(w http.ResponseWriter, opts CookieOptions) {
 		Secure:   opts.Secure,
 		SameSite: http.SameSiteLaxMode,
 	})
+}
+
+// SessionStore validates server-side sessions (implemented by *db.DB)
+type SessionStore interface {
+	// TouchAdminSession reports whether the session exists, is not revoked and has
+	// not expired, and records the activity
+	TouchAdminSession(ctx context.Context, id string) (bool, error)
+}
+
+// SessionChecker caches positive answers of a SessionStore for a short TTL, so a
+// session revoked on another server stops working within that window; Forget and
+// Flush end it at once on this one
+type SessionChecker struct {
+	store SessionStore
+	ttl   time.Duration
+
+	mu    sync.Mutex
+	valid map[string]time.Time // session id → checked at
+}
+
+// NewSessionChecker wraps store with a cache of ttl
+func NewSessionChecker(store SessionStore, ttl time.Duration) *SessionChecker {
+	return &SessionChecker{store: store, ttl: ttl, valid: map[string]time.Time{}}
+}
+
+// Active reports whether the session may still be used
+func (c *SessionChecker) Active(ctx context.Context, id string) (bool, error) {
+	if id == "" {
+		return false, nil
+	}
+	c.mu.Lock()
+	at, ok := c.valid[id]
+	c.mu.Unlock()
+	if ok && time.Since(at) < c.ttl {
+		return true, nil
+	}
+	active, err := c.store.TouchAdminSession(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	c.mu.Lock()
+	if active {
+		c.valid[id] = time.Now()
+	} else {
+		delete(c.valid, id)
+	}
+	c.mu.Unlock()
+	return active, nil
+}
+
+// Forget drops one session from the cache (after revoking it here)
+func (c *SessionChecker) Forget(id string) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	delete(c.valid, id)
+	c.mu.Unlock()
+}
+
+// Flush drops the whole cache (after revoking sessions by user)
+func (c *SessionChecker) Flush() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.valid = map[string]time.Time{}
+	c.mu.Unlock()
 }

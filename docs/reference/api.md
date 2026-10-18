@@ -107,7 +107,7 @@ The token is stored sealed and is never returned. Pin a self-signed PBS with `fi
 | `GET` | `/targets/{id}/encryption` | Mode, fingerprint, master key status. |
 | `PUT` | `/targets/{id}/encryption` | `{"mode": "encrypt" \| "none", "key_ring_id": "<ring or empty>", "master_public_key": "<PEM or empty>"}`. Empty ring with `encrypt` creates one named after the target. |
 | `POST` | `/targets/{id}/encryption/rotate` | Rotates the target's ring: new key for every target on it. The old one gets retired, not deleted. |
-| `POST` | `/targets/{id}/encryption/export` | `{"passphrase", "hint", "key_id"}`. Returns a `proxmox-backup-client` key file. Leave `key_id` empty for the active key. |
+| `POST` | `/targets/{id}/encryption/export` | `{"passphrase", "hint", "key_id"}`, passphrase at least 12 characters. Returns a `proxmox-backup-client` key file. Leave `key_id` empty for the active key. |
 | `POST` | `/targets/{id}/encryption/import` | `{"keyfile", "passphrase"}`, onto the target's ring. |
 
 Key rings hold the keys; targets attach to a ring and share its key (and PBS dedup) with every other target on it. `key_ring_id` is also accepted on `POST /targets` and `PUT /targets/{id}`.
@@ -219,6 +219,9 @@ All of these need `rbac:manage`, except the audit log.
 | `POST` | `/rbac/bindings` | `{"kind": "group", "subject": "web-team", "role": "operator", "selector": "team in (web, api)"}`. `kind` is `user` (email), `group`, or `claim` with subject `claim=value` for a claim in `oidc.binding_claims`. |
 | `DELETE` | `/rbac/bindings/{id}` | Refused for the last binding with `rbac:manage` on everything. |
 | `GET` | `/rbac/subjects` | Emails, groups and claim values seen at sign-in, with when, plus the configured binding claims. |
+| `GET` | `/rbac/sessions` | Browser sessions still valid: who, when, from where, and which one is yours (`current`). |
+| `DELETE` | `/rbac/sessions/{id}` | Ends one session. |
+| `DELETE` | `/rbac/sessions?email=...` | Ends every session of a user. |
 | `GET` | `/rbac/selector?q=...` | Parses a selector and returns its canonical form and clauses. `rbac:manage` or `apikeys:manage`. |
 
 Selectors are strings in [Kubernetes label selector syntax](../operations/access.md#selectors), and responses always use the canonical string. Requests may still send the older object form, `{"team": "web"}`, which means `team=web`. Bindings come back with `last_seen` (the subject's last sign-in, or null) and `stale` (not seen for 90 days).

@@ -306,7 +306,24 @@ func (u *UIHandler) HandleAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session, expires, err := u.deps.TokenManager.CreateSession(identity, u.Config.Auth.SessionTTL)
+	// The cookie names a server-side session row, so signing out or an administrator
+	// can end it before it expires
+	sessionID := ""
+	if u.DB != nil {
+		ttl := u.Config.Auth.SessionTTL
+		if ttl <= 0 {
+			ttl = auth.DefaultSessionTTL
+		}
+		row := &db.AdminSession{ID: uuid.New(), Subject: identity.Subject, Email: identity.Email, Name: identity.Name,
+			SourceIP: auth.ClientIP(r), UserAgent: truncate(r.UserAgent(), 300), ExpiresAt: time.Now().Add(ttl)}
+		if err := u.DB.CreateAdminSession(r.Context(), row); err != nil {
+			slog.Error("Failed to record the session", "error", err)
+			fail("failed")
+			return
+		}
+		sessionID = row.ID.String()
+	}
+	session, expires, err := u.deps.TokenManager.CreateSession(identity, sessionID, u.Config.Auth.SessionTTL)
 	if err != nil {
 		slog.Error("Failed to create session", "error", err)
 		fail("failed")
@@ -386,6 +403,15 @@ func (u *UIHandler) authorizeLogin(r *http.Request, id *auth.Identity) string {
 
 // HandleLogout clears the session (called via fetch from the UI)
 func (u *UIHandler) HandleLogout(w http.ResponseWriter, r *http.Request) {
+	// End the session on the server too: a copied cookie stops working with it
+	if p := auth.PrincipalFrom(r.Context()); p != nil && p.SessionID != "" && u.DB != nil {
+		if id, err := uuid.Parse(p.SessionID); err == nil {
+			if _, err := u.DB.RevokeAdminSession(r.Context(), id, "signed out"); err != nil && !errors.Is(err, db.ErrNotFound) {
+				slog.Error("Revoking the session at sign-out failed", "error", err)
+			}
+			u.deps.Admin.Sessions.Forget(p.SessionID)
+		}
+	}
 	auth.ClearSessionCookie(w, u.cookieOpts)
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write([]byte(`{"status":"logged_out"}`))
@@ -952,6 +978,13 @@ func uptime(seconds int64) string {
 		return fmt.Sprintf("%dh %dm", int(d.Hours()), int(d.Minutes())%60)
 	}
 	return fmt.Sprintf("%dd %dh", int(d.Hours()/24), int(d.Hours())%24)
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
 }
 
 // labelList renders labels as sorted key=value strings for the label chips

@@ -539,3 +539,62 @@ func TestLiveTargetTokenCheck(t *testing.T) {
 		t.Errorf("viewer ran a token check: %d", code)
 	}
 }
+
+func TestLiveSessionRevocation(t *testing.T) {
+	d := liveDB(t)
+	ctx := context.Background()
+	mk := func(email string, ttl time.Duration) *db.AdminSession {
+		s := &db.AdminSession{ID: uuid.New(), Subject: "sub-" + email, Email: email, ExpiresAt: time.Now().Add(ttl)}
+		if err := d.CreateAdminSession(ctx, s); err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	alice1, alice2, bob := mk("Alice@example.com", time.Hour), mk("alice@example.com", time.Hour), mk("bob@example.com", time.Hour)
+	expired := mk("old@example.com", -time.Minute)
+	checker := auth.NewSessionChecker(d, time.Minute)
+	for _, s := range []*db.AdminSession{alice1, alice2, bob} {
+		if ok, err := checker.Active(ctx, s.ID.String()); !ok || err != nil {
+			t.Fatalf("%s should be active: %v", s.Email, err)
+		}
+	}
+	if ok, _ := checker.Active(ctx, expired.ID.String()); ok {
+		t.Error("an expired session is active")
+	}
+	if ok, _ := checker.Active(ctx, "not-a-uuid"); ok {
+		t.Error("a garbage session id is active")
+	}
+
+	admin := &auth.Principal{Kind: auth.PrincipalSession, Email: "root@example.com", Bindings: auth.AdminBindings(), SessionID: bob.ID.String()}
+	s := NewServerAPI(d, nil, config.DefaultServerConfig(), auth.NewTokenManager("test-secret-key-must-be-very-long-123456"), nil)
+	s.Sessions = checker
+	r := chi.NewRouter()
+	s.RegisterRoutes(r, asPrincipal(admin), passthrough)
+
+	code, body := call(t, r, http.MethodGet, "/api/v1/rbac/sessions", nil)
+	if code != http.StatusOK || bytes.Count(body, []byte(`"id"`)) != 3 || !bytes.Contains(body, []byte(`"current":true`)) {
+		t.Errorf("list: %d %s", code, body)
+	}
+	if code, body := call(t, r, http.MethodDelete, "/api/v1/rbac/sessions/"+bob.ID.String(), nil); code != http.StatusOK {
+		t.Fatalf("revoke one: %d %s", code, body)
+	}
+	if ok, _ := checker.Active(ctx, bob.ID.String()); ok {
+		t.Error("revoked session still active on this server")
+	}
+	if code, _ := call(t, r, http.MethodDelete, "/api/v1/rbac/sessions/"+bob.ID.String(), nil); code != http.StatusNotFound {
+		t.Errorf("revoking twice: %d, want 404", code)
+	}
+	code, body = call(t, r, http.MethodDelete, "/api/v1/rbac/sessions?email=ALICE@example.com", nil)
+	if code != http.StatusOK || !bytes.Contains(body, []byte(`"sessions":2`)) {
+		t.Errorf("revoke by email: %d %s", code, body)
+	}
+	for _, x := range []*db.AdminSession{alice1, alice2} {
+		if ok, _ := checker.Active(ctx, x.ID.String()); ok {
+			t.Error("a session of the signed-out user is still active")
+		}
+	}
+	entries, _ := d.ListAudit(ctx, db.AuditFilter{Action: "session."}, db.Unscoped)
+	if len(entries) != 2 {
+		t.Errorf("%d session audit entries, want 2", len(entries))
+	}
+}

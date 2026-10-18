@@ -14,6 +14,17 @@
   </table>
 </div>
 
+<div class="card" style="margin-bottom: 16px;">
+  <div class="card-header">
+    <h3 class="card-title">Signed-in sessions</h3>
+  </div>
+  <p style="font-size: 13px; color: var(--text-muted); margin: 0 16px 8px;">Revoking a session ends it within 30 seconds, on every server. Signing someone out everywhere also makes them pick up group changes from the identity provider at their next sign-in.</p>
+  <table class="data-table">
+    <thead><tr><th>User</th><th>Signed in</th><th>Last active</th><th>From</th><th>Expires</th><th></th></tr></thead>
+    <tbody id="sessions-body"><tr><td colspan="6" style="color: var(--text-dim);">Loading…</td></tr></tbody>
+  </table>
+</div>
+
 <div class="card">
   <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
     <h3 class="card-title">Roles</h3>
@@ -110,9 +121,11 @@ async function accessJSON(url, opts) {
 
 async function loadAccess() {
   try {
-    const [catalog, roles, bindings, seen] = await Promise.all([
-      accessJSON('/api/v1/rbac/permissions'), accessJSON('/api/v1/rbac/roles'), accessJSON('/api/v1/rbac/bindings'), accessJSON('/api/v1/rbac/subjects')
+    const [catalog, roles, bindings, seen, sessions] = await Promise.all([
+      accessJSON('/api/v1/rbac/permissions'), accessJSON('/api/v1/rbac/roles'), accessJSON('/api/v1/rbac/bindings'), accessJSON('/api/v1/rbac/subjects'),
+      accessJSON('/api/v1/rbac/sessions')
     ]);
+    renderSessions(sessions);
     accessCatalog = catalog;
     accessSeen = seen;
     updateSubjectHints();
@@ -234,6 +247,49 @@ async function deleteBinding(id) {
   try {
     await accessJSON(`/api/v1/rbac/bindings/${id}`, { method: 'DELETE' });
     showToast('Binding removed', 'success');
+    loadAccess();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+function renderSessions(sessions) {
+  const body = document.getElementById('sessions-body');
+  if (!sessions.length) {
+    body.innerHTML = '<tr><td colspan="6" style="color: var(--text-dim);">No browser sessions. (API keys and development mode have none.)</td></tr>';
+    return;
+  }
+  const t = v => rdEsc(new Date(v).toLocaleString());
+  body.innerHTML = sessions.map(x => `<tr>
+    <td><strong>${rdEsc(x.email || x.name || x.subject)}</strong>${x.current ? ' <span class="badge badge-info">you, here</span>' : ''}</td>
+    <td style="font-size: 12px;">${t(x.created_at)}</td>
+    <td style="font-size: 12px;">${t(x.last_seen_at)}</td>
+    <td style="font-size: 12px;" title="${rdEsc(x.user_agent)}">${rdEsc(x.source_ip)}</td>
+    <td style="font-size: 12px;">${t(x.expires_at)}</td>
+    <td style="text-align: right; white-space: nowrap;">
+      <button class="btn btn-secondary btn-sm" data-id="${rdEsc(x.id)}" data-current="${x.current ? 1 : ''}" onclick="revokeSession(this.dataset.id, !!this.dataset.current)">Revoke</button>
+      ${x.email ? `<button class="btn btn-danger btn-sm" data-email="${rdEsc(x.email)}" onclick="revokeUserSessions(this.dataset.email)">Sign out everywhere</button>` : ''}
+    </td>
+  </tr>`).join('');
+}
+
+async function revokeSession(id, current) {
+  if (!confirm(current ? 'This is your own session: you will be signed out. Continue?' : 'Revoke this session? It stops working within 30 seconds.')) return;
+  try {
+    await accessJSON(`/api/v1/rbac/sessions/${id}`, { method: 'DELETE' });
+    if (current) { window.location.href = '/login'; return; }
+    showToast('Session revoked', 'success');
+    loadAccess();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function revokeUserSessions(email) {
+  if (!confirm(`Sign ${email} out of every session? Includes yours if it is you.`)) return;
+  try {
+    const res = await accessJSON(`/api/v1/rbac/sessions?email=${encodeURIComponent(email)}`, { method: 'DELETE' });
+    showToast(`${res.sessions} session(s) revoked`, 'success');
     loadAccess();
   } catch (err) {
     showToast(err.message, 'error');

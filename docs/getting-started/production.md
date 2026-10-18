@@ -135,7 +135,7 @@ Whatever proxy you use, it has to:
     }
     ```
 
-If the proxy isn't on loopback or a private range, add it to `trusted_proxies` so client IPs in the logs are real ones.
+By default only a proxy on the same host may set `X-Forwarded-For`. If yours runs in a container or on another box, add its address or network to `trusted_proxies` (for Docker, its compose network, e.g. `172.16.0.0/12`). Otherwise the audit log shows the proxy's address for everyone, and the per-address enrollment limit treats all agents as one client. Don't trust a whole private range when other hosts in it can reach the server directly: they could then fake their address.
 
 ## Next up
 

@@ -758,7 +758,7 @@ function obAddTargetCard(t) {
     gate.className = 'ob-key-gate';
     gate.style.cssText = 'margin-top:10px;padding:10px 12px;border:1px solid var(--danger-text);border-radius:var(--radius-sm);font-size:13px;';
     gate.onclick = (e) => e.stopPropagation();
-    gate.innerHTML = `<strong>Export the encryption key before continuing.</strong> Key <code style="font-family:var(--font-mono);font-size:11px;">${t.key_fingerprint}</code>.<div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;"><input type="password" class="form-control" placeholder="passphrase for the key file (min 5)" style="max-width:280px;" autocomplete="new-password"><button type="button" class="btn btn-primary btn-sm">Export key file</button></div>`;
+    gate.innerHTML = `<strong>Export the encryption key before continuing.</strong> Key <code style="font-family:var(--font-mono);font-size:11px;">${t.key_fingerprint}</code>.<div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;"><input type="password" class="form-control" placeholder="passphrase for the key file (min 12)" style="max-width:280px;" autocomplete="new-password"><button type="button" class="btn btn-primary btn-sm">Export key file</button></div>`;
     const pass = gate.querySelector('input');
     gate.querySelector('button').onclick = () => exportTargetKey({ _target: t, elements: { key_passphrase: pass }, dataset: {}, querySelector: () => null, querySelectorAll: () => [] });
     card.appendChild(gate);

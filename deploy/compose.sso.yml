@@ -27,6 +27,9 @@ services:
       - FALLBCK_OIDC_CLIENT_ID=fallbck
       - FALLBCK_OIDC_CLIENT_SECRET=fallbck-dev-secret
       - FALLBCK_OIDC_SCOPES=openid,profile,email,groups
+      # Caddy reaches the server over the compose network (Docker's default address
+      # pools); only Caddy publishes ports here, so nothing else can claim to be it
+      - FALLBCK_TRUSTED_PROXIES=172.16.0.0/12,192.168.0.0/16
       # Trust Caddy's internal CA for the OIDC issuer (exported by the caddy-ca service)
       - SSL_CERT_FILE=/ca/root.crt
     volumes:

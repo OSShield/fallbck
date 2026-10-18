@@ -35,6 +35,8 @@ type ServerAPI struct {
 	Verifier *auth.AgentVerifier
 	// RBAC caches role bindings; flushed after access changes (may be nil)
 	RBAC *auth.Resolver
+	// Sessions caches session validity; flushed after revocations (may be nil)
+	Sessions *auth.SessionChecker
 	// Scheduler keeps Temporal Schedules aligned with jobs (may be nil: tests, and a
 	// server started without Temporal). A concrete pointer on purpose: a nil
 	// *scheduler.Scheduler stored in an interface field would not compare equal to nil.
@@ -173,6 +175,9 @@ func (s *ServerAPI) RegisterRoutes(r chi.Router, admin, agent Middleware) {
 			r.With(need(auth.PermRBACManage)).Post("/rbac/bindings", s.HandleCreateBinding)
 			r.With(need(auth.PermRBACManage)).Delete("/rbac/bindings/{id}", s.HandleDeleteBinding)
 			r.With(need(auth.PermRBACManage)).Get("/rbac/subjects", s.HandleListSeenSubjects)
+			r.With(need(auth.PermRBACManage)).Get("/rbac/sessions", s.HandleListSessions)
+			r.With(need(auth.PermRBACManage)).Delete("/rbac/sessions", s.HandleRevokeUserSessions)
+			r.With(need(auth.PermRBACManage)).Delete("/rbac/sessions/{id}", s.HandleRevokeSession)
 			r.With(auth.RequireAnyPerm(auth.PermRBACManage, auth.PermAPIKeysManage)).Get("/rbac/selector", s.HandleParseSelector)
 			// API key creation offers the roles a key can take
 			r.With(need(auth.PermAPIKeysManage)).Get("/apikeys/roles", s.HandleListRoles)

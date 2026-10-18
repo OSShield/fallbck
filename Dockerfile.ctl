@@ -4,10 +4,13 @@
 
 FROM alpine:3.24
 
-RUN apk add --no-cache ca-certificates tzdata
+RUN apk add --no-cache ca-certificates tzdata && \
+    addgroup -S fallbck && adduser -S -G fallbck -u 10003 fallbck
 
 ARG TARGETPLATFORM
 COPY $TARGETPLATFORM/fallbck-ctl /usr/local/bin/fallbck-ctl
+
+USER fallbck
 
 ENV FALLBCK_SERVER_URL=http://fallbck-server:8080
 

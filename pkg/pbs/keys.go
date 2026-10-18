@@ -40,11 +40,17 @@ func KeyFingerprint(key [32]byte) (string, error) {
 	return info.Fingerprint, nil
 }
 
+// MinPassphrase is the shortest passphrase an exported key file may have. The file
+// is the only way to decrypt the backups without the server, so it gets kept for
+// years, often next to the backups; scrypt slows guessing, length does the rest.
+// Importing an existing file takes whatever passphrase it was made with.
+const MinPassphrase = 12
+
 // ExportKeyFile renders the key as a passphrase-protected (scrypt) key file that
 // proxmox-backup-client restores with (--keyfile)
 func ExportKeyFile(key [32]byte, passphrase, hint string) ([]byte, error) {
-	if len(passphrase) < 5 {
-		return nil, errors.New("the passphrase must be at least 5 characters")
+	if len(passphrase) < MinPassphrase {
+		return nil, fmt.Errorf("the passphrase must be at least %d characters", MinPassphrase)
 	}
 	return gopbs.CreateKeyFile(key, []byte(passphrase), gopbs.KDFScrypt, hint)
 }

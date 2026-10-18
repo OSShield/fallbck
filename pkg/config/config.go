@@ -271,11 +271,11 @@ func DefaultServerConfig() *ServerConfig {
 		HTTPPort:  8080,
 		HTTPBind:  "0.0.0.0",
 		PublicURL: "http://localhost:8080",
-		TrustedProxies: []string{
-			"127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
-			"::1/128", "fc00::/7",
-		},
-		DataDir: "/var/lib/fallbck/server",
+		// Only a proxy on this host may set X-Forwarded-For by default. Trusting
+		// whole private ranges let any LAN host fake its address in the audit log
+		// and dodge the per-IP enrollment limit.
+		TrustedProxies: []string{"127.0.0.0/8", "::1/128"},
+		DataDir:        "/var/lib/fallbck/server",
 		Auth: AuthConfig{
 			SessionTTL: 12 * time.Hour,
 		},

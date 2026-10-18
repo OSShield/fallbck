@@ -324,3 +324,64 @@ func (s *ServerAPI) HandleParseSelector(w http.ResponseWriter, r *http.Request) 
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{"selector": sel, "requirements": []db.Requirement(sel)})
 }
+
+// HandleListSessions lists the browser sessions still valid (rbac:manage)
+func (s *ServerAPI) HandleListSessions(w http.ResponseWriter, r *http.Request) {
+	sessions, err := s.DB.ListActiveAdminSessions(r.Context())
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "Failed to list sessions")
+		return
+	}
+	current := auth.PrincipalFrom(r.Context()).SessionID
+	type row struct {
+		*db.AdminSession
+		Current bool `json:"current"`
+	}
+	out := make([]row, len(sessions))
+	for i, sess := range sessions {
+		out[i] = row{sess, sess.ID.String() == current}
+	}
+	s.writeJSON(w, http.StatusOK, out)
+}
+
+// HandleRevokeSession ends one session at once (DELETE /rbac/sessions/{id})
+func (s *ServerAPI) HandleRevokeSession(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "Invalid session ID")
+		return
+	}
+	sess, err := s.DB.RevokeAdminSession(r.Context(), id, "revoked by "+principalName(r))
+	if err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			s.writeError(w, http.StatusNotFound, "No active session with that ID")
+			return
+		}
+		s.writeError(w, http.StatusInternalServerError, "Failed to revoke the session")
+		return
+	}
+	s.Sessions.Forget(id.String())
+	s.audit(r, "session.revoke", "session", id.String(), sess.Email, nil, map[string]any{"subject": sess.Subject})
+	s.writeJSON(w, http.StatusOK, map[string]string{"status": "revoked"})
+}
+
+// HandleRevokeUserSessions ends every session of a user (DELETE /rbac/sessions?email=),
+// e.g. after removing them from a group at the identity provider: their next sign-in
+// reads the groups again
+func (s *ServerAPI) HandleRevokeUserSessions(w http.ResponseWriter, r *http.Request) {
+	email := strings.TrimSpace(r.URL.Query().Get("email"))
+	if email == "" {
+		s.writeError(w, http.StatusBadRequest, "email is required")
+		return
+	}
+	n, err := s.DB.RevokeUserAdminSessions(r.Context(), email, "revoked by "+principalName(r))
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "Failed to revoke sessions")
+		return
+	}
+	s.Sessions.Flush()
+	if n > 0 {
+		s.audit(r, "session.revoke_user", "user", email, email, nil, map[string]any{"sessions": n})
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"status": "revoked", "sessions": n})
+}

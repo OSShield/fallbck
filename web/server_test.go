@@ -148,7 +148,7 @@ func TestUIRequiresAdminWhenSecured(t *testing.T) {
 	}
 
 	// A valid session cookie grants access and shows the user
-	session, _, err := tm.CreateSession(&auth.Identity{Subject: "s", Email: "alice@example.com"}, 0)
+	session, _, err := tm.CreateSession(&auth.Identity{Subject: "s", Email: "alice@example.com"}, "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,7 @@ func TestUIRequiresAdminWhenSecured(t *testing.T) {
 	}
 
 	// A valid session without any role binding is refused
-	bob, _, err := tm.CreateSession(&auth.Identity{Subject: "b", Email: "bob@example.com"}, 0)
+	bob, _, err := tm.CreateSession(&auth.Identity{Subject: "b", Email: "bob@example.com"}, "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}

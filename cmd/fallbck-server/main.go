@@ -317,6 +317,9 @@ func main() {
 	}
 	adminAuth := auth.NewAdminAuth(tokenManager, keyStore, cfg.Auth.InsecureDisable)
 	adminAuth.RBAC = rbac
+	if database != nil {
+		adminAuth.Sessions = auth.NewSessionChecker(database, auth.DefaultResolverTTL)
+	}
 	agentAuth := &auth.AgentAuth{Verifier: agentVerifier}
 	requireAgent := func(next http.Handler) http.Handler {
 		if agentVerifier == nil {
@@ -373,6 +376,7 @@ func main() {
 
 	serverAPI := api.NewServerAPI(database, temporalClient, cfg, tokenManager, agentVerifier)
 	serverAPI.RBAC = rbac
+	serverAPI.Sessions = adminAuth.Sessions
 	agentUpdates := agentupdate.New(ServerVersion, cfg.DataDir)
 	serverAPI.Updates = agentUpdates
 	if temporalClient != nil {

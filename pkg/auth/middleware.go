@@ -35,6 +35,8 @@ type Principal struct {
 	Email    string
 	Name     string
 	Bindings []Binding
+	// SessionID is the server-side session of a browser principal ("" otherwise)
+	SessionID string
 }
 
 // Display returns a human-readable identifier for audit logs and the UI
@@ -86,6 +88,9 @@ type AdminAuth struct {
 	Keys APIKeyStore
 	// RBAC resolves a session's or key's bindings; nil grants nothing (fail closed)
 	RBAC *Resolver
+	// Sessions checks that a browser session was not revoked; nil trusts the cookie
+	// alone until it expires (tests, no database)
+	Sessions *SessionChecker
 	// Insecure disables authentication entirely (development only)
 	Insecure bool
 	// LoginPath is where unauthenticated browser requests are redirected
@@ -133,7 +138,17 @@ func (a *AdminAuth) Authenticate(r *http.Request) (*Principal, error) {
 	if err != nil {
 		return nil, err
 	}
-	p := &Principal{Kind: PrincipalSession, Subject: claims.Subject, Email: claims.Email, Name: claims.Name}
+	if a.Sessions != nil {
+		// Sessions from before server-side tracking carry no id: they sign in again
+		active, err := a.Sessions.Active(r.Context(), claims.ID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check the session: %w", err)
+		}
+		if !active {
+			return nil, ErrInvalidToken
+		}
+	}
+	p := &Principal{Kind: PrincipalSession, Subject: claims.Subject, Email: claims.Email, Name: claims.Name, SessionID: claims.ID}
 	if a.RBAC != nil {
 		if p.Bindings, err = a.RBAC.Session(r.Context(), claims.Email, claims.EmailUnverified, claims.Groups, claims.BindingClaims); err != nil {
 			return nil, fmt.Errorf("failed to resolve role bindings: %w", err)

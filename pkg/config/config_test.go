@@ -225,3 +225,11 @@ func TestAgentServerTLSConfig(t *testing.T) {
 		}
 	})
 }
+
+func TestTrustedProxiesDefaultLoopbackOnly(t *testing.T) {
+	for _, p := range DefaultServerConfig().TrustedProxies {
+		if p != "127.0.0.0/8" && p != "::1/128" {
+			t.Errorf("default trusted proxy %s: only loopback may set X-Forwarded-For by default", p)
+		}
+	}
+}
