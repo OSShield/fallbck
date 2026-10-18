@@ -640,6 +640,10 @@ func RunUntil(a Agent, cfg *config.AgentConfig, configPath string, register func
 		DisableWorkflowWorker: true,
 		Identity:              identity,
 		Interceptors:          []interceptor.WorkerInterceptor{running},
+		// Work beyond the cap waits on the task queue: backups for up to their
+		// schedule-to-close (12 h), agent operations 20 s before they report the
+		// agent busy
+		MaxConcurrentActivityExecutionSize: cfg.EffMaxConcurrentActivities(),
 	})
 	if err := register(w, conns, store); err != nil {
 		return err
@@ -648,7 +652,7 @@ func RunUntil(a Agent, cfg *config.AgentConfig, configPath string, register func
 		return fmt.Errorf("failed to start Temporal worker: %w", err)
 	}
 	defer w.Stop()
-	slog.Info("Agent Temporal worker listening", "queue", cfg.TaskQueue)
+	slog.Info("Agent Temporal worker listening", "queue", cfg.TaskQueue, "max_concurrent_activities", cfg.EffMaxConcurrentActivities())
 
 	go StartHeartbeat(ctx, cfg, store, a)
 

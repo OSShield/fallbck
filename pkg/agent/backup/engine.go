@@ -213,7 +213,9 @@ func Run(ctx context.Context, opts Options) (*temporal.BackupExecutionResult, er
 		Client: clientCfg,
 		Archive: archive.Options{
 			Name: archiveName,
-			Scan: scan.Options{Exclude: excludes, PxarExcludeFiles: true},
+			// Kernel filesystems (/proc, /sys, /dev, ...) are always left out; with
+			// one_file_system so are other mounts below the backup paths
+			Scan: scan.Options{Exclude: excludes, PxarExcludeFiles: true, Filter: mountFilter(readPaths, s.OneFileSystem)},
 		},
 		Blobs:  opts.Blobs,
 		Ref:    ref,

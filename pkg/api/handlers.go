@@ -37,6 +37,8 @@ type ServerAPI struct {
 	RBAC *auth.Resolver
 	// Sessions caches session validity; flushed after revocations (may be nil)
 	Sessions *auth.SessionChecker
+	// Version is the server's build version, reported by /health
+	Version string
 	// Scheduler keeps Temporal Schedules aligned with jobs (may be nil: tests, and a
 	// server started without Temporal). A concrete pointer on purpose: a nil
 	// *scheduler.Scheduler stored in an interface field would not compare equal to nil.
@@ -190,10 +192,14 @@ func (s *ServerAPI) RegisterRoutes(r chi.Router, admin, agent Middleware) {
 
 // HandleHealth returns the system health status
 func (s *ServerAPI) HandleHealth(w http.ResponseWriter, r *http.Request) {
+	version := s.Version
+	if version == "" {
+		version = "dev"
+	}
 	resp := map[string]interface{}{
 		"status":    "healthy",
 		"timestamp": time.Now().UTC(),
-		"version":   "0.1.0",
+		"version":   version,
 	}
 	s.writeJSON(w, http.StatusOK, resp)
 }

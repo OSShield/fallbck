@@ -67,9 +67,11 @@ type BackupSessionInfo struct {
 	// JobName is informational (manifest)
 	JobName string `json:"job_name,omitempty"`
 	// AgentHostname is written as the snapshot comment on PBS (informational)
-	AgentHostname string    `json:"agent_hostname,omitempty"`
-	BackupPaths   []string  `json:"backup_paths"`
-	ExcludePaths  []string  `json:"exclude_paths"`
+	AgentHostname string   `json:"agent_hostname,omitempty"`
+	BackupPaths   []string `json:"backup_paths"`
+	ExcludePaths  []string `json:"exclude_paths"`
+	// OneFileSystem leaves out mounts below the backup paths (filesystem jobs)
+	OneFileSystem bool      `json:"one_file_system,omitempty"`
 	WorkflowID    string    `json:"workflow_id"`
 	RunID         string    `json:"run_id"`
 	BackupRunID   uuid.UUID `json:"backup_run_id"`

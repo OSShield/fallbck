@@ -37,6 +37,9 @@ func (s *ServerAPI) validateJob(ctx context.Context, job *db.BackupJob, existing
 		return err.Error(), err
 	}
 	job.BackupID = strings.TrimSpace(job.BackupID)
+	if jobType != db.JobTypeFilesystem {
+		job.OneFileSystem = false // only filesystem jobs walk host paths
+	}
 	switch jobType {
 	case db.JobTypeDatabase, db.JobTypeM365:
 		job.BackupID = "" // these carry the group inside their own config

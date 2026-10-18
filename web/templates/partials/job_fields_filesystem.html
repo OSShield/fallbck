@@ -10,5 +10,11 @@
     <label>Exclude Patterns (optional, one per line, proxmox-backup-client syntax)</label>
     <textarea name="exclude_paths" class="form-control" rows="2" placeholder="*.tmp&#10;/var/cache&#10;node_modules"></textarea>
   </div>
+
+  <div style="display: flex; align-items: flex-start; gap: 8px;">
+    <input type="checkbox" id="one_file_system" name="one_file_system" style="margin-top: 3px;">
+    <label for="one_file_system" style="font-size: 13px;">Stay on one filesystem<br>
+      <span class="form-text" style="margin: 0;">Leave out other filesystems mounted below these directories (NFS shares, data disks, bind mounts), like proxmox-backup-client without <code>--all-file-systems</code>. Btrfs subvolumes count as other filesystems. Linux agents; <code>/proc</code>, <code>/sys</code>, <code>/dev</code> and other kernel filesystems are always left out.</span></label>
+  </div>
 </fieldset>
 {{end}}

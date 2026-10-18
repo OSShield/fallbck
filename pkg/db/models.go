@@ -367,6 +367,9 @@ type BackupJob struct {
 	// DirectPBS makes the agent talk to PBS itself (credentials handed out per run)
 	// instead of through the server-side tunnel. Server-side setting only.
 	DirectPBS bool `json:"direct_pbs" db:"direct_pbs"`
+	// OneFileSystem keeps a filesystem job on the filesystem of each backup path:
+	// other mounts below it are left out (filesystem jobs only)
+	OneFileSystem bool `json:"one_file_system" db:"one_file_system"`
 	// BackupID is the PBS backup group of filesystem, Docker, Proxmox VE and
 	// kubernetes jobs (database and Microsoft 365 jobs carry theirs in their config).
 	// Empty means the agent ID, see EffectiveBackupID.

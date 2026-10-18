@@ -242,6 +242,22 @@ type AgentConfig struct {
 	// DockerBackup configures Docker host jobs on fallbck-agent (socket, volume
 	// access mode, helper image)
 	DockerBackup dockerbackup.Config `yaml:"docker_backup,omitempty" json:"docker_backup"`
+	// MaxConcurrentActivities caps how many server-scheduled activities (backup runs,
+	// volume uploads, log and inventory requests) the agent runs at once. Default 16:
+	// room for a kubernetes job's 8 parallel volumes plus a few runs, while a burst
+	// of work (or a misbehaving server) cannot start hundreds of dumps on one host.
+	MaxConcurrentActivities int `yaml:"max_concurrent_activities,omitempty" json:"max_concurrent_activities,omitempty"`
+}
+
+// DefaultMaxConcurrentActivities is the agent's activity cap when none is configured
+const DefaultMaxConcurrentActivities = 16
+
+// EffMaxConcurrentActivities applies the default
+func (c *AgentConfig) EffMaxConcurrentActivities() int {
+	if c == nil || c.MaxConcurrentActivities <= 0 {
+		return DefaultMaxConcurrentActivities
+	}
+	return c.MaxConcurrentActivities
 }
 
 // Agent types (agents.agent_type); each has its own binary and data directory
@@ -515,6 +531,8 @@ func LoadAgentConfig(filePath string) (*AgentConfig, error) {
 	envString("FALLBCK_AGENT_DB_SPOOL_DIR", &cfg.DBBackup.SpoolDir)
 	envString("FALLBCK_AGENT_DB_STATE_DIR", &cfg.DBBackup.StateDir)
 	envInt64("FALLBCK_AGENT_DB_MIN_FREE_BYTES", &cfg.DBBackup.MinFreeBytes)
+	envInt("FALLBCK_AGENT_MAX_CONCURRENT_ACTIVITIES", &cfg.MaxConcurrentActivities)
+	envInt64("FALLBCK_AGENT_DOCKER_MIN_FREE_BYTES", &cfg.DockerBackup.MinFreeBytes)
 	envBool("FALLBCK_AGENT_DB_KEEP_FAILED_SPOOL", &cfg.DBBackup.KeepFailedSpool)
 	envString("FALLBCK_AGENT_DB_POSTGRES_BINDIR", &cfg.DBBackup.Tools.PostgresBinDir)
 	envString("FALLBCK_AGENT_DB_MYSQL_BINDIR", &cfg.DBBackup.Tools.MySQLBinDir)

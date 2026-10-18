@@ -715,22 +715,22 @@ func (d *DB) CreateJob(ctx context.Context, job *BackupJob) error {
 	}
 
 	query := `
-		INSERT INTO backup_jobs (id, name, agent_id, target_id, schedule_cron, backup_paths, exclude_paths, enabled, direct_pbs, created_at, updated_at, job_type, db_config, k8s_config, pve_config, docker_config, m365_config, m365_tenant_id, backup_id, labels)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+		INSERT INTO backup_jobs (id, name, agent_id, target_id, schedule_cron, backup_paths, exclude_paths, enabled, direct_pbs, created_at, updated_at, job_type, db_config, k8s_config, pve_config, docker_config, m365_config, m365_tenant_id, backup_id, labels, one_file_system)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
 		RETURNING id
 	`
 	job.Labels = job.Labels.OrEmpty()
 	return d.Pool.QueryRow(ctx, query,
 		job.ID, job.Name, job.AgentID, job.TargetID, job.ScheduleCron,
 		backupPathsJSON, excludePathsJSON, job.Enabled, job.DirectPBS,
-		job.CreatedAt, job.UpdatedAt, cols.jobType, cols.db, cols.k8s, cols.pve, cols.docker, cols.m365, cols.tenantID, job.BackupID, job.Labels.JSON(),
+		job.CreatedAt, job.UpdatedAt, cols.jobType, cols.db, cols.k8s, cols.pve, cols.docker, cols.m365, cols.tenantID, job.BackupID, job.Labels.JSON(), job.OneFileSystem,
 	).Scan(&job.ID)
 }
 
 const jobSelect = `
 	SELECT j.id, j.name, j.agent_id, j.target_id, j.schedule_cron, j.backup_paths, j.exclude_paths,
 	       j.enabled, j.direct_pbs, j.created_at, j.updated_at,
-	       j.job_type, j.db_config, j.k8s_config, j.pve_config, j.docker_config, j.m365_config, j.backup_id, j.labels,
+	       j.job_type, j.db_config, j.k8s_config, j.pve_config, j.docker_config, j.m365_config, j.backup_id, j.labels, j.one_file_system,
 	       a.hostname as agent_name, t.name as target_name
 	FROM backup_jobs j
 	JOIN agents a ON j.agent_id = a.id
@@ -743,7 +743,7 @@ func (d *DB) scanJob(row pgx.Row) (*BackupJob, error) {
 		&j.ID, &j.Name, &j.AgentID, &j.TargetID, &j.ScheduleCron,
 		&backupPathsRaw, &excludePathsRaw,
 		&j.Enabled, &j.DirectPBS, &j.CreatedAt, &j.UpdatedAt,
-		&j.JobType, &dbConfigRaw, &k8sConfigRaw, &pveConfigRaw, &dockerConfigRaw, &m365ConfigRaw, &j.BackupID, &j.Labels,
+		&j.JobType, &dbConfigRaw, &k8sConfigRaw, &pveConfigRaw, &dockerConfigRaw, &m365ConfigRaw, &j.BackupID, &j.Labels, &j.OneFileSystem,
 		&j.AgentName, &j.TargetName,
 	)
 	if err != nil {

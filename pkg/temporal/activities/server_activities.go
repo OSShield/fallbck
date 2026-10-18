@@ -221,6 +221,7 @@ func (s *ServerActivities) PrepareBackupSession(ctx context.Context, jobID uuid.
 		M365Config:         m365Spec,
 		BackupPaths:        job.BackupPaths,
 		ExcludePaths:       job.ExcludePaths,
+		OneFileSystem:      job.OneFileSystem && job.JobType == db.JobTypeFilesystem,
 		WorkflowID:         info.WorkflowExecution.ID,
 		RunID:              info.WorkflowExecution.RunID,
 		BackupRunID:        runID,

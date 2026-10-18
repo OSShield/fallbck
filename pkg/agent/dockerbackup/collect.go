@@ -68,6 +68,7 @@ type collector struct {
 	spec  *dockerspec.Spec
 	files *hostFiles
 	out   *collected
+	space *spaceGuard
 }
 
 func (c *collector) record(name, endpoint, file string, err error) {
@@ -91,9 +92,9 @@ func (c *collector) write(file string, data []byte) error {
 
 // collect gathers definitions, compose files, the daemon configuration and image
 // references (and tarballs, per the job) into dir
-func collect(ctx context.Context, client *Client, files *hostFiles, spec *dockerspec.Spec, dir string) *collected {
+func collect(ctx context.Context, client *Client, files *hostFiles, spec *dockerspec.Spec, dir string, space *spaceGuard) *collected {
 	out := &collected{inspects: map[string]*ContainerInspect{}, volumeUsers: map[string][]string{}, selfVolumes: map[string]bool{}}
-	c := &collector{ctx: ctx, c: client, dir: dir, spec: spec, files: files, out: out}
+	c := &collector{ctx: ctx, c: client, dir: dir, spec: spec, files: files, out: out, space: space}
 	c.host()
 	if ctx.Err() != nil {
 		return out
@@ -315,7 +316,10 @@ func (c *collector) images() {
 				ref = tags[0]
 			}
 			file := "images/" + safeName(strings.TrimPrefix(ref, "sha256:")) + ".tar"
-			if err := c.saveImage(ref, file); err != nil {
+			// docker save writes about the image's size into the spool
+			if err := c.space.room(im.Size); err != nil {
+				c.record("image "+ref, "/images/get", "", err)
+			} else if err := c.saveImage(ref, file); err != nil {
 				c.record("image "+ref, "/images/get", "", err)
 			} else {
 				c.record("image "+ref, "/images/get", file, nil)

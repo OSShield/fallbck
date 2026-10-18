@@ -89,11 +89,11 @@ func (d *DB) UpdateJob(ctx context.Context, job *BackupJob) error {
 		SET name = $2, agent_id = $3, target_id = $4, schedule_cron = $5, backup_paths = $6,
 		    exclude_paths = $7, enabled = $8, direct_pbs = $9, updated_at = $10,
 		    job_type = $11, db_config = $12, k8s_config = $13, pve_config = $14, docker_config = $15,
-		    m365_config = $16, m365_tenant_id = $17, backup_id = $18, labels = $19
+		    m365_config = $16, m365_tenant_id = $17, backup_id = $18, labels = $19, one_file_system = $20
 		WHERE id = $1`,
 		job.ID, job.Name, job.AgentID, job.TargetID, job.ScheduleCron, backupPathsJSON,
 		excludePathsJSON, job.Enabled, job.DirectPBS, job.UpdatedAt, cols.jobType, cols.db, cols.k8s, cols.pve, cols.docker,
-		cols.m365, cols.tenantID, job.BackupID, job.Labels.JSON())
+		cols.m365, cols.tenantID, job.BackupID, job.Labels.JSON(), job.OneFileSystem)
 	if err != nil {
 		return err
 	}

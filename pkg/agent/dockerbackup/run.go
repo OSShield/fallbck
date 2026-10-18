@@ -93,6 +93,11 @@ func Run(ctx context.Context, o RunOptions) (*temporal.BackupExecutionResult, er
 			_ = os.RemoveAll(runDir)
 		}
 	}()
+	space := newSpaceGuard(o.SpoolDir, o.Settings.EffMinFreeBytes())
+	if err := space.room(0); err != nil {
+		return nil, &dbrun.PrecheckError{Msg: "not enough free space for the spool", Err: err,
+			Hint: "free space on the agent's data filesystem or lower docker_backup.min_free_bytes"}
+	}
 
 	mode := o.Settings.EffVolumeAccess()
 	files := &hostFiles{client: client, mode: mode, helperImage: o.Settings.EffHelperImage(), runID: runID}
@@ -104,7 +109,7 @@ func Run(ctx context.Context, o RunOptions) (*temporal.BackupExecutionResult, er
 
 	started := time.Now().UTC()
 	progress("collecting definitions")
-	inv := collect(ctx, client, files, spec, collectDir)
+	inv := collect(ctx, client, files, spec, collectDir, space)
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
@@ -145,16 +150,31 @@ func Run(ctx context.Context, o RunOptions) (*temporal.BackupExecutionResult, er
 		if access == accessDirect && len(toPause) == 0 {
 			v.Access = accessDirect
 		} else {
+			// The copy must fit: measured when the agent sees the volume, watched while
+			// it streams through a helper container (size unknown up front)
+			var need int64
+			if access == accessDirect {
+				need = dbrun.DirSize(v.Mountpoint)
+			}
+			if err := space.room(need); err != nil {
+				v.Skipped = err.Error()
+				inv.Warnings = append(inv.Warnings, fmt.Sprintf("volume %s skipped: %v", v.Name, err))
+				continue
+			}
 			progress("copying volume " + v.Name)
 			dst := filepath.Join(stageDir, safeName(v.Name))
+			sctx, stopWatch := space.watch(ctx)
 			if len(toPause) > 0 {
 				paused, thaw := p.pause(ctx, toPause)
 				v.Paused = paused
 				markPaused(inv, paused)
-				err = stageVolume(ctx, access, files, v, dst)
+				err = stageVolume(sctx, access, files, v, dst)
 				inv.Warnings = append(inv.Warnings, thaw()...)
 			} else {
-				err = stageVolume(ctx, access, files, v, dst)
+				err = stageVolume(sctx, access, files, v, dst)
+			}
+			if serr := stopWatch(); serr != nil {
+				err = serr
 			}
 			if err != nil {
 				_ = os.RemoveAll(dst)
@@ -195,7 +215,15 @@ func Run(ctx context.Context, o RunOptions) (*temporal.BackupExecutionResult, er
 		} else {
 			progress("copying host path " + hp)
 			dst := filepath.Join(stageDir, safeName(entry))
-			if err := extractViaHelper(ctx, files, hp, dst); err != nil {
+			err := space.room(0)
+			if err == nil {
+				sctx, stopWatch := space.watch(ctx)
+				err = extractViaHelper(sctx, files, hp, dst)
+				if serr := stopWatch(); serr != nil {
+					err = serr
+				}
+			}
+			if err != nil {
 				_ = os.RemoveAll(dst)
 				if ctx.Err() != nil {
 					return nil, ctx.Err()

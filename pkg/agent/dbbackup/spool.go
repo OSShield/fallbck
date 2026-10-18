@@ -186,3 +186,10 @@ func FreeBytes(path string) uint64 {
 	}
 	return n
 }
+
+// FreeSpace is the free space on the filesystem holding path, with the error when
+// it cannot be told (callers then skip the check rather than assume a full disk)
+func FreeSpace(path string) (uint64, error) { return freeBytes(path) }
+
+// DirSize is the total size of the regular files below root (best effort)
+func DirSize(root string) int64 { return dirSize(root) }

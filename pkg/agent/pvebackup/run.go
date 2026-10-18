@@ -43,6 +43,11 @@ type RunOptions struct {
 var guestImageExcludes = []string{"images", "private", "subvol-*"}
 
 // Run executes one Proxmox VE host backup: collect → archive → manifest → upload
+
+// minFreeBytes is the free space a Proxmox VE run leaves on the spool filesystem
+// (ponytail: fixed; make it a setting if someone runs the agent on a tight disk)
+const minFreeBytes = 256 << 20
+
 func Run(ctx context.Context, o RunOptions) (*temporal.BackupExecutionResult, error) {
 	if o.Session == nil || o.Upload == nil {
 		return nil, errors.New("pvebackup: session and upload are required")
@@ -81,6 +86,13 @@ func Run(ctx context.Context, o RunOptions) (*temporal.BackupExecutionResult, er
 			_ = os.RemoveAll(runDir)
 		}
 	}()
+	// The inventory is small (configuration and command output), but a nearly full
+	// disk on a hypervisor is worse than a skipped backup
+	if free, err := dbrun.FreeSpace(runDir); err == nil && free < minFreeBytes {
+		return nil, &dbrun.PrecheckError{Msg: "not enough free space for the spool",
+			Err:  fmt.Errorf("%s has %d MiB free, below %d MiB", o.SpoolDir, free>>20, minFreeBytes>>20),
+			Hint: "free space on the node's agent data filesystem"}
+	}
 
 	started := time.Now().UTC()
 	progress("collecting host inventory")

@@ -762,6 +762,7 @@ function loadJobIntoForm(form, job) {
   form.elements['target_id'].value = job.target_id || '';
   form.elements['backup_paths'].value = (job.backup_paths || []).join('\n');
   form.elements['exclude_paths'].value = (job.exclude_paths || []).join('\n');
+  if (form.elements['one_file_system']) form.elements['one_file_system'].checked = !!job.one_file_system;
   setFormLabels(form, job.labels);
   const hint = form.querySelector('#db-password-hint');
   if (hint) hint.hidden = true;
@@ -868,6 +869,7 @@ function buildJobPayload(form) {
     labels: formLabels(form),
     backup_paths: formLines(fd, 'backup_paths'),
     exclude_paths: formLines(fd, 'exclude_paths'),
+    one_file_system: fd.get('one_file_system') === 'on',
     enabled: fd.get('enabled') === 'on',
     direct_pbs: fd.get('direct_pbs') === 'on',
     backup_id: (fd.get('backup_id') || '').trim(),

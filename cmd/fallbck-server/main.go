@@ -377,6 +377,7 @@ func main() {
 	serverAPI := api.NewServerAPI(database, temporalClient, cfg, tokenManager, agentVerifier)
 	serverAPI.RBAC = rbac
 	serverAPI.Sessions = adminAuth.Sessions
+	serverAPI.Version = ServerVersion
 	agentUpdates := agentupdate.New(ServerVersion, cfg.DataDir)
 	serverAPI.Updates = agentUpdates
 	if temporalClient != nil {

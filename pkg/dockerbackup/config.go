@@ -32,6 +32,20 @@ type Config struct {
 	HelperImage string `yaml:"helper_image,omitempty" json:"helper_image,omitempty"`
 	// Socket is the daemon's unix socket (default: DOCKER_HOST if unix://, else /var/run/docker.sock)
 	Socket string `yaml:"socket,omitempty" json:"socket,omitempty"`
+	// MinFreeBytes must stay free on the spool filesystem while images are saved and
+	// volumes are copied into it (default 1 GiB): a run never fills the host's disk
+	MinFreeBytes int64 `yaml:"min_free_bytes,omitempty" json:"min_free_bytes,omitempty"`
+}
+
+// DefaultMinFreeBytes is the free space a Docker run leaves on the spool filesystem
+const DefaultMinFreeBytes = int64(1 << 30)
+
+// EffMinFreeBytes applies the default
+func (c *Config) EffMinFreeBytes() int64 {
+	if c == nil || c.MinFreeBytes <= 0 {
+		return DefaultMinFreeBytes
+	}
+	return c.MinFreeBytes
 }
 
 // Validate checks the volume access mode
