@@ -28,7 +28,7 @@ API tokens go in as `user@realm!tokenid:secret`. The `=` form from the PBS token
 | `401 authentication failed` | wrong token id or secret |
 | `403` | missing privileges |
 
-The token needs `Datastore.Backup` on the datastore or namespace, **and nothing else**. FallBCK never prunes, forgets or deletes on PBS, so don't hand it `Datastore.Prune` or `Datastore.Modify`.
+The token needs `Datastore.Backup` on the datastore or namespace, **and nothing else**. FallBCK never prunes, forgets or deletes on PBS, so don't hand it `Datastore.Prune` or `Datastore.Modify`. The target form shows what PBS reports for the token, and the dashboard flags tokens that hold more or less than that (see [The PBS token](../getting-started/production.md#the-pbs-token)). A *not checked* badge means the server couldn't ask PBS: hover it for the error, which is usually the same reachability or TLS problem a backup would hit.
 
 ## Agent shows offline
 

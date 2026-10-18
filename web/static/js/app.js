@@ -206,6 +206,7 @@ function resetTargetForm(form) {
   form.elements['encryption_mode'].value = 'none';
   loadKeyRingOptions(form, null);
   updateTargetEncryption(form, null);
+  renderTokenCheck(form, null);
 }
 
 // loadKeyRingOptions fills the key ring selector: a new ring, or any existing one
@@ -431,6 +432,61 @@ function loadTargetIntoForm(form, t) {
   loadKeyRingOptions(form, t);
   form.dataset.keyNotice = '';
   updateTargetEncryption(form, t);
+  renderTokenCheck(form, t);
+}
+
+// renderTokenCheck shows what PBS says the target's API token may do. Anything but
+// ok stays visible until a check passes: FallBCK needs Datastore.Backup only.
+function renderTokenCheck(form, t) {
+  const box = form.querySelector('.target-token-check');
+  if (!box) return;
+  if (!t || !t.id) { box.hidden = true; return; }
+  const c = t.token_check;
+  const when = c && c.checked_at ? ` (checked ${new Date(c.checked_at).toLocaleString()})` : '';
+  const store = `/datastore/${t.datastore}${t.namespace ? '/' + t.namespace.replace(/^\/+|\/+$/g, '') : ''}`;
+  const tokenID = (c && c.token_id) || '<token id>';
+  const fix = `<pre style="font-size: 11px; white-space: pre-wrap; margin: 6px 0 0;">proxmox-backup-manager acl list | grep '${rdEsc(tokenID)}'
+proxmox-backup-manager acl update ${rdEsc(store)} DatastoreBackup --auth-id '${rdEsc(tokenID)}'
+proxmox-backup-manager acl update &lt;path&gt; &lt;role&gt; --auth-id '${rdEsc(tokenID)}' --delete   # each other entry</pre>`;
+  const button = can('targets:write') ? `<button type="button" class="btn btn-secondary btn-sm" style="margin-top: 6px;" data-id="${rdEsc(t.id)}" onclick="checkTargetToken(this)">Check now</button>` : '';
+  let style = 'background: var(--bg-subtle);', html;
+  if (!c) {
+    html = `The token's permissions on PBS haven't been checked yet.`;
+  } else if (c.status === 'ok') {
+    html = `PBS confirms the token holds Datastore.Backup on this datastore and nothing else${rdEsc(when)}.`;
+  } else if (c.status === 'error') {
+    style = 'background: var(--warning-bg); border: 1px solid var(--warning-border);';
+    html = `<strong>Couldn't check the token${rdEsc(when)}:</strong> ${rdEsc(c.error)}`;
+  } else {
+    const danger = c.status === 'missing';
+    style = danger ? 'background: var(--danger-bg); border: 1px solid var(--danger-border);' : 'background: var(--warning-bg); border: 1px solid var(--warning-border);';
+    html = (danger
+      ? `<strong>The token has no Datastore.Backup on ${rdEsc(store)}${rdEsc(when)}.</strong> Backups to this target will fail.`
+      : `<strong>The token can do more than FallBCK needs${rdEsc(when)}.</strong> Anyone who gets hold of it can do the same.`)
+      + (c.findings && c.findings.length ? '<ul style="margin: 6px 0 0 18px;">' + c.findings.map(f => `<li><code>${rdEsc(f.path)}</code>: ${rdEsc(f.problem)}</li>`).join('') + '</ul>' : '')
+      + `<div style="margin-top: 6px;">Give the token (<code>${rdEsc(tokenID)}</code>) the DatastoreBackup role on ${rdEsc(store)} or the whole datastore, and remove its other ACL entries:</div>${fix}`;
+  }
+  if (box.dataset.base === undefined) box.dataset.base = box.style.cssText;
+  box.style.cssText = box.dataset.base + style;
+  box.innerHTML = html + button;
+  box.hidden = false;
+}
+
+async function checkTargetToken(btn) {
+  const form = btn.closest('form');
+  btn.disabled = true;
+  btn.innerText = 'Checking…';
+  try {
+    const resp = await apiFetch(`/api/v1/targets/${btn.dataset.id}/token-check`, { method: 'POST' });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Token check failed');
+    form._target = Object.assign({}, form._target, { token_check: data });
+    renderTokenCheck(form, form._target);
+  } catch (err) {
+    showToast(err.message, 'error');
+    btn.disabled = false;
+    btn.innerText = 'Check now';
+  }
 }
 
 function buildTargetPayload(form) {

@@ -33,6 +33,7 @@
   <label>PBS API Token (user@realm!tokenid:secret — needs Datastore.Backup on the datastore)</label>
   <input type="password" id="target-token" name="auth_token" class="form-control" placeholder="user@pbs!fallbck:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
   <span class="form-text" id="target-token-hint">Encrypted on the server. Agents never receive this token directly.</span>
+  <div class="target-token-check" hidden style="font-size: 13px; padding: 10px 12px; border-radius: var(--radius-sm); margin-top: 8px;"></div>
 </div>
 
 <div class="form-group">
@@ -91,3 +92,6 @@
   </div>
 </div>
 {{end}}
+
+{{/* Token check badge for target rows: {{template "token-check-badge" .TokenCheck}} */}}
+{{define "token-check-badge"}}{{with .}}{{if eq .Status "excess"}}<span class="badge badge-warning" title="{{range .Findings}}{{.Path}}: {{.Problem}}. {{end}}">too broad</span>{{else if eq .Status "missing"}}<span class="badge badge-danger" title="No Datastore.Backup on this target's datastore: backups will fail">no Datastore.Backup</span>{{else if eq .Status "error"}}<span class="badge badge-neutral" title="{{.Error}}">not checked</span>{{end}}{{end}}{{end}}

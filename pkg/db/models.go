@@ -12,6 +12,7 @@ import (
 	"github.com/osshield/fallbck/pkg/dockerbackup"
 	"github.com/osshield/fallbck/pkg/k8sbackup"
 	"github.com/osshield/fallbck/pkg/m365"
+	"github.com/osshield/fallbck/pkg/pbs"
 	"github.com/osshield/fallbck/pkg/pvebackup"
 )
 
@@ -277,6 +278,9 @@ type BackupTarget struct {
 	// HasToken reports whether an API token is stored (the token itself is never returned)
 	HasToken bool   `json:"has_token" db:"-"`
 	Labels   Labels `json:"labels"`
+	// TokenCheck is the last check of the API token's privileges on PBS (nil: not
+	// checked yet); anything but ok shows as a warning on the target
+	TokenCheck *pbs.TokenCheck `json:"token_check"`
 }
 
 // Encryption modes of a target

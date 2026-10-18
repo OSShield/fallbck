@@ -122,6 +122,7 @@ func (s *ServerAPI) RegisterRoutes(r chi.Router, admin, agent Middleware) {
 			r.With(need(auth.PermTargetsRead)).Get("/targets", s.HandleListTargets)
 			r.With(need(auth.PermTargetsRead)).Get("/targets/{id}", s.HandleGetTarget)
 			r.With(need(auth.PermTargetsCredentials)).Get("/targets/{id}/credentials", s.HandleTargetCredentials)
+			r.With(need(auth.PermTargetsWrite)).Post("/targets/{id}/token-check", s.HandleCheckTargetToken)
 			r.With(need(auth.PermTargetsWrite)).Put("/targets/{id}", s.HandleUpdateTarget)
 			r.With(need(auth.PermTargetsWrite)).Post("/targets/{id}/clone", s.HandleCloneTarget)
 			r.With(need(auth.PermTargetsRead)).Get("/targets/{id}/encryption", s.HandleGetTargetEncryption)
@@ -813,6 +814,7 @@ func (s *ServerAPI) HandleCloneTarget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r, "target.clone", "target", target.ID.String(), target.Name, target.Labels, map[string]any{"source": source.ID, "namespace": target.Namespace})
+	s.checkTokenLater(target)
 	s.writeJSON(w, http.StatusCreated, target)
 }
 
@@ -896,6 +898,7 @@ func (s *ServerAPI) HandleCreateTarget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r, "target.create", "target", target.ID.String(), target.Name, target.Labels, map[string]any{"endpoint": target.Endpoint, "datastore": target.Datastore, "namespace": target.Namespace, "encryption": target.EncryptionMode})
+	s.checkTokenLater(target)
 
 	s.writeJSON(w, http.StatusCreated, target.Sanitize())
 }
@@ -1013,6 +1016,7 @@ func (s *ServerAPI) HandleUpdateTarget(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info("Backup target updated", "target_id", id, "name", target.Name, "namespace", target.Namespace, "encryption", target.EncryptionMode)
 	s.audit(r, "target.update", "target", id.String(), target.Name, target.Labels, map[string]any{"old_labels": existing.Labels, "token_changed": strings.TrimSpace(req.AuthToken) != "", "encryption": target.EncryptionMode})
+	s.checkTokenLater(target)
 	s.writeJSON(w, http.StatusOK, target.Sanitize())
 }
 

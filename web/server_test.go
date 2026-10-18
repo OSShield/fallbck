@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"html/template"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"github.com/osshield/fallbck/pkg/db"
 	"github.com/osshield/fallbck/pkg/dbbackup"
 	"github.com/osshield/fallbck/pkg/inventory"
+	"github.com/osshield/fallbck/pkg/pbs"
 )
 
 func TestUIRenderRoutes(t *testing.T) {
@@ -291,5 +293,29 @@ func TestLoginRefusalReasons(t *testing.T) {
 		if !strings.Contains(rr.Body.String(), text) {
 			t.Errorf("login page for %s does not explain it (want %q)", key, text)
 		}
+	}
+}
+
+func TestTokenCheckBadge(t *testing.T) {
+	tmpl := template.Must(template.New("t").Funcs(template.FuncMap{"labelList": labelList}).ParseFS(Content, "templates/partials/*.html"))
+	render := func(c *pbs.TokenCheck) string {
+		var b strings.Builder
+		if err := tmpl.ExecuteTemplate(&b, "token-check-badge", c); err != nil {
+			t.Fatal(err)
+		}
+		return b.String()
+	}
+	if got := render(nil); got != "" {
+		t.Errorf("unchecked target shows %q", got)
+	}
+	if got := render(&pbs.TokenCheck{Status: pbs.TokenOK}); got != "" {
+		t.Errorf("ok target shows %q", got)
+	}
+	excess := render(&pbs.TokenCheck{Status: pbs.TokenExcess, Findings: []pbs.TokenFinding{{Path: "/", Problem: "holds Sys.Modify on /"}}})
+	if !strings.Contains(excess, "too broad") || !strings.Contains(excess, "Sys.Modify") {
+		t.Errorf("excess badge %q", excess)
+	}
+	if got := render(&pbs.TokenCheck{Status: pbs.TokenMissing}); !strings.Contains(got, "badge-danger") {
+		t.Errorf("missing badge %q", got)
 	}
 }

@@ -3,6 +3,8 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -21,6 +23,7 @@ import (
 	"github.com/osshield/fallbck/pkg/auth"
 	"github.com/osshield/fallbck/pkg/config"
 	"github.com/osshield/fallbck/pkg/db"
+	"github.com/osshield/fallbck/pkg/pbs"
 )
 
 // Live check against PostgreSQL. Set FALLBCK_TEST_DATABASE_URL to an empty database
@@ -480,5 +483,59 @@ func TestLiveAuditPrune(t *testing.T) {
 	}
 	if _, err := d.Pool.Exec(ctx, `DELETE FROM audit_log`); err == nil {
 		t.Error("a plain DELETE got past the append-only trigger")
+	}
+}
+
+func TestLiveTargetTokenCheck(t *testing.T) {
+	d := liveDB(t)
+	ctx := context.Background()
+	answer := `{"data":{"/datastore/ds":{"Datastore.Backup":true}}}`
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(answer))
+	}))
+	defer srv.Close()
+	sum := sha256.Sum256(srv.Certificate().Raw)
+	pin := hex.EncodeToString(sum[:])
+	target := &db.BackupTarget{Name: "pbs", TargetType: "pbs", Endpoint: srv.URL, Datastore: "ds", AuthToken: "fb@pbs!t:secret", Fingerprint: pin, Labels: db.Labels{"team": "a"}}
+	if err := d.CreateTarget(ctx, target); err != nil {
+		t.Fatal(err)
+	}
+	admin := &auth.Principal{Kind: auth.PrincipalSession, Email: "root@example.com", Bindings: auth.AdminBindings()}
+	h := liveRouter(d, admin)
+	path := "/api/v1/targets/" + target.ID.String() + "/token-check"
+	auditCount := func() int {
+		entries, _ := d.ListAudit(ctx, db.AuditFilter{Action: "target.token_check"}, db.Unscoped)
+		return len(entries)
+	}
+	check := func(want string) {
+		t.Helper()
+		code, body := call(t, h, http.MethodPost, path, nil)
+		if code != http.StatusOK || !bytes.Contains(body, []byte(`"status":"`+want+`"`)) {
+			t.Fatalf("check: %d %s, want %s", code, body, want)
+		}
+	}
+
+	check(pbs.TokenOK)
+	check(pbs.TokenOK)
+	if n := auditCount(); n != 1 {
+		t.Errorf("%d audit entries after ok, ok; want 1 (only the first is a change)", n)
+	}
+	answer = `{"data":{"/":{"Sys.Audit":true},"/datastore/ds":{"Datastore.Backup":true,"Sys.Audit":true}}}`
+	check(pbs.TokenExcess)
+	if n := auditCount(); n != 2 {
+		t.Errorf("%d audit entries after the change to excess; want 2", n)
+	}
+	code, body := call(t, h, http.MethodGet, "/api/v1/targets/"+target.ID.String(), nil)
+	if code != http.StatusOK || !bytes.Contains(body, []byte(`"token_check":{"status":"excess"`)) || !bytes.Contains(body, []byte(`everything on this PBS`)) {
+		t.Errorf("target shows %d %s", code, body)
+	}
+	// The PBS going away is an error, never ok
+	srv.Close()
+	check(pbs.TokenError)
+
+	viewer := &auth.Principal{Kind: auth.PrincipalSession, Bindings: []auth.Binding{{Role: auth.RoleViewer, Permissions: auth.BuiltinRoles()[auth.RoleViewer]}}}
+	if code, _ := call(t, liveRouter(d, viewer), http.MethodPost, path, nil); code != http.StatusForbidden {
+		t.Errorf("viewer ran a token check: %d", code)
 	}
 }

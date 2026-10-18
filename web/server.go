@@ -445,6 +445,13 @@ func (u *UIHandler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 		jobs, _ = u.DB.ListJobs(ctx, scope(r, auth.PermJobsRead))
 		runs, _ = u.DB.ListRuns(ctx, 10, scope(r, auth.PermJobsRead))
 	}
+	// Targets whose PBS token holds more (or less) than Datastore.Backup
+	tokenWarnings := 0
+	for _, t := range targets {
+		if t.TokenCheck.Warn() {
+			tokenWarnings++
+		}
+	}
 	onlineCount := 0
 	now := time.Now()
 	for _, a := range agents {
@@ -472,6 +479,7 @@ func (u *UIHandler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 		"AgentCount":       len(agents),
 		"OnlineAgentCount": onlineCount,
 		"TargetCount":      len(targets),
+		"TokenWarnings":    tokenWarnings,
 		"JobCount":         len(jobs),
 		"AvgDedup":         fmt.Sprintf("%.2f", avgDedup),
 		"RecentRuns":       runs,

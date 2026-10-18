@@ -10,6 +10,7 @@ import (
 	"github.com/osshield/fallbck/pkg/dockerbackup"
 	"github.com/osshield/fallbck/pkg/k8sbackup"
 	"github.com/osshield/fallbck/pkg/m365"
+	"github.com/osshield/fallbck/pkg/pbs"
 	"github.com/osshield/fallbck/pkg/pvebackup"
 	"time"
 
@@ -440,13 +441,13 @@ func (d *DB) GetTargetByID(ctx context.Context, id uuid.UUID, scope Scope) (*Bac
 // targetSelect joins the key ring and its active key onto the target
 const targetSelect = `
 	SELECT t.id, t.name, t.target_type, t.endpoint, t.datastore, t.namespace, t.auth_token_encrypted, t.fingerprint, t.tls_verify, t.pxar_format, t.created_at, t.updated_at,
-	       t.encryption_mode, t.key_ring_id, COALESCE(r.name, ''), r.active_key_id, COALESCE(r.master_public_key, ''), COALESCE(k.fingerprint, ''), k.created_at, t.labels
+	       t.encryption_mode, t.key_ring_id, COALESCE(r.name, ''), r.active_key_id, COALESCE(r.master_public_key, ''), COALESCE(k.fingerprint, ''), k.created_at, t.labels, t.token_check
 	FROM backup_targets t LEFT JOIN key_rings r ON r.id = t.key_ring_id LEFT JOIN target_keys k ON k.id = r.active_key_id`
 
 func scanTarget(row pgx.Row) (*BackupTarget, error) {
 	var t BackupTarget
 	err := row.Scan(&t.ID, &t.Name, &t.TargetType, &t.Endpoint, &t.Datastore, &t.Namespace, &t.AuthToken, &t.Fingerprint, &t.TLSVerify, &t.PxarFormat, &t.CreatedAt, &t.UpdatedAt,
-		&t.EncryptionMode, &t.KeyRingID, &t.KeyRingName, &t.EncryptionKeyID, &t.MasterPublicKey, &t.KeyFingerprint, &t.KeyCreatedAt, &t.Labels)
+		&t.EncryptionMode, &t.KeyRingID, &t.KeyRingName, &t.EncryptionKeyID, &t.MasterPublicKey, &t.KeyFingerprint, &t.KeyCreatedAt, &t.Labels, &t.TokenCheck)
 	if err != nil {
 		return nil, err
 	}
@@ -663,6 +664,23 @@ func (d *DB) CountRunsWithKey(ctx context.Context, fingerprint string) (int, err
 	var n int
 	err := d.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM backup_runs WHERE key_fingerprint = $1`, fingerprint).Scan(&n)
 	return n, err
+}
+
+// SetTargetTokenCheck stores a token check result and returns the previous status
+// ("" when the target was never checked)
+func (d *DB) SetTargetTokenCheck(ctx context.Context, id uuid.UUID, check *pbs.TokenCheck) (string, error) {
+	data, err := json.Marshal(check)
+	if err != nil {
+		return "", err
+	}
+	var previous string
+	err = d.Pool.QueryRow(ctx, `
+		WITH old AS (SELECT COALESCE(token_check->>'status', '') AS status FROM backup_targets WHERE id = $1)
+		UPDATE backup_targets SET token_check = $2::jsonb WHERE id = $1 RETURNING (SELECT status FROM old)`, id, string(data)).Scan(&previous)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return previous, err
 }
 
 func (d *DB) DeleteTarget(ctx context.Context, id uuid.UUID) error {

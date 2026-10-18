@@ -7,8 +7,22 @@ A production FallBCK is boring on purpose: `fallbck-server`, a Postgres database
 - **Postgres** (any supported version). FallBCK uses one database for itself and, by default, creates `temporal` and `temporal_visibility` next to it for the embedded Temporal.
 - **A reverse proxy with TLS**: Caddy, nginx or Traefik. The server only speaks plaintext h2c on one port and expects to sit behind the proxy.
 - **An OIDC provider** for admin logins: Keycloak, Entra ID, Authentik, dex, whatever you already run.
-- **A Proxmox Backup Server** and an API token with `Datastore.Backup` on the datastore (or namespace) you'll write to.
+- **A Proxmox Backup Server** and an API token with `Datastore.Backup` on the datastore (or namespace) you'll write to. See below.
 
+### The PBS token
+
+Give FallBCK its own user and token, with the `DatastoreBackup` role on the datastore and nothing else:
+
+```bash
+proxmox-backup-manager user create fallbck@pbs
+proxmox-backup-manager user generate-token fallbck@pbs backup
+proxmox-backup-manager acl update /datastore/store1 DatastoreBackup --auth-id 'fallbck@pbs'
+proxmox-backup-manager acl update /datastore/store1 DatastoreBackup --auth-id 'fallbck@pbs!backup'
+```
+
+PBS gives a token the overlap of its own ACL entries and its user's, so both lines are needed. Scope it to a namespace (`/datastore/store1/hosts`) if you like.
+
+That's all FallBCK ever uses: it only speaks the backup protocol, and retention is a PBS prune job. The server checks this. Every six hours, and whenever you save a target, it asks PBS what the token may do (a token can always ask about itself). A token that holds more than `Datastore.Backup` within its datastore gets a *too broad* warning on the target and the dashboard, listing each extra privilege and how to remove it. A token missing `Datastore.Backup` gets a red one, since backups would fail. The warnings stay until a check comes back clean, and every change of verdict lands in the audit log. *Check now* on the target form re-runs it.
 ## Install the server
 
 Pick your poison:

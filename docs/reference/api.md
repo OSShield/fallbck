@@ -80,6 +80,7 @@ A key can't reach further than whoever creates it: you need every permission of 
 | `DELETE` | `/targets/{id}` | |
 | `POST` | `/targets/{id}/clone` | `{"name", "namespace", "pxar_format"}`. Copies the token server-side. |
 | `GET` | `/targets/{id}/credentials` | `PBS_*` exports for `proxmox-backup-client`. **Logged.** |
+| `POST` | `/targets/{id}/token-check` | Asks PBS what the target's token may do and stores the verdict: `ok`, `excess`, `missing` or `error`, with findings. `targets:write`. Targets carry the last result as `token_check`. |
 
 ```json
 POST /api/v1/targets

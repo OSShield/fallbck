@@ -1,13 +1,17 @@
 package api
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/osshield/fallbck/pkg/auth"
+	"github.com/osshield/fallbck/pkg/db"
 	"github.com/osshield/fallbck/pkg/pbs"
+	"github.com/osshield/fallbck/pkg/tokencheck"
 )
 
 // TargetCredentials hands an administrator the PBS connection details of a target in
@@ -54,4 +58,38 @@ func (s *ServerAPI) HandleTargetCredentials(w http.ResponseWriter, r *http.Reque
 		TokenID: tokenID, Secret: secret,
 		Repository: tokenID + "@" + host + ":" + target.Datastore,
 	})
+}
+
+// HandleCheckTargetToken asks PBS what the target's API token may do and stores the
+// verdict on the target (POST /targets/{id}/token-check). See pkg/tokencheck.
+func (s *ServerAPI) HandleCheckTargetToken(w http.ResponseWriter, r *http.Request) {
+	target, ok := s.targetFromPath(w, r, auth.PermTargetsWrite)
+	if !ok {
+		return
+	}
+	res, prev, err := tokencheck.Check(r.Context(), s.DB, target)
+	if err != nil {
+		slog.Error("Storing the PBS token check failed", "target", target.Name, "error", err)
+		s.writeError(w, http.StatusInternalServerError, "Failed to store the token check")
+		return
+	}
+	if prev != res.Status {
+		s.audit(r, "target.token_check", "target", target.ID.String(), target.Name, target.Labels,
+			map[string]any{"from": prev, "to": res.Status, "token_id": res.TokenID, "findings": res.Findings, "error": res.Error})
+	}
+	s.writeJSON(w, http.StatusOK, res)
+}
+
+// checkTokenLater checks a target's token in the background after it was saved, so
+// the form does not wait on PBS; the result shows on the target when it lands
+func (s *ServerAPI) checkTokenLater(target *db.BackupTarget) {
+	if s.DB == nil || target == nil {
+		return
+	}
+	t := *target
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		tokencheck.CheckAndAudit(ctx, s.DB, &t)
+	}()
 }
