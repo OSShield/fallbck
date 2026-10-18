@@ -30,3 +30,17 @@ go build ./... && go test ./...
 ```
 
 More in [Development](https://osshield.github.io/fallbck/development/). The docs source is in [`docs/`](docs/).
+
+
+## Roadmap
+### Backup Sources
+These are the future backup sources that are currently planned. If you miss any, feel free to open an issue or contribute with a pull request:
+
+- VCS (Github, Gitlab, Gitea, Forgejo, etc.)
+- Cloud storage (via RClone, so all/most supported providers)
+- Google Workspace (Gmail, Drive, Calendar, Contacts, etc.)
+- Other hypervisors
+  - Here I need some community feedback on what would be the most useful. We only use proxmox in-house.
+
+### Better integration with Proxmox Backup Server
+Once PBS supports a plugin system, we plan to integrate parts of or the entire backup workflow directly into PBS.
