@@ -32,8 +32,8 @@ Durations use Go syntax: `12h`, `90s`, `8760h`.
 | `oidc.client_id` | `FALLBCK_OIDC_CLIENT_ID` | | |
 | `oidc.client_secret` | `FALLBCK_OIDC_CLIENT_SECRET` | | |
 | `oidc.scopes` | `FALLBCK_OIDC_SCOPES` | | e.g. `[openid, profile, email, groups]` |
-| `oidc.allowed_groups` | `FALLBCK_OIDC_ALLOWED_GROUPS` | anyone | Only these groups get in. |
-| `oidc.allowed_emails` | `FALLBCK_OIDC_ALLOWED_EMAILS` | anyone | Only these emails get in. |
+| `oidc.allowed_groups` | `FALLBCK_OIDC_ALLOWED_GROUPS` | anyone | Only these groups may sign in. Signing in still needs a [role binding](../operations/access.md). |
+| `oidc.allowed_emails` | `FALLBCK_OIDC_ALLOWED_EMAILS` | anyone | Only these emails may sign in. Same deal. |
 | `oidc.groups_claim` | | `groups` | ID token claim that carries groups. |
 | `session_ttl` | `FALLBCK_SESSION_TTL` | `12h` | Admin session lifetime. |
 | `insecure_disable` | `FALLBCK_AUTH_INSECURE_DISABLE` | `false` | No login at all. Refused unless the server runs with `--dev`. |
@@ -73,8 +73,9 @@ Register `<public_url>/auth/callback` as the redirect URI. List env vars are com
 | `external.ca_cert_path` | `FALLBCK_TEMPORAL_CA_CERT` | | |
 | `external.client_cert_path` | `FALLBCK_TEMPORAL_CLIENT_CERT` | | |
 | `external.client_key_path` | `FALLBCK_TEMPORAL_CLIENT_KEY` | | |
-| `ui.enabled` | `FALLBCK_TEMPORAL_UI_ENABLED` | `true` | Temporal Web UI under `/temporal/`, admins only. |
+| `ui.enabled` | `FALLBCK_TEMPORAL_UI_ENABLED` | `true` | Temporal Web UI under `/temporal/`, for roles with `temporal:ui`. |
 | `ui.port` | `FALLBCK_TEMPORAL_UI_PORT` | `8233` | Loopback. |
+| `ui.read_only` | `FALLBCK_TEMPORAL_UI_READ_ONLY` | `true` | Hides terminate, cancel, signal, reset and schedule edits. The UI isn't label-scoped, so with this off anyone who can open it can stop any team's backups. Cancel runs from FallBCK instead. |
 
 ## Flags and other env
 

@@ -53,7 +53,7 @@ auth:
     allowed_groups: ["backup-admins"]
 ```
 
-Register `https://backup.example.com/auth/callback` (your `public_url` plus the callback path) as the redirect URI in your IdP. Every key has a `FALLBCK_*` environment variable too, which is handy for secrets. The full list is in [Server config](../reference/server-config.md).
+Register `https://backup.example.com/auth/callback` (your `public_url` plus the callback path) as the redirect URI in your IdP. The first person to sign in becomes the admin, so make that you, then hand out roles under *Access* ([Access control](../operations/access.md)). Every key has a `FALLBCK_*` environment variable too, which is handy for secrets. The full list is in [Server config](../reference/server-config.md).
 
 !!! danger "Back up the master key"
     On first start the server generates `master.key` in its data dir. It seals your PBS API tokens and every target's encryption key. Lose it along with your exported key files and your encrypted backups are gone for good. Back it up with the database, and keep it somewhere that isn't the backup server.

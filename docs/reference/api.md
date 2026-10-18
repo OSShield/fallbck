@@ -14,12 +14,18 @@ Keys are hashed at rest, and you only see the raw one once, when you create it. 
 
 Errors come back as `{"error": "<message>"}` with a sensible status code.
 
+Every admin route needs a permission (see [Access control](../operations/access.md)). Without it anywhere you get a `403`. Objects outside your scope come back as `404`, exactly like missing ones, and lists leave them out. A `403` on an object means you can see it but not do that to it.
+
+### Labels
+
+Agents, targets, jobs, tenants, key rings and enrollment tokens take `"labels": {"team": "web"}` on create and update. On update, leaving `labels` out keeps the stored ones, and `{}` clears them. Changing them needs the write permission on both the old and the new labels.
+
 ## Health
 
 | Method | Path | Notes |
 |---|---|---|
 | `GET` | `/health` | No auth. Use it for load balancer checks. |
-| `GET` | `/auth/me` | Who you're authenticated as: `kind`, `subject`, `email`, `name`. |
+| `GET` | `/auth/me` | Who you're authenticated as: `kind`, `subject`, `email`, `name`, plus `permissions` (the union over all your bindings) and `bindings`. |
 
 ## Enrollment tokens
 
@@ -32,18 +38,21 @@ Errors come back as `{"error": "<message>"}` with a sensible status code.
 
 ```json
 POST /api/v1/tokens
-{ "name": "web-01", "max_uses": 1, "expires_at": "2026-12-31T00:00:00Z" }
+{ "name": "web-01", "max_uses": 1, "expires_at": "2026-12-31T00:00:00Z", "labels": {"team": "web"} }
 ```
 
-`max_uses: 0` means unlimited, and it defaults to 1.
+`max_uses: 0` means unlimited, and it defaults to 1. Agents enrolled with the token get its labels.
 
 ## API keys
 
 | Method | Path | Notes |
 |---|---|---|
-| `POST` | `/apikeys` | `{"name": "...", "expires_at": "..."}` (expiry optional). Returns `raw_key` once. |
+| `POST` | `/apikeys` | `{"name": "...", "expires_at": "...", "role": "viewer", "selector": {"team": "web"}}`. Expiry is optional; role defaults to `admin`, selector to everything. Returns `raw_key` once. |
 | `GET` | `/apikeys` | |
+| `GET` | `/apikeys/roles` | The roles a key can take. |
 | `DELETE` | `/apikeys/{id}` | Revokes the key. |
+
+A key can't reach further than whoever creates it: you need every permission of the role on a selector the key's selector narrows, or you get a `403`.
 
 ## Agents
 
@@ -52,6 +61,7 @@ POST /api/v1/tokens
 | `GET` | `/agents` | |
 | `GET` | `/agents/{id}` | |
 | `DELETE` | `/agents/{id}` | |
+| `PUT` | `/agents/{id}/labels` | `{"labels": {"team": "web"}}`. Replaces the agent's labels. |
 | `POST` | `/agents/{id}/debug` | `{"enabled": true}` turns on live debug logging. |
 | `POST` | `/agents/{id}/auto-update` | `{"enabled": true}` opts the agent into [self-update](../operations/agent-status.md#agent-updates). |
 | `POST` | `/agents/{id}/update` | Update to the server's version on the next heartbeat. |
@@ -190,6 +200,24 @@ Common fields:
 | `GET` | `/runs` | Recent runs. |
 | `GET` | `/runs/{id}` | Includes the type-specific detail blob. |
 | `POST` | `/runs/{id}/cancel` | |
+
+Runs follow their job: `jobs:read` on the job's labels to see them, `jobs:run` to cancel.
+
+## Access control
+
+All of these need `rbac:manage`, except the audit log.
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/rbac/permissions` | The permission catalog, grouped by resource, plus the global-only ones. |
+| `GET` | `/rbac/roles` | Roles with their permissions and how many bindings and keys use them. |
+| `POST` | `/rbac/roles` | `{"name": "backup-op", "description": "...", "permissions": ["jobs:read", "jobs:run"]}` |
+| `PUT` | `/rbac/roles/{name}` | Same body. Built-in roles are refused. |
+| `DELETE` | `/rbac/roles/{name}` | Refused while anything is bound to it. |
+| `GET` | `/rbac/bindings` | |
+| `POST` | `/rbac/bindings` | `{"kind": "group", "subject": "web-team", "role": "operator", "selector": {"team": "web"}}`. `kind` is `user` (email) or `group`. |
+| `DELETE` | `/rbac/bindings/{id}` | Refused for the last binding with `rbac:manage` on everything. |
+| `GET` | `/audit` | `audit:read`. Query: `actor` (substring), `action` (prefix), `resource`, `from`, `to` (RFC 3339 or `YYYY-MM-DD`), `limit` (max 5000), `format=csv`. |
 
 ## Agent-only endpoints
 
