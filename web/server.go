@@ -88,35 +88,44 @@ func (u *UIHandler) RegisterRoutes(r chi.Router) {
 	r.Get("/auth/login", u.HandleAuthLogin)
 	r.Get("/auth/callback", u.HandleAuthCallback)
 
-	// ---- administrative ----
+	// ---- administrative: each page needs its permission somewhere; the data on it
+	// is scoped to the principal's bindings ----
 	r.Group(func(r chi.Router) {
 		r.Use(u.deps.Admin.RequireAdmin)
+		need := auth.RequirePerm
 
 		r.Post("/auth/logout", u.HandleLogout)
 
 		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, "/dashboard", http.StatusFound)
 		})
-		r.Get("/dashboard", u.HandleDashboard)
-		r.Get("/agents", u.HandleAgents)
-		r.Get("/agents/{id}", u.HandleAgentDetail)
-		r.Get("/onboarding", u.HandleOnboarding)
-		r.Get("/targets", u.HandleTargets)
-		r.Get("/tenants", u.HandleTenants)
-		r.Get("/jobs", u.HandleJobs)
-		r.Get("/kubernetes", u.HandleKubernetes)
-		r.Get("/runs", u.HandleRuns)
-		r.Get("/runs/{id}", u.HandleRunDetail)
-		r.Get("/tokens", u.HandleTokens)
-		r.Get("/apikeys", u.HandleAPIKeys)
+		r.With(auth.RequireAny).Get("/dashboard", u.HandleDashboard)
+		r.With(need(auth.PermAgentsRead)).Get("/agents", u.HandleAgents)
+		r.With(need(auth.PermAgentsRead)).Get("/agents/{id}", u.HandleAgentDetail)
+		r.With(need(auth.PermAgentsEnroll)).Get("/onboarding", u.HandleOnboarding)
+		r.With(need(auth.PermTargetsRead)).Get("/targets", u.HandleTargets)
+		r.With(need(auth.PermTenantsRead)).Get("/tenants", u.HandleTenants)
+		r.With(need(auth.PermJobsRead)).Get("/jobs", u.HandleJobs)
+		r.With(need(auth.PermJobsRead)).Get("/kubernetes", u.HandleKubernetes)
+		r.With(need(auth.PermJobsRead)).Get("/runs", u.HandleRuns)
+		r.With(need(auth.PermJobsRead)).Get("/runs/{id}", u.HandleRunDetail)
+		r.With(need(auth.PermAgentsEnroll)).Get("/tokens", u.HandleTokens)
+		r.With(need(auth.PermAPIKeysManage)).Get("/apikeys", u.HandleAPIKeys)
+		r.With(need(auth.PermRBACManage)).Get("/access", u.HandleAccess)
+		r.With(need(auth.PermAuditRead)).Get("/audit", u.HandleAudit)
 
 		if u.temporalProxy != nil {
-			r.Get(temporalui.PublicPath, func(w http.ResponseWriter, r *http.Request) {
+			r.With(need(auth.PermTemporalUI)).Get(temporalui.PublicPath, func(w http.ResponseWriter, r *http.Request) {
 				http.Redirect(w, r, temporalui.PublicPath+"/", http.StatusFound)
 			})
-			r.Handle(temporalui.PublicPath+"/*", u.temporalProxy)
+			r.With(need(auth.PermTemporalUI)).Handle(temporalui.PublicPath+"/*", u.temporalProxy)
 		}
 	})
+}
+
+// scope is the request principal's reach for perm (see pkg/api/access.go)
+func scope(r *http.Request, perm string) db.Scope {
+	return auth.PrincipalFrom(r.Context()).Scope(perm)
 }
 
 // ClientIP stores the client IP for middleware.GetClientIP. X-Forwarded-For is only
@@ -201,6 +210,7 @@ func (u *UIHandler) HandleLoginPage(w http.ResponseWriter, r *http.Request) {
 		"failed":         "Sign-in failed. Please try again.",
 		"expired":        "The sign-in attempt expired. Please try again.",
 		"denied":         "Sign-in was cancelled at the identity provider.",
+		"no_access":      "Your account has no role on this server. Ask an administrator to grant you access.",
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = tmpl.ExecuteTemplate(w, "login", map[string]any{
@@ -287,6 +297,11 @@ func (u *UIHandler) HandleAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if ok := u.authorizeLogin(w, r, identity); !ok {
+		fail("no_access")
+		return
+	}
+
 	session, expires, err := u.deps.TokenManager.CreateSession(identity, u.Config.Auth.SessionTTL)
 	if err != nil {
 		slog.Error("Failed to create session", "error", err)
@@ -297,6 +312,47 @@ func (u *UIHandler) HandleAuthCallback(w http.ResponseWriter, r *http.Request) {
 	auth.SetSessionCookie(w, session, expires, u.cookieOpts)
 	slog.Info("Admin signed in", "subject", identity.Subject, "email", identity.Email)
 	http.Redirect(w, r, safeNext(state.Next), http.StatusFound)
+}
+
+// authorizeLogin resolves the identity's role bindings: no binding means no access.
+// On a fresh instance (no binding at all) the first identity with an email becomes
+// the global admin. Both outcomes go to the audit log.
+func (u *UIHandler) authorizeLogin(w http.ResponseWriter, r *http.Request, id *auth.Identity) bool {
+	if u.DB == nil || u.deps.Admin.RBAC == nil {
+		return true
+	}
+	ctx := r.Context()
+	p := &auth.Principal{Kind: auth.PrincipalSession, Subject: id.Subject, Email: id.Email, Name: id.Name}
+	ar := r.WithContext(auth.WithPrincipal(ctx, p))
+	audit := func(action string, details map[string]any) {
+		if err := u.DB.WriteAudit(ctx, auth.NewAuditEntry(ar, action, "user", id.Subject, id.Email, nil, details)); err != nil {
+			slog.Error("Writing audit log entry failed", "action", action, "error", err)
+		}
+	}
+	if id.Email != "" && !id.EmailUnverified {
+		created, err := u.DB.BootstrapAdmin(ctx, id.Email, auth.RoleAdmin)
+		if err != nil {
+			slog.Error("Bootstrapping the first administrator failed", "error", err)
+			return false
+		}
+		if created {
+			u.deps.Admin.RBAC.Flush()
+			slog.Warn("First sign-in on an instance without role bindings: granted the admin role on everything", "email", id.Email)
+			audit("auth.bootstrap", map[string]any{"role": auth.RoleAdmin})
+		}
+	}
+	bindings, err := u.deps.Admin.RBAC.Session(ctx, id.Email, id.EmailUnverified, id.Groups)
+	if err != nil {
+		slog.Error("Resolving role bindings failed", "error", err)
+		return false
+	}
+	if len(bindings) == 0 {
+		slog.Warn("Sign-in refused: no role binding", "subject", id.Subject, "email", id.Email, "groups", id.Groups)
+		audit("auth.denied", map[string]any{"groups": id.Groups, "email_unverified": id.EmailUnverified})
+		return false
+	}
+	audit("auth.login", map[string]any{"groups": id.Groups})
+	return true
 }
 
 // HandleLogout clears the session (called via fetch from the UI)
@@ -315,6 +371,7 @@ func (u *UIHandler) renderPage(w http.ResponseWriter, r *http.Request, pageTempl
 		"formatTime":   formatTime,
 		"since":        since,
 		"uptime":       uptime,
+		"labelList":    labelList,
 	}).ParseFS(Content, "templates/layout.html", "templates/partials/*.html", "templates/"+pageTemplate)
 
 	if err != nil {
@@ -322,9 +379,19 @@ func (u *UIHandler) renderPage(w http.ResponseWriter, r *http.Request, pageTempl
 		return
 	}
 
-	if p := auth.PrincipalFrom(r.Context()); p != nil {
+	p := auth.PrincipalFrom(r.Context())
+	if p != nil {
 		data["User"] = p.Display()
 	}
+	// Can drives what the templates show ({{if index .Can "jobs:write"}}); Perms is
+	// the same list for app.js. The server enforces regardless.
+	perms := p.Permissions()
+	can := make(map[string]bool, len(perms))
+	for _, perm := range perms {
+		can[perm] = true
+	}
+	data["Can"] = can
+	data["Perms"] = strings.Join(perms, " ")
 	data["InsecureAuth"] = u.deps.Admin.Insecure
 	data["TemporalUI"] = u.temporalProxy != nil
 	data["TemporalUIPath"] = temporalui.PublicPath + "/"
@@ -344,10 +411,10 @@ func (u *UIHandler) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 	var runs []*db.BackupRun
 
 	if u.DB != nil {
-		agents, _ = u.DB.ListAgents(ctx)
-		targets, _ = u.DB.ListTargets(ctx)
-		jobs, _ = u.DB.ListJobs(ctx)
-		runs, _ = u.DB.ListRuns(ctx, 10)
+		agents, _ = u.DB.ListAgents(ctx, scope(r, auth.PermAgentsRead))
+		targets, _ = u.DB.ListTargets(ctx, scope(r, auth.PermTargetsRead))
+		jobs, _ = u.DB.ListJobs(ctx, scope(r, auth.PermJobsRead))
+		runs, _ = u.DB.ListRuns(ctx, 10, scope(r, auth.PermJobsRead))
 	}
 	onlineCount := 0
 	now := time.Now()
@@ -386,7 +453,7 @@ func (u *UIHandler) HandleAgents(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var agents []*db.Agent
 	if u.DB != nil {
-		agents, _ = u.DB.ListAgents(ctx)
+		agents, _ = u.DB.ListAgents(ctx, scope(r, auth.PermAgentsRead))
 	}
 	// The stored status only changes on heartbeats, so a vanished agent stays
 	// "online" in the row; the display uses the heartbeat age instead
@@ -431,7 +498,7 @@ func (u *UIHandler) HandleAgentDetail(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	agent, err := u.DB.GetAgentByID(ctx, id)
+	agent, err := u.DB.GetAgentByID(ctx, id, scope(r, auth.PermAgentsRead))
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			http.NotFound(w, r)
@@ -442,7 +509,7 @@ func (u *UIHandler) HandleAgentDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now()
 	var jobs []*db.BackupJob
-	if all, err := u.DB.ListJobs(ctx); err == nil {
+	if all, err := u.DB.ListJobs(ctx, scope(r, auth.PermJobsRead)); err == nil {
 		for _, j := range all {
 			if j.AgentID == agent.ID {
 				jobs = append(jobs, j)
@@ -453,7 +520,7 @@ func (u *UIHandler) HandleAgentDetail(w http.ResponseWriter, r *http.Request) {
 	for _, j := range jobs {
 		j.LastRun = last[j.ID]
 	}
-	runs, _ := u.DB.ListRunsByAgent(ctx, agent.ID, 20)
+	runs, _ := u.DB.ListRunsByAgent(ctx, agent.ID, 20, scope(r, auth.PermJobsRead))
 	alerts := agenthealth.Evaluate(agenthealth.Input{Agent: agent, Jobs: jobs, LastRuns: last, ServerVersion: u.deps.Version, Now: now})
 
 	behind, bok := agenthealth.VersionBehind(agent.Version, u.deps.Version)
@@ -484,9 +551,9 @@ func (u *UIHandler) HandleOnboarding(w http.ResponseWriter, r *http.Request) {
 	var targets []*db.BackupTarget
 	var tenants []*m365.Tenant
 	if u.DB != nil {
-		agents, _ = u.DB.ListAgents(ctx)
-		targets, _ = u.DB.ListTargets(ctx)
-		tenants, _ = u.DB.ListTenants(ctx)
+		agents, _ = u.DB.ListAgents(ctx, scope(r, auth.PermAgentsRead))
+		targets, _ = u.DB.ListTargets(ctx, scope(r, auth.PermTargetsRead))
+		tenants, _ = u.DB.ListTenants(ctx, scope(r, auth.PermTenantsRead))
 	}
 	u.renderPage(w, r, "onboarding.html", map[string]interface{}{
 		"Title":     "Set up a new server",
@@ -501,7 +568,7 @@ func (u *UIHandler) HandleOnboarding(w http.ResponseWriter, r *http.Request) {
 func (u *UIHandler) HandleTargets(w http.ResponseWriter, r *http.Request) {
 	var targets []*db.BackupTarget
 	if u.DB != nil {
-		targets, _ = u.DB.ListTargets(r.Context())
+		targets, _ = u.DB.ListTargets(r.Context(), scope(r, auth.PermTargetsRead))
 	}
 
 	u.renderPage(w, r, "targets.html", map[string]interface{}{
@@ -514,7 +581,7 @@ func (u *UIHandler) HandleTargets(w http.ResponseWriter, r *http.Request) {
 func (u *UIHandler) HandleTenants(w http.ResponseWriter, r *http.Request) {
 	var tenants []*m365.Tenant
 	if u.DB != nil {
-		tenants, _ = u.DB.ListTenants(r.Context())
+		tenants, _ = u.DB.ListTenants(r.Context(), scope(r, auth.PermTenantsRead))
 	}
 
 	u.renderPage(w, r, "tenants.html", map[string]interface{}{
@@ -532,10 +599,10 @@ func (u *UIHandler) HandleJobs(w http.ResponseWriter, r *http.Request) {
 	var tenants []*m365.Tenant
 
 	if u.DB != nil {
-		jobs, _ = u.DB.ListJobs(ctx)
-		agents, _ = u.DB.ListAgents(ctx)
-		targets, _ = u.DB.ListTargets(ctx)
-		tenants, _ = u.DB.ListTenants(ctx)
+		jobs, _ = u.DB.ListJobs(ctx, scope(r, auth.PermJobsRead))
+		agents, _ = u.DB.ListAgents(ctx, scope(r, auth.PermAgentsRead))
+		targets, _ = u.DB.ListTargets(ctx, scope(r, auth.PermTargetsRead))
+		tenants, _ = u.DB.ListTenants(ctx, scope(r, auth.PermTenantsRead))
 	}
 	// Every job type is listed here (filtered client-side); the newest run per job feeds
 	// the last-run column and filter
@@ -576,7 +643,7 @@ func (u *UIHandler) HandleRuns(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var runs []*db.BackupRun
 	if u.DB != nil {
-		runs, _ = u.DB.ListRuns(ctx, 100)
+		runs, _ = u.DB.ListRuns(ctx, 100, scope(r, auth.PermJobsRead))
 	}
 
 	u.renderPage(w, r, "runs.html", map[string]interface{}{
@@ -600,7 +667,7 @@ func (u *UIHandler) HandleTokens(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var tokens []*db.EnrollmentToken
 	if u.DB != nil {
-		tokens, _ = u.DB.ListEnrollmentTokens(ctx)
+		tokens, _ = u.DB.ListEnrollmentTokens(ctx, scope(r, auth.PermAgentsEnroll))
 	}
 	// Used-up and expired tokens are hidden unless asked for (?all=1)
 	showAll := r.URL.Query().Get("all") == "1"
@@ -637,6 +704,22 @@ func (u *UIHandler) HandleAPIKeys(w http.ResponseWriter, r *http.Request) {
 		"Title":     "API Keys",
 		"ActiveNav": "apikeys",
 		"Keys":      keys,
+	})
+}
+
+// HandleAccess renders roles and bindings; the page loads both from /api/v1/rbac
+func (u *UIHandler) HandleAccess(w http.ResponseWriter, r *http.Request) {
+	u.renderPage(w, r, "access.html", map[string]interface{}{
+		"Title":     "Access",
+		"ActiveNav": "access",
+	})
+}
+
+// HandleAudit renders the audit log; the page queries /api/v1/audit with its filters
+func (u *UIHandler) HandleAudit(w http.ResponseWriter, r *http.Request) {
+	u.renderPage(w, r, "audit.html", map[string]interface{}{
+		"Title":     "Audit Log",
+		"ActiveNav": "audit",
 	})
 }
 
@@ -832,6 +915,15 @@ func uptime(seconds int64) string {
 		return fmt.Sprintf("%dh %dm", int(d.Hours()), int(d.Minutes())%60)
 	}
 	return fmt.Sprintf("%dd %dh", int(d.Hours()/24), int(d.Hours())%24)
+}
+
+// labelList renders labels as sorted key=value strings for the label chips
+// (label syntax has no commas, so the split is exact)
+func labelList(l map[string]string) []string {
+	if len(l) == 0 {
+		return nil
+	}
+	return strings.Split(db.Labels(l).String(), ",")
 }
 
 // agentProfiles lists each agent's credential profiles as "name:engine,..." for the

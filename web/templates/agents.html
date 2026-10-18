@@ -50,7 +50,7 @@
                 <span class="badge badge-neutral"><span class="badge-dot"></span> Offline</span>
               {{end}}
             </td>
-            <td><a href="/agents/{{.ID}}" title="Status page" style="font-weight: 600;">{{.Hostname}}</a></td>
+            <td><a href="/agents/{{.ID}}" title="Status page" style="font-weight: 600;">{{.Hostname}}</a><br>{{template "label-chips" .Labels}}</td>
             <td>{{if eq .AgentType "database"}}<span class="badge badge-info">database</span>{{else if eq .AgentType "kubernetes"}}<span class="badge badge-info">kubernetes</span>{{else}}<span class="badge badge-neutral">filesystem</span>{{end}}{{if .PVEHost}} <span class="badge badge-warning" title="Runs on a Proxmox VE node">PVE</span>{{end}}{{if .DockerHost}} <span class="badge badge-info" title="A Docker daemon answers on this host">Docker</span>{{end}}{{if .DBEngines}} <span class="badge badge-success" title="Database engines this agent can back up (client tools found; mssql needs none)">DB: {{range $i, $e := .DBEngines}}{{if $i}}, {{end}}{{$e}}{{end}}</span>{{else if .DBTools}} <span class="badge badge-success" title="Database client tools found: can run database jobs">DB tools</span>{{end}}</td>
             <td style="font-family: var(--font-mono); font-size: 13px;">{{if .IPAddress}}{{.IPAddress}}{{else}}-{{end}}</td>
             <td>
@@ -66,21 +66,21 @@
             </td>
             <td style="text-align: right; display: flex; justify-content: flex-end; gap: 8px;">
               {{if .DebugLogging}}
-                <button class="btn btn-secondary btn-sm" title="Debug logging is on; the agent logs at debug level. Click to return to its configured level." onclick="toggleAgentDebug('{{.ID}}', false)">Debug: on</button>
+                <button class="btn btn-secondary btn-sm" data-perm="agents:write" title="Debug logging is on; the agent logs at debug level. Click to return to its configured level." onclick="toggleAgentDebug('{{.ID}}', false)">Debug: on</button>
               {{else}}
-                <button class="btn btn-secondary btn-sm" title="Raise this agent's log level to debug from here — applied on its next heartbeat (~30s), no restart." onclick="toggleAgentDebug('{{.ID}}', true)">Debug: off</button>
+                <button class="btn btn-secondary btn-sm" data-perm="agents:write" title="Raise this agent's log level to debug from here — applied on its next heartbeat (~30s), no restart." onclick="toggleAgentDebug('{{.ID}}', true)">Debug: off</button>
               {{end}}
               {{if and .SelfUpdate $updatesOn}}
                 {{if .AutoUpdate}}
-                  <button class="btn btn-secondary btn-sm" title="The agent follows the server's version on its own. Click to stop." onclick="toggleAgentAutoUpdate('{{.ID}}', false)">Auto-update: on</button>
+                  <button class="btn btn-secondary btn-sm" data-perm="agents:write" title="The agent follows the server's version on its own. Click to stop." onclick="toggleAgentAutoUpdate('{{.ID}}', false)">Auto-update: on</button>
                 {{else}}
-                  <button class="btn btn-secondary btn-sm" title="Let the agent update itself whenever the server is newer (never while a backup runs)" onclick="toggleAgentAutoUpdate('{{.ID}}', true)">Auto-update: off</button>
+                  <button class="btn btn-secondary btn-sm" data-perm="agents:write" title="Let the agent update itself whenever the server is newer (never while a backup runs)" onclick="toggleAgentAutoUpdate('{{.ID}}', true)">Auto-update: off</button>
                 {{end}}
-                {{if and (index $behind .ID) (not .UpdateRequestedAt)}}<button class="btn btn-primary btn-sm" title="Update this agent to v{{$.Version}} on its next heartbeat" onclick="requestAgentUpdate('{{.ID}}')">Update now</button>{{end}}
+                {{if and (index $behind .ID) (not .UpdateRequestedAt)}}<button class="btn btn-primary btn-sm" data-perm="agents:write" title="Update this agent to v{{$.Version}} on its next heartbeat" onclick="requestAgentUpdate('{{.ID}}')">Update now</button>{{end}}
               {{end}}
               <a class="btn btn-secondary btn-sm" href="/agents/{{.ID}}" title="Status, alerts, credential profiles, inventory and logs">Status</a>
               <a class="btn btn-secondary btn-sm" href="/onboarding?agent={{.ID}}" title="Guided setup of backup jobs for this agent">Set up backups</a>
-              <button class="btn btn-secondary btn-sm" style="color: var(--danger-text);" onclick="deleteResource('agents', '{{.ID}}')">Delete</button>
+              <button class="btn btn-secondary btn-sm" style="color: var(--danger-text);" data-perm="agents:delete" onclick="deleteResource('agents', '{{.ID}}')">Delete</button>
             </td>
           </tr>
           {{end}}

@@ -6,8 +6,6 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"github.com/osshield/fallbck/pkg/auth"
 	"github.com/osshield/fallbck/pkg/pbs"
 )
@@ -30,14 +28,8 @@ type TargetCredentials struct {
 // restores with proxmox-backup-client (e.g. the Proxmox VE host restore runbook). The
 // request is logged with the acting principal.
 func (s *ServerAPI) HandleTargetCredentials(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		s.writeError(w, http.StatusBadRequest, "Invalid target ID")
-		return
-	}
-	target, err := s.DB.GetTargetByID(r.Context(), id)
-	if err != nil {
-		s.writeError(w, http.StatusNotFound, "Target not found")
+	target, ok := s.targetFromPath(w, r, auth.PermTargetsCredentials)
+	if !ok {
 		return
 	}
 	token, err := pbs.NormalizeAPIToken(target.AuthToken)
@@ -54,11 +46,8 @@ func (s *ServerAPI) HandleTargetCredentials(w http.ResponseWriter, r *http.Reque
 	if u, err := url.Parse(target.Endpoint); err == nil && u.Host != "" {
 		host = u.Host
 	}
-	who := "api-key"
-	if p := auth.PrincipalFrom(r.Context()); p != nil {
-		who = p.Name
-	}
-	slog.Warn("PBS target credentials revealed to an administrator", "target", target.Name, "target_id", target.ID, "token_id", tokenID, "principal", who)
+	slog.Warn("PBS target credentials revealed to an administrator", "target", target.Name, "target_id", target.ID, "token_id", tokenID, "principal", principalName(r))
+	s.audit(r, "target.credentials", "target", target.ID.String(), target.Name, target.Labels, map[string]any{"token_id": tokenID})
 	s.writeJSON(w, http.StatusOK, TargetCredentials{
 		Endpoint: target.Endpoint, Datastore: target.Datastore, Namespace: target.Namespace,
 		Fingerprint: target.Fingerprint, TLSVerify: target.TLSVerify,

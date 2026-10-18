@@ -49,6 +49,7 @@ nav:
       - Docker hosts: agents/docker.md
       - Microsoft 365: agents/m365.md
   - Running it:
+      - Access control: operations/access.md
       - Encryption: operations/encryption.md
       - Scheduling: operations/scheduling.md
       - Agent status and updates: operations/agent-status.md

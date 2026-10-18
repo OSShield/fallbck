@@ -37,7 +37,7 @@
         {{if .Tokens}}
           {{range .Tokens}}
           <tr>
-            <td><strong>{{.Name}}</strong></td>
+            <td><strong>{{.Name}}</strong><br>{{template "label-chips" .Labels}}</td>
             <td>
               <span class="badge badge-neutral">
                 {{.UsesCount}} / {{if eq .MaxUses 0}}Unlimited{{else}}{{.MaxUses}}{{end}} uses
@@ -100,6 +100,8 @@
             <input type="number" name="days" class="form-control" value="7" min="1">
           </div>
         </div>
+        {{template "labels-field" "labels"}}
+        <span class="form-text" style="margin-top: -8px; display: block;">Every agent enrolled with this token gets these labels.</span>
 
         <div id="token-result-container" style="display:none; background-color: var(--bg-subtle); padding: 14px; border-radius: var(--radius-sm);">
           <label style="font-size: 12px; font-weight: 600; color: var(--text-muted);">Generated Raw Token (Copy now - will not be displayed again):</label>
@@ -128,6 +130,7 @@ async function submitTokenCreateForm(e) {
   };
 
   try {
+    payload.labels = formLabels(form);
     const resp = await apiFetch('/api/v1/tokens', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

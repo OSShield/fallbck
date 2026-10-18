@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -70,6 +71,8 @@ func TestUIRenderRoutes(t *testing.T) {
 		{"/runs", http.StatusOK, "Backup Executions"},
 		{"/tokens", http.StatusOK, "Enrollment Tokens"},
 		{"/apikeys", http.StatusOK, "API Keys"},
+		{"/access", http.StatusOK, "Add binding"},
+		{"/audit", http.StatusOK, "Audit Log"},
 		{"/install-agent.sh", http.StatusOK, "#!/bin/sh"},
 		{"/install-agent.sh", http.StatusOK, "systemctl restart"},
 		{"/install-agent.sh", http.StatusOK, "rc-service"},
@@ -103,11 +106,25 @@ func TestUIRenderRoutes(t *testing.T) {
 	}
 }
 
+// aliceIsAdmin binds the admin role to alice@example.com and nothing to anyone else
+type aliceIsAdmin struct{}
+
+func (aliceIsAdmin) BindingsFor(_ context.Context, email string, _ []string) ([]*db.RoleBinding, error) {
+	if email != "alice@example.com" {
+		return nil, nil
+	}
+	return []*db.RoleBinding{{Kind: db.BindingUser, Subject: email, Role: auth.RoleAdmin, Permissions: auth.AllPermissions()}}, nil
+}
+
+func (aliceIsAdmin) GetRole(context.Context, string) (*db.Role, error) { return nil, db.ErrNotFound }
+
 func TestUIRequiresAdminWhenSecured(t *testing.T) {
 	cfg := config.DefaultServerConfig()
 	cfg.PublicURL = "https://backup.example.com"
 	tm := auth.NewTokenManager("test-secret-key-must-be-very-long-123456")
-	ui := NewUIHandler(nil, cfg, Deps{TokenManager: tm, Admin: auth.NewAdminAuth(tm, nil, false)})
+	admin := auth.NewAdminAuth(tm, nil, false)
+	admin.RBAC = auth.NewResolver(aliceIsAdmin{}, time.Minute)
+	ui := NewUIHandler(nil, cfg, Deps{TokenManager: tm, Admin: admin})
 
 	r := chi.NewRouter()
 	ui.RegisterRoutes(r)
@@ -139,6 +156,21 @@ func TestUIRequiresAdminWhenSecured(t *testing.T) {
 	r.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "alice@example.com") {
 		t.Errorf("dashboard with session: %d", rr.Code)
+	}
+
+	// A valid session without any role binding is refused
+	bob, _, err := tm.CreateSession(&auth.Identity{Subject: "b", Email: "bob@example.com"}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/dashboard", "/jobs", "/access"} {
+		req = httptest.NewRequest(http.MethodGet, path, nil)
+		req.AddCookie(&http.Cookie{Name: auth.SessionCookieName, Value: bob})
+		rr = httptest.NewRecorder()
+		r.ServeHTTP(rr, req)
+		if rr.Code != http.StatusForbidden {
+			t.Errorf("%s without a binding: %d, want 403", path, rr.Code)
+		}
 	}
 
 	// Logout clears the cookie

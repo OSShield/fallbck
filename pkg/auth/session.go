@@ -23,6 +23,9 @@ type SessionClaims struct {
 	Email  string   `json:"email,omitempty"`
 	Name   string   `json:"name,omitempty"`
 	Groups []string `json:"groups,omitempty"`
+	// EmailUnverified: the IdP said email_verified=false, so user bindings on the
+	// email never match
+	EmailUnverified bool `json:"email_unverified,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -35,6 +38,7 @@ func (tm *TokenManager) CreateSession(id *Identity, ttl time.Duration) (string, 
 		Email:            id.Email,
 		Name:             id.Name,
 		Groups:           id.Groups,
+		EmailUnverified:  id.EmailUnverified,
 		RegisteredClaims: registered(id.Subject, AudienceSession, ttl),
 	}
 	signed, err := tm.sign(claims)

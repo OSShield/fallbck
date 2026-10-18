@@ -1,0 +1,237 @@
+{{define "content"}}
+<div class="page-header-actions">
+  <p style="color: var(--text-muted); font-size: 14px;">A <strong>role</strong> is a set of permissions. A <strong>binding</strong> grants a role to a user (their verified OIDC email) or a group (a value of the groups claim) on the objects whose labels contain the selector; an empty selector means everything. Access is the union of all bindings, and no binding means no access. Changes apply within 30 seconds.</p>
+</div>
+
+<div class="card" style="margin-bottom: 16px;">
+  <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+    <h3 class="card-title">Bindings</h3>
+    <button class="btn btn-primary btn-sm" onclick="openModal('modal-binding')">+ Add binding</button>
+  </div>
+  <table class="data-table">
+    <thead><tr><th>Subject</th><th>Role</th><th>Selector</th><th>Created</th><th></th></tr></thead>
+    <tbody id="bindings-body"><tr><td colspan="5" style="color: var(--text-dim);">Loading…</td></tr></tbody>
+  </table>
+</div>
+
+<div class="card">
+  <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+    <h3 class="card-title">Roles</h3>
+    <button class="btn btn-primary btn-sm" onclick="editRole(null)">+ New role</button>
+  </div>
+  <table class="data-table">
+    <thead><tr><th>Name</th><th>Permissions</th><th>Used by</th><th></th></tr></thead>
+    <tbody id="roles-body"><tr><td colspan="4" style="color: var(--text-dim);">Loading…</td></tr></tbody>
+  </table>
+</div>
+
+<div id="modal-binding" class="modal-backdrop">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h3>Add binding</h3>
+      <button class="close-btn" onclick="closeModal('modal-binding')">&times;</button>
+    </div>
+    <form id="binding-form" onsubmit="submitBinding(event)">
+      <div class="modal-body">
+        <div style="display: grid; grid-template-columns: 1fr 2fr; gap: 16px;">
+          <div class="form-group">
+            <label>Kind</label>
+            <select name="kind" class="form-control">
+              <option value="user">User (email)</option>
+              <option value="group">Group (groups claim)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Subject</label>
+            <input type="text" name="subject" class="form-control" placeholder="alice@example.com or backup-operators" required>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Role</label>
+          <select name="role" class="form-control" id="binding-role"></select>
+        </div>
+        <div class="form-group">
+          <label>Selector (one key=value per line; empty = everything)</label>
+          <textarea name="selector" class="form-control" rows="2" placeholder="team=web" style="font-family: var(--font-mono); font-size: 12px;"></textarea>
+          <span class="form-text">The subject reaches objects carrying all of these labels. Roles with rbac:manage or apikeys:manage can only be granted on everything.</span>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('modal-binding')">Cancel</button>
+        <button type="submit" class="btn btn-primary">Add binding</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="modal-role" class="modal-backdrop">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h3 id="role-modal-title">Role</h3>
+      <button class="close-btn" onclick="closeModal('modal-role')">&times;</button>
+    </div>
+    <form id="role-form" onsubmit="submitRole(event)">
+      <div class="modal-body">
+        <div style="display: grid; grid-template-columns: 1fr 2fr; gap: 16px;">
+          <div class="form-group">
+            <label>Name</label>
+            <input type="text" name="name" class="form-control" pattern="[a-z0-9][a-z0-9._\-]{0,62}" placeholder="backup-operator" required>
+          </div>
+          <div class="form-group">
+            <label>Description</label>
+            <input type="text" name="description" class="form-control">
+          </div>
+        </div>
+        <div id="role-perms" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px;"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('modal-role')">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save role</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+let accessRoles = [];
+let accessCatalog = { groups: [], global_only: [] };
+
+async function accessJSON(url, opts) {
+  const resp = await apiFetch(url, opts);
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(data.error || `Request failed (${resp.status})`);
+  return data;
+}
+
+async function loadAccess() {
+  try {
+    const [catalog, roles, bindings] = await Promise.all([
+      accessJSON('/api/v1/rbac/permissions'), accessJSON('/api/v1/rbac/roles'), accessJSON('/api/v1/rbac/bindings')
+    ]);
+    accessCatalog = catalog;
+    accessRoles = roles;
+    renderRoles();
+    renderBindings(bindings);
+    const sel = document.getElementById('binding-role');
+    sel.innerHTML = roles.map(r => `<option value="${rdEsc(r.name)}">${rdEsc(r.name)}</option>`).join('');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+function renderBindings(bindings) {
+  const body = document.getElementById('bindings-body');
+  if (!bindings.length) {
+    body.innerHTML = '<tr><td colspan="5" style="color: var(--text-dim);">No bindings.</td></tr>';
+    return;
+  }
+  body.innerHTML = bindings.map(b => `<tr>
+    <td><span class="badge badge-neutral">${rdEsc(b.kind)}</span> <strong>${rdEsc(b.subject)}</strong></td>
+    <td><span class="badge badge-info">${rdEsc(b.role)}</span></td>
+    <td>${Object.keys(b.selector || {}).length ? labelChips(b.selector) : '<span style="color: var(--text-muted);">everything</span>'}</td>
+    <td style="font-size: 12px; color: var(--text-muted);">${rdEsc(new Date(b.created_at).toLocaleString())}<br>${rdEsc(b.created_by)}</td>
+    <td style="text-align: right;"><button class="btn btn-danger btn-sm" data-id="${rdEsc(b.id)}" onclick="deleteBinding(this.dataset.id)">Remove</button></td>
+  </tr>`).join('');
+}
+
+function renderRoles() {
+  const body = document.getElementById('roles-body');
+  body.innerHTML = accessRoles.map(r => `<tr>
+    <td><strong>${rdEsc(r.name)}</strong> ${r.builtin ? '<span class="badge badge-neutral">built-in</span>' : ''}<br><span style="font-size: 12px; color: var(--text-muted);">${rdEsc(r.description)}</span></td>
+    <td style="font-size: 12px; font-family: var(--font-mono); max-width: 420px;">${r.permissions.map(rdEsc).join(' ')}</td>
+    <td>${r.bindings}</td>
+    <td style="text-align: right; white-space: nowrap;">
+      <button class="btn btn-secondary btn-sm" data-name="${rdEsc(r.name)}" onclick="editRole(this.dataset.name, true)">Clone</button>
+      ${r.builtin ? '' : `<button class="btn btn-secondary btn-sm" data-name="${rdEsc(r.name)}" onclick="editRole(this.dataset.name, false)">Edit</button>
+      <button class="btn btn-danger btn-sm" data-name="${rdEsc(r.name)}" onclick="deleteRole(this.dataset.name)" ${r.bindings ? 'disabled title="Still bound"' : ''}>Delete</button>`}
+    </td>
+  </tr>`).join('');
+}
+
+// editRole opens the editor: name null = new, clone = copy under a new name
+function editRole(name, clone) {
+  const form = document.getElementById('role-form');
+  const role = accessRoles.find(r => r.name === name) || { name: '', description: '', permissions: [] };
+  form.reset();
+  form.dataset.editing = (!clone && name) ? name : '';
+  form.elements['name'].value = clone ? role.name + '-copy' : role.name;
+  form.elements['name'].readOnly = !clone && !!name;
+  form.elements['description'].value = role.description || '';
+  document.getElementById('role-modal-title').innerText = clone ? `Clone ${role.name}` : (name ? `Edit ${role.name}` : 'New role');
+  const box = document.getElementById('role-perms');
+  box.innerHTML = accessCatalog.groups.map(g => `<fieldset style="border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 10px;">
+    <legend style="font-size: 12px; font-weight: 600; padding: 0 4px;">${rdEsc(g.resource)}</legend>
+    ${g.permissions.map(p => `<label style="display: flex; gap: 6px; align-items: center; font-size: 13px; font-family: var(--font-mono);">
+      <input type="checkbox" name="perm" value="${rdEsc(p)}" ${role.permissions.includes(p) ? 'checked' : ''}>
+      ${rdEsc(p.split(':')[1])}${accessCatalog.global_only.includes(p) ? ' <span title="Only grantable on everything" style="color: var(--text-muted);">(global)</span>' : ''}
+    </label>`).join('')}
+  </fieldset>`).join('');
+  openModal('modal-role');
+}
+
+async function submitRole(e) {
+  e.preventDefault();
+  const form = e.target;
+  const editing = form.dataset.editing;
+  const payload = {
+    name: form.elements['name'].value.trim(),
+    description: form.elements['description'].value.trim(),
+    permissions: [...form.querySelectorAll('input[name="perm"]:checked')].map(c => c.value)
+  };
+  try {
+    await accessJSON(editing ? `/api/v1/rbac/roles/${encodeURIComponent(editing)}` : '/api/v1/rbac/roles', {
+      method: editing ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+    });
+    showToast(`Role ${payload.name} saved`, 'success');
+    closeModal('modal-role');
+    loadAccess();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function deleteRole(name) {
+  if (!confirm(`Delete role ${name}?`)) return;
+  try {
+    await accessJSON(`/api/v1/rbac/roles/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    showToast('Role deleted', 'success');
+    loadAccess();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function submitBinding(e) {
+  e.preventDefault();
+  const form = e.target;
+  try {
+    const payload = {
+      kind: form.elements['kind'].value,
+      subject: form.elements['subject'].value.trim(),
+      role: form.elements['role'].value,
+      selector: parseLabels(form.elements['selector'].value)
+    };
+    await accessJSON('/api/v1/rbac/bindings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    showToast('Binding added', 'success');
+    form.reset();
+    closeModal('modal-binding');
+    loadAccess();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function deleteBinding(id) {
+  if (!confirm('Remove this binding? The subject loses this access within 30 seconds.')) return;
+  try {
+    await accessJSON(`/api/v1/rbac/bindings/${id}`, { method: 'DELETE' });
+    showToast('Binding removed', 'success');
+    loadAccess();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+document.addEventListener('DOMContentLoaded', loadAccess);
+</script>
+{{end}}

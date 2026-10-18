@@ -16,23 +16,23 @@
     {{if $a.DBEngines}}<span class="badge badge-success" title="Database engines this agent can back up">DB: {{range $i, $e := $a.DBEngines}}{{if $i}}, {{end}}{{$e}}{{end}}</span>{{end}}
   </div>
   <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-    <button class="btn btn-secondary btn-sm" id="agent-refresh-btn" onclick="refreshAgentInventory('{{$a.ID}}')" title="Ask the agent for its full inventory now (it must be online)">Refresh inventory</button>
-    <button class="btn btn-secondary btn-sm" id="agent-logs-btn" onclick="loadAgentLogs('{{$a.ID}}')" title="Fetch the agent's recent log lines (it must be online)">View logs</button>
+    <button class="btn btn-secondary btn-sm" id="agent-refresh-btn" data-perm="agents:write" onclick="refreshAgentInventory('{{$a.ID}}')" title="Ask the agent for its full inventory now (it must be online)">Refresh inventory</button>
+    <button class="btn btn-secondary btn-sm" id="agent-logs-btn" data-perm="agents:write" onclick="loadAgentLogs('{{$a.ID}}')" title="Fetch the agent's recent log lines (it must be online)">View logs</button>
     {{if $a.DebugLogging}}
-      <button class="btn btn-secondary btn-sm" title="Debug logging is on. Click to return to the configured level." onclick="toggleAgentDebug('{{$a.ID}}', false)">Debug: on</button>
+      <button class="btn btn-secondary btn-sm" data-perm="agents:write" title="Debug logging is on. Click to return to the configured level." onclick="toggleAgentDebug('{{$a.ID}}', false)">Debug: on</button>
     {{else}}
-      <button class="btn btn-secondary btn-sm" title="Raise this agent's log level to debug — applied on its next heartbeat (~30s)" onclick="toggleAgentDebug('{{$a.ID}}', true)">Debug: off</button>
+      <button class="btn btn-secondary btn-sm" data-perm="agents:write" title="Raise this agent's log level to debug — applied on its next heartbeat (~30s)" onclick="toggleAgentDebug('{{$a.ID}}', true)">Debug: off</button>
     {{end}}
     {{if and $a.SelfUpdate .UpdatesOn}}
       {{if $a.AutoUpdate}}
-        <button class="btn btn-secondary btn-sm" title="The agent follows the server's version on its own. Click to stop." onclick="toggleAgentAutoUpdate('{{$a.ID}}', false)">Auto-update: on</button>
+        <button class="btn btn-secondary btn-sm" data-perm="agents:write" title="The agent follows the server's version on its own. Click to stop." onclick="toggleAgentAutoUpdate('{{$a.ID}}', false)">Auto-update: on</button>
       {{else}}
-        <button class="btn btn-secondary btn-sm" title="Let the agent update itself whenever the server is newer (never while a backup runs)" onclick="toggleAgentAutoUpdate('{{$a.ID}}', true)">Auto-update: off</button>
+        <button class="btn btn-secondary btn-sm" data-perm="agents:write" title="Let the agent update itself whenever the server is newer (never while a backup runs)" onclick="toggleAgentAutoUpdate('{{$a.ID}}', true)">Auto-update: off</button>
       {{end}}
-      {{if and .Behind (not $a.UpdateRequestedAt)}}<button class="btn btn-primary btn-sm" title="Update this agent to v{{.Version}} on its next heartbeat" onclick="requestAgentUpdate('{{$a.ID}}')">Update now</button>{{end}}
+      {{if and .Behind (not $a.UpdateRequestedAt)}}<button class="btn btn-primary btn-sm" data-perm="agents:write" title="Update this agent to v{{.Version}} on its next heartbeat" onclick="requestAgentUpdate('{{$a.ID}}')">Update now</button>{{end}}
     {{end}}
-    <a class="btn btn-primary btn-sm" href="/onboarding?agent={{$a.ID}}">Set up backups</a>
-    <button class="btn btn-secondary btn-sm" style="color: var(--danger-text);" onclick="deleteResource('agents', '{{$a.ID}}')">Delete</button>
+    <a class="btn btn-primary btn-sm" data-perm="agents:enroll" href="/onboarding?agent={{$a.ID}}">Set up backups</a>
+    <button class="btn btn-secondary btn-sm" style="color: var(--danger-text);" data-perm="agents:delete" onclick="deleteResource('agents', '{{$a.ID}}')">Delete</button>
   </div>
 </div>
 
@@ -74,6 +74,8 @@
       <div><div class="kv-label">IP address</div><div style="font-family: var(--font-mono); font-size: 13px;">{{if $a.IPAddress}}{{$a.IPAddress}}{{else}}-{{end}}</div></div>
       <div><div class="kv-label">Task queue</div><div style="font-family: var(--font-mono); font-size: 12px; word-break: break-all;">{{$a.TaskQueue}}</div></div>
       <div><div class="kv-label">Enrolled</div><div>{{formatTime $a.CreatedAt}}</div></div>
+      <div><div class="kv-label">Labels</div><div>{{template "label-chips" $a.Labels}}{{if not $a.Labels}}<span style="color: var(--text-muted);">none</span>{{end}}
+        <button class="btn btn-secondary btn-sm" data-perm="agents:write" style="margin-left: 4px;" onclick="openModal('modal-agent-labels')">Edit</button></div></div>
       {{if .Summary}}
       <div><div class="kv-label">Agent uptime</div><div>{{if .Summary.UptimeSeconds}}{{uptime .Summary.UptimeSeconds}}{{else}}-{{end}}</div></div>
       <div><div class="kv-label">Summary reported</div><div title="{{formatTime $a.InventoryAt}}">{{since $a.InventoryAt}}</div></div>
@@ -255,11 +257,11 @@
             {{else}}<span style="color: var(--text-dim); font-size: 13px;">Never</span>{{end}}
           </td>
           <td style="text-align: right;">
-            <button class="btn btn-primary btn-sm" onclick="triggerJobRun('{{.ID}}')">Run Now</button>
+            <button class="btn btn-primary btn-sm" data-perm="jobs:run" onclick="triggerJobRun('{{.ID}}')">Run Now</button>
           </td>
         </tr>
         {{else}}
-        <tr><td colspan="6"><div class="empty-state"><p>No jobs use this agent yet.</p><a class="btn btn-primary btn-sm" href="/onboarding?agent={{$a.ID}}">Set up backups</a></div></td></tr>
+        <tr><td colspan="6"><div class="empty-state"><p>No jobs use this agent yet.</p><a class="btn btn-primary btn-sm" data-perm="agents:enroll" href="/onboarding?agent={{$a.ID}}">Set up backups</a></div></td></tr>
         {{end}}
       </tbody>
     </table>
@@ -301,4 +303,29 @@
 </div>
 
 <style>.kv-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .03em; margin-bottom: 2px; }</style>
+
+<div id="modal-agent-labels" class="modal-backdrop">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h3>Agent labels</h3>
+      <button class="close-btn" onclick="closeModal('modal-agent-labels')">&times;</button>
+    </div>
+    <form onsubmit="submitAgentLabels(event, '{{.Agent.ID}}')">
+      <div class="modal-body">
+        {{template "labels-field" "labels"}}
+        <span class="form-text">Changing labels moves the agent between access scopes: you need agents:write on both the old and the new labels. Its jobs keep their own labels.</span>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('modal-agent-labels')">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save labels</button>
+      </div>
+    </form>
+  </div>
+</div>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const f = document.querySelector('#modal-agent-labels form');
+  if (f) setFormLabels(f, {{.Agent.Labels}});
+});
+</script>
 {{end}}

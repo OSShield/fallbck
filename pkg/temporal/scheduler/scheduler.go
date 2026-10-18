@@ -160,7 +160,7 @@ func (s *Scheduler) ReconcileAll(ctx context.Context) error {
 	known := map[uuid.UUID]bool{}
 	var firstErr error
 	if s.DB != nil {
-		jobs, err := s.DB.ListJobs(ctx)
+		jobs, err := s.DB.ListJobs(ctx, db.Unscoped)
 		if err != nil {
 			return fmt.Errorf("listing jobs: %w", err)
 		}

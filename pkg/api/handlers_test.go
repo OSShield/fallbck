@@ -16,10 +16,21 @@ import (
 
 func passthrough(next http.Handler) http.Handler { return next }
 
+// asPrincipal stands in for the admin middleware with a fixed principal
+func asPrincipal(p *auth.Principal) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			next.ServeHTTP(w, r.WithContext(auth.WithPrincipal(r.Context(), p)))
+		})
+	}
+}
+
+var globalAdmin = &auth.Principal{Kind: auth.PrincipalInsecure, Subject: "test", Bindings: auth.AdminBindings()}
+
 func newTestRouter() *chi.Mux {
 	api := NewServerAPI(nil, nil, config.DefaultServerConfig(), auth.NewTokenManager("test-secret-key-must-be-very-long-123456"), nil)
 	r := chi.NewRouter()
-	api.RegisterRoutes(r, passthrough, passthrough)
+	api.RegisterRoutes(r, asPrincipal(globalAdmin), passthrough)
 	return r
 }
 

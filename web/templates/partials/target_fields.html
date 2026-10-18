@@ -45,6 +45,10 @@
   <label for="tls_verify" style="font-size: 13px; font-weight: 500;">Verify TLS Certificates</label>
 </div>
 
+<div style="margin-top: 16px;">
+{{template "labels-field" "labels"}}
+</div>
+
 <div class="form-group" style="margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border);">
   <label>Client-side encryption</label>
   <select name="encryption_mode" class="form-control" onchange="updateTargetEncryption(this.form)">

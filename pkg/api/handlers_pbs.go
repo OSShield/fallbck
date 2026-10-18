@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/osshield/fallbck/pkg/auth"
+	"github.com/osshield/fallbck/pkg/db"
 	"github.com/osshield/fallbck/pkg/pbs"
 )
 
@@ -33,7 +34,7 @@ func (s *ServerAPI) HandlePBSCredentials(w http.ResponseWriter, r *http.Request)
 		s.writeError(w, http.StatusForbidden, "backup ticket was not issued to this agent")
 		return
 	}
-	job, err := s.DB.GetJobByID(r.Context(), claims.JobID)
+	job, err := s.DB.GetJobByID(r.Context(), claims.JobID, db.Unscoped)
 	if err != nil {
 		s.writeError(w, http.StatusNotFound, "job not found")
 		return
@@ -42,7 +43,7 @@ func (s *ServerAPI) HandlePBSCredentials(w http.ResponseWriter, r *http.Request)
 		s.writeError(w, http.StatusForbidden, "job is not configured for direct PBS access")
 		return
 	}
-	target, err := s.DB.GetTargetByID(r.Context(), claims.TargetID)
+	target, err := s.DB.GetTargetByID(r.Context(), claims.TargetID, db.Unscoped)
 	if err != nil {
 		s.writeError(w, http.StatusNotFound, "backup target not found")
 		return

@@ -6,7 +6,7 @@
 <div class="card">
   <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
     <h3 class="card-title">Microsoft 365 Tenants ({{len .Tenants}})</h3>
-    <button class="btn btn-primary btn-sm" onclick="newTenant()">Add Tenant</button>
+    <button class="btn btn-primary btn-sm" data-perm="tenants:write" onclick="newTenant()">Add Tenant</button>
   </div>
   <div class="table-container">
     <table>
@@ -25,16 +25,16 @@
         {{if .Tenants}}
           {{range .Tenants}}
           <tr>
-            <td><strong>{{.Name}}</strong></td>
+            <td><strong>{{.Name}}</strong><br>{{template "label-chips" .Labels}}</td>
             <td><code>{{.TenantID}}</code></td>
             <td style="font-family: var(--font-mono); font-size: 12px;">{{.ClientID}}</td>
             <td><span class="badge badge-info">{{.AuthMethod}}</span>{{if not (or .HasSecret .HasCertificate)}} <span class="badge badge-danger">missing</span>{{end}}</td>
             <td>{{if .SecretExpires}}<span class="badge {{if .Expired}}badge-danger{{else if .ExpiringSoon}}badge-warning{{else}}badge-success{{end}}">{{.SecretExpires.Format "2006-01-02"}}</span>{{else}}<span style="color: var(--text-dim);">unknown</span>{{end}}</td>
             <td>{{.Jobs}}</td>
             <td style="text-align: right; display: flex; justify-content: flex-end; gap: 8px;">
-              <button class="btn btn-secondary btn-sm" onclick="testTenant('{{.ID}}', this)">Test</button>
-              <button class="btn btn-secondary btn-sm" onclick="editTenant('{{.ID}}')">Edit</button>
-              <button class="btn btn-secondary btn-sm" style="color: var(--danger-text);" {{if .Jobs}}disabled title="Used by {{.Jobs}} job(s)"{{end}} onclick="deleteResource('m365/tenants', '{{.ID}}')">Delete</button>
+              <button class="btn btn-secondary btn-sm" data-perm="tenants:write" onclick="testTenant('{{.ID}}', this)">Test</button>
+              <button class="btn btn-secondary btn-sm" data-perm="tenants:write" onclick="editTenant('{{.ID}}')">Edit</button>
+              <button class="btn btn-secondary btn-sm" data-perm="tenants:delete" style="color: var(--danger-text);" {{if .Jobs}}disabled title="Used by {{.Jobs}} job(s)"{{end}} onclick="deleteResource('m365/tenants', '{{.ID}}')">Delete</button>
             </td>
           </tr>
           {{end}}

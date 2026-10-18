@@ -45,6 +45,9 @@ type Config struct {
 	TLS *TLS
 	// Namespace pre-selected in the UI
 	Namespace string
+	// ReadOnly disables every write action in the UI (terminate, cancel, signal,
+	// reset, schedule edits)
+	ReadOnly bool
 }
 
 // Server is a running UI server
@@ -91,6 +94,7 @@ func Start(ctx context.Context, cfg Config, logger *slog.Logger) (_ *Server, err
 		DisableNewsFetch:    true,
 		HideLogs:            true,
 		Auth:                uiconfig.Auth{Enabled: false},
+		DisableWriteActions: cfg.ReadOnly,
 	}
 	if cfg.TLS != nil {
 		uiCfg.TLS = uiconfig.TLS{

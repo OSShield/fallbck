@@ -9,6 +9,7 @@
     <thead>
       <tr>
         <th>Name</th>
+        <th>Role</th>
         <th>Created by</th>
         <th>Created</th>
         <th>Last used</th>
@@ -21,6 +22,7 @@
       {{range .Keys}}
       <tr>
         <td><strong>{{.Name}}</strong><br><span style="font-size: 11px; color: var(--text-dim);">{{.ID}}</span></td>
+        <td><span class="badge badge-info">{{.Role}}</span><br>{{if .Selector}}{{template "label-chips" .Selector}}{{else}}<span style="font-size: 11px; color: var(--text-muted);">on everything</span>{{end}}</td>
         <td>{{.CreatedBy}}</td>
         <td>{{formatTime .CreatedAt}}</td>
         <td>{{formatTime .LastUsedAt}}</td>
@@ -36,7 +38,7 @@
         </td>
       </tr>
       {{else}}
-      <tr><td colspan="7" style="text-align: center; color: var(--text-dim); padding: 32px;">No API keys yet.</td></tr>
+      <tr><td colspan="8" style="text-align: center; color: var(--text-dim); padding: 32px;">No API keys yet.</td></tr>
       {{end}}
     </tbody>
   </table>
@@ -58,6 +60,15 @@
         <label for="apikey-days">Expires in (days, 0 = never)</label>
         <input type="number" id="apikey-days" name="days" value="0" min="0">
       </div>
+      <div class="form-group">
+        <label for="apikey-role">Role</label>
+        <select id="apikey-role" name="role" class="form-control"></select>
+      </div>
+      <div class="form-group">
+        <label>Selector (one key=value per line; empty = everything)</label>
+        <textarea name="selector" class="form-control" rows="2" placeholder="team=web" style="font-family: var(--font-mono); font-size: 12px;"></textarea>
+        <span class="form-text">The key can do what the role allows on objects carrying all of these labels. It can never reach further than you: you must hold every permission of the role on a selector this one narrows.</span>
+      </div>
       <div id="apikey-result-container" style="display: none;" class="alert alert-success">
         <p><strong>Copy this key now — it is shown only once.</strong></p>
         <code id="generated-apikey-text" style="word-break: break-all;"></code>
@@ -75,17 +86,21 @@ async function submitAPIKeyForm(e) {
   e.preventDefault();
   const formData = new FormData(e.target);
   const days = parseInt(formData.get('days') || '0');
-  const payload = { name: formData.get('name') };
+  const payload = { name: formData.get('name'), role: formData.get('role') || 'admin' };
   if (days > 0) {
     payload.expires_at = new Date(Date.now() + days * 24 * 3600 * 1000);
   }
   try {
+    payload.selector = parseLabels(formData.get('selector'));
     const resp = await apiFetch('/api/v1/apikeys', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
-    if (!resp.ok) throw new Error('Failed to create API key');
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to create API key');
+    }
     const data = await resp.json();
     document.getElementById('apikey-result-container').style.display = 'block';
     document.getElementById('generated-apikey-text').innerText = data.raw_key;
@@ -95,5 +110,19 @@ async function submitAPIKeyForm(e) {
     showToast(err.message, 'error');
   }
 }
+document.addEventListener('DOMContentLoaded', async () => {
+  try {
+    const resp = await apiFetch('/api/v1/apikeys/roles');
+    if (!resp.ok) return;
+    const sel = document.getElementById('apikey-role');
+    for (const r of await resp.json()) {
+      const o = document.createElement('option');
+      o.value = r.name;
+      o.textContent = r.name + (r.description ? ' — ' + r.description : '');
+      sel.appendChild(o);
+    }
+    sel.value = 'viewer';
+  } catch (_) { /* the select stays empty: the server defaults to admin */ }
+});
 </script>
 {{end}}

@@ -58,6 +58,10 @@ type TemporalUIConfig struct {
 	Enabled bool `yaml:"enabled" json:"enabled"`
 	// Port is the loopback port the UI server listens on
 	Port int `yaml:"port" json:"port"`
+	// ReadOnly hides the UI's write actions (terminate, cancel, signal, reset,
+	// schedule edits). The UI is not label-scoped, so anyone with temporal:ui could
+	// otherwise stop any team's backups. Default true.
+	ReadOnly bool `yaml:"read_only" json:"read_only"`
 }
 
 // TemporalServerConfig selects and configures the Temporal cluster the server uses
@@ -271,8 +275,9 @@ func DefaultServerConfig() *ServerConfig {
 				HostPort: "localhost:7233",
 			},
 			UI: TemporalUIConfig{
-				Enabled: true,
-				Port:    8233,
+				Enabled:  true,
+				Port:     8233,
+				ReadOnly: true,
 			},
 		},
 	}
@@ -370,6 +375,7 @@ func LoadServerConfig(filePath string) (*ServerConfig, error) {
 	envString("FALLBCK_TEMPORAL_CLUSTER_NAME", &cfg.Temporal.Embedded.ClusterName)
 	envBool("FALLBCK_TEMPORAL_UI_ENABLED", &cfg.Temporal.UI.Enabled)
 	envInt("FALLBCK_TEMPORAL_UI_PORT", &cfg.Temporal.UI.Port)
+	envBool("FALLBCK_TEMPORAL_UI_READ_ONLY", &cfg.Temporal.UI.ReadOnly)
 	// External cluster (temporal.mode: external)
 	envString("FALLBCK_TEMPORAL_HOST", &cfg.Temporal.External.HostPort)
 	envBool("FALLBCK_TEMPORAL_TLS", &cfg.Temporal.External.EnableTLS)

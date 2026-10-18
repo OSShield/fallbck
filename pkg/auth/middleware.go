@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -26,12 +27,14 @@ const (
 	PrincipalInsecure PrincipalKind = "insecure"
 )
 
-// Principal is the authenticated admin identity attached to the request context
+// Principal is the authenticated admin identity attached to the request context.
+// Bindings are what it may do (see Scope); none means no access.
 type Principal struct {
-	Kind    PrincipalKind
-	Subject string
-	Email   string
-	Name    string
+	Kind     PrincipalKind
+	Subject  string
+	Email    string
+	Name     string
+	Bindings []Binding
 }
 
 // Display returns a human-readable identifier for audit logs and the UI
@@ -81,6 +84,8 @@ func WithAgent(ctx context.Context, c *AgentClaims) context.Context {
 type AdminAuth struct {
 	TM   *TokenManager
 	Keys APIKeyStore
+	// RBAC resolves a session's or key's bindings; nil grants nothing (fail closed)
+	RBAC *Resolver
 	// Insecure disables authentication entirely (development only)
 	Insecure bool
 	// LoginPath is where unauthenticated browser requests are redirected
@@ -95,7 +100,7 @@ func NewAdminAuth(tm *TokenManager, keys APIKeyStore, insecure bool) *AdminAuth 
 // Authenticate resolves the principal for a request without enforcing anything
 func (a *AdminAuth) Authenticate(r *http.Request) (*Principal, error) {
 	if a.Insecure {
-		return &Principal{Kind: PrincipalInsecure, Subject: "dev", Name: "Development admin"}, nil
+		return &Principal{Kind: PrincipalInsecure, Subject: "dev", Name: "Development admin", Bindings: AdminBindings()}, nil
 	}
 
 	if header := r.Header.Get("Authorization"); header != "" {
@@ -111,7 +116,13 @@ func (a *AdminAuth) Authenticate(r *http.Request) (*Principal, error) {
 			return nil, err
 		}
 		_ = a.Keys.TouchAPIKey(r.Context(), key.ID)
-		return &Principal{Kind: PrincipalAPIKey, Subject: key.ID.String(), Name: key.Name}, nil
+		p := &Principal{Kind: PrincipalAPIKey, Subject: key.ID.String(), Name: key.Name}
+		if a.RBAC != nil {
+			if p.Bindings, err = a.RBAC.APIKey(r.Context(), key); err != nil {
+				return nil, fmt.Errorf("failed to resolve API key role: %w", err)
+			}
+		}
+		return p, nil
 	}
 
 	cookie, err := r.Cookie(SessionCookieName)
@@ -122,7 +133,13 @@ func (a *AdminAuth) Authenticate(r *http.Request) (*Principal, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Principal{Kind: PrincipalSession, Subject: claims.Subject, Email: claims.Email, Name: claims.Name}, nil
+	p := &Principal{Kind: PrincipalSession, Subject: claims.Subject, Email: claims.Email, Name: claims.Name}
+	if a.RBAC != nil {
+		if p.Bindings, err = a.RBAC.Session(r.Context(), claims.Email, claims.EmailUnverified, claims.Groups); err != nil {
+			return nil, fmt.Errorf("failed to resolve role bindings: %w", err)
+		}
+	}
+	return p, nil
 }
 
 // RequireAdmin enforces admin authentication and CSRF protection for cookie sessions.

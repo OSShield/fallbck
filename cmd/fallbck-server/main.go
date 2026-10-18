@@ -278,6 +278,7 @@ func main() {
 				TemporalAddr: frontendAddr,
 				TLS:          uiTLS,
 				Namespace:    cfg.Temporal.Namespace,
+				ReadOnly:     cfg.Temporal.UI.ReadOnly,
 			}, logger)
 			if err != nil {
 				slog.Error("Failed to start embedded Temporal Web UI", "error", err)
@@ -293,10 +294,18 @@ func main() {
 		agentVerifier = nil
 	}
 	var keyStore auth.APIKeyStore
+	var rbac *auth.Resolver
 	if database != nil {
 		keyStore = database
+		// Built-in roles take their permissions from the code at every start
+		if err := database.SyncBuiltinRoles(ctx, auth.BuiltinRoles(), auth.BuiltinDescriptions); err != nil {
+			slog.Error("Failed to write the built-in roles", "error", err)
+			os.Exit(1)
+		}
+		rbac = auth.NewResolver(database, auth.DefaultResolverTTL)
 	}
 	adminAuth := auth.NewAdminAuth(tokenManager, keyStore, cfg.Auth.InsecureDisable)
+	adminAuth.RBAC = rbac
 	agentAuth := &auth.AgentAuth{Verifier: agentVerifier}
 	requireAgent := func(next http.Handler) http.Handler {
 		if agentVerifier == nil {
@@ -313,7 +322,7 @@ func main() {
 		oidcCtx, oidcCancel := context.WithTimeout(ctx, 60*time.Second)
 		for {
 			if len(cfg.Auth.OIDC.AllowedGroups) == 0 && len(cfg.Auth.OIDC.AllowedEmails) == 0 {
-				slog.Warn("OIDC has no allowed_groups or allowed_emails: every identity the provider issues is an admin here")
+				slog.Info("OIDC has no allowed_groups or allowed_emails: any identity the provider issues may sign in, and gets access only through a role binding")
 			}
 			oidcProvider, err = auth.NewOIDC(oidcCtx, cfg.Auth.OIDC, redirectURL)
 			if err == nil {
@@ -352,6 +361,7 @@ func main() {
 	r.Use(web.SecurityHeaders)
 
 	serverAPI := api.NewServerAPI(database, temporalClient, cfg, tokenManager, agentVerifier)
+	serverAPI.RBAC = rbac
 	agentUpdates := agentupdate.New(ServerVersion, cfg.DataDir)
 	serverAPI.Updates = agentUpdates
 	if temporalClient != nil {
@@ -464,7 +474,7 @@ func loadSealer(cfg *config.ServerConfig) (sealer *secrets.Sealer, created bool,
 // ensureDevTarget creates the --dev-create-remote target unless one with that name
 // already exists (an existing one is left as is)
 func ensureDevTarget(ctx context.Context, database *db.DB, t *db.BackupTarget) error {
-	targets, err := database.ListTargets(ctx)
+	targets, err := database.ListTargets(ctx, db.Unscoped)
 	if err != nil {
 		return err
 	}

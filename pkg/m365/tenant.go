@@ -57,6 +57,9 @@ type Tenant struct {
 	HasCertificate bool `json:"has_certificate"`
 	// Jobs is the number of jobs referencing the tenant (filled by the list API)
 	Jobs int `json:"jobs"`
+	// Labels place the tenant in access scopes (db.Labels; a plain map here because
+	// pkg/db imports this package)
+	Labels map[string]string `json:"labels"`
 }
 
 // ErrInvalidTenant wraps every validation failure

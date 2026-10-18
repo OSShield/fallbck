@@ -33,6 +33,8 @@ type ServerAPI struct {
 	TokenManager *auth.TokenManager
 	// Verifier is used to invalidate cached agent state on revocation (may be nil)
 	Verifier *auth.AgentVerifier
+	// RBAC caches role bindings; flushed after access changes (may be nil)
+	RBAC *auth.Resolver
 	// Scheduler keeps Temporal Schedules aligned with jobs (may be nil: tests, and a
 	// server started without Temporal). A concrete pointer on purpose: a nil
 	// *scheduler.Scheduler stored in an interface field would not compare equal to nil.
@@ -85,77 +87,95 @@ func (s *ServerAPI) RegisterRoutes(r chi.Router, admin, agent Middleware) {
 			r.Get("/agents/update/{os}/{arch}/archive", s.HandleAgentUpdateArchive)
 		})
 
-		// Administrative
+		// Administrative. Every route names the permission it needs on some selector;
+		// handlers then check the object's labels (see access.go).
 		r.Group(func(r chi.Router) {
 			r.Use(admin)
+			need := auth.RequirePerm
 
 			r.Get("/auth/me", s.HandleMe)
 
-			r.Get("/agents", s.HandleListAgents)
-			r.Get("/agents/{id}", s.HandleGetAgent)
-			r.Delete("/agents/{id}", s.HandleDeleteAgent)
-			r.Post("/agents/{id}/debug", s.HandleSetAgentDebug)
-			r.Post("/agents/{id}/auto-update", s.HandleSetAgentAutoUpdate)
-			r.Post("/agents/{id}/update", s.HandleRequestAgentUpdate)
-			r.Post("/agents/{id}/merge", s.HandleMergeAgent)
-			r.Post("/agents/{id}/logs", s.HandleAgentLogs)
-			r.Post("/agents/{id}/inventory", s.HandleAgentInventory)
+			r.With(need(auth.PermAgentsRead)).Get("/agents", s.HandleListAgents)
+			r.With(need(auth.PermAgentsRead)).Get("/agents/{id}", s.HandleGetAgent)
+			r.With(need(auth.PermAgentsDelete)).Delete("/agents/{id}", s.HandleDeleteAgent)
+			r.With(need(auth.PermAgentsWrite)).Put("/agents/{id}/labels", s.HandleSetAgentLabels)
+			r.With(need(auth.PermAgentsWrite)).Post("/agents/{id}/debug", s.HandleSetAgentDebug)
+			r.With(need(auth.PermAgentsWrite)).Post("/agents/{id}/auto-update", s.HandleSetAgentAutoUpdate)
+			r.With(need(auth.PermAgentsWrite)).Post("/agents/{id}/update", s.HandleRequestAgentUpdate)
+			r.With(need(auth.PermAgentsWrite)).Post("/agents/{id}/merge", s.HandleMergeAgent)
+			r.With(need(auth.PermAgentsWrite)).Post("/agents/{id}/logs", s.HandleAgentLogs)
+			r.With(need(auth.PermAgentsWrite)).Post("/agents/{id}/inventory", s.HandleAgentInventory)
 
 			// Enrollment tokens
-			r.Post("/tokens", s.HandleCreateToken)
-			r.Get("/tokens", s.HandleListTokens)
-			r.Get("/tokens/{id}", s.HandleGetToken)
-			r.Delete("/tokens/{id}", s.HandleDeleteToken)
+			r.With(need(auth.PermAgentsEnroll)).Post("/tokens", s.HandleCreateToken)
+			r.With(need(auth.PermAgentsEnroll)).Get("/tokens", s.HandleListTokens)
+			r.With(need(auth.PermAgentsEnroll)).Get("/tokens/{id}", s.HandleGetToken)
+			r.With(need(auth.PermAgentsEnroll)).Delete("/tokens/{id}", s.HandleDeleteToken)
 
 			// API keys
-			r.Post("/apikeys", s.HandleCreateAPIKey)
-			r.Get("/apikeys", s.HandleListAPIKeys)
-			r.Delete("/apikeys/{id}", s.HandleRevokeAPIKey)
+			r.With(need(auth.PermAPIKeysManage)).Post("/apikeys", s.HandleCreateAPIKey)
+			r.With(need(auth.PermAPIKeysManage)).Get("/apikeys", s.HandleListAPIKeys)
+			r.With(need(auth.PermAPIKeysManage)).Delete("/apikeys/{id}", s.HandleRevokeAPIKey)
 
 			// Targets
-			r.Post("/targets", s.HandleCreateTarget)
-			r.Get("/targets", s.HandleListTargets)
-			r.Get("/targets/{id}", s.HandleGetTarget)
-			r.Get("/targets/{id}/credentials", s.HandleTargetCredentials)
-			r.Put("/targets/{id}", s.HandleUpdateTarget)
-			r.Post("/targets/{id}/clone", s.HandleCloneTarget)
-			r.Get("/targets/{id}/encryption", s.HandleGetTargetEncryption)
-			r.Put("/targets/{id}/encryption", s.HandleSetTargetEncryption)
-			r.Post("/targets/{id}/encryption/rotate", s.HandleRotateTargetKey)
-			r.Post("/targets/{id}/encryption/export", s.HandleExportTargetKey)
-			r.Post("/targets/{id}/encryption/import", s.HandleImportTargetKey)
-			r.Delete("/targets/{id}", s.HandleDeleteTarget)
+			r.With(need(auth.PermTargetsWrite)).Post("/targets", s.HandleCreateTarget)
+			r.With(need(auth.PermTargetsRead)).Get("/targets", s.HandleListTargets)
+			r.With(need(auth.PermTargetsRead)).Get("/targets/{id}", s.HandleGetTarget)
+			r.With(need(auth.PermTargetsCredentials)).Get("/targets/{id}/credentials", s.HandleTargetCredentials)
+			r.With(need(auth.PermTargetsWrite)).Put("/targets/{id}", s.HandleUpdateTarget)
+			r.With(need(auth.PermTargetsWrite)).Post("/targets/{id}/clone", s.HandleCloneTarget)
+			r.With(need(auth.PermTargetsRead)).Get("/targets/{id}/encryption", s.HandleGetTargetEncryption)
+			r.With(need(auth.PermTargetsWrite)).Put("/targets/{id}/encryption", s.HandleSetTargetEncryption)
+			r.With(need(auth.PermKeyringsWrite)).Post("/targets/{id}/encryption/rotate", s.HandleRotateTargetKey)
+			r.With(need(auth.PermKeyringsExport)).Post("/targets/{id}/encryption/export", s.HandleExportTargetKey)
+			r.With(need(auth.PermKeyringsWrite)).Post("/targets/{id}/encryption/import", s.HandleImportTargetKey)
+			r.With(need(auth.PermTargetsDelete)).Delete("/targets/{id}", s.HandleDeleteTarget)
 
 			// Encryption key rings (shared by the targets attached to them)
-			r.Get("/keyrings", s.HandleListKeyRings)
-			r.Post("/keyrings", s.HandleCreateKeyRing)
-			r.Get("/keyrings/{id}", s.HandleGetKeyRing)
-			r.Put("/keyrings/{id}", s.HandleUpdateKeyRing)
-			r.Delete("/keyrings/{id}", s.HandleDeleteKeyRing)
-			r.Post("/keyrings/{id}/rotate", s.HandleRotateKeyRing)
-			r.Post("/keyrings/{id}/export", s.HandleExportKeyRingKey)
-			r.Post("/keyrings/{id}/import", s.HandleImportKeyRingKey)
+			r.With(need(auth.PermKeyringsRead)).Get("/keyrings", s.HandleListKeyRings)
+			r.With(need(auth.PermKeyringsWrite)).Post("/keyrings", s.HandleCreateKeyRing)
+			r.With(need(auth.PermKeyringsRead)).Get("/keyrings/{id}", s.HandleGetKeyRing)
+			r.With(need(auth.PermKeyringsWrite)).Put("/keyrings/{id}", s.HandleUpdateKeyRing)
+			r.With(need(auth.PermKeyringsDelete)).Delete("/keyrings/{id}", s.HandleDeleteKeyRing)
+			r.With(need(auth.PermKeyringsWrite)).Post("/keyrings/{id}/rotate", s.HandleRotateKeyRing)
+			r.With(need(auth.PermKeyringsExport)).Post("/keyrings/{id}/export", s.HandleExportKeyRingKey)
+			r.With(need(auth.PermKeyringsWrite)).Post("/keyrings/{id}/import", s.HandleImportKeyRingKey)
 
 			// Microsoft 365 tenants
-			r.Post("/m365/tenants", s.HandleCreateTenant)
-			r.Get("/m365/tenants", s.HandleListTenants)
-			r.Get("/m365/tenants/{id}", s.HandleGetTenant)
-			r.Put("/m365/tenants/{id}", s.HandleUpdateTenant)
-			r.Delete("/m365/tenants/{id}", s.HandleDeleteTenant)
-			r.Post("/m365/tenants/{id}/test", s.HandleTestTenant)
+			r.With(need(auth.PermTenantsWrite)).Post("/m365/tenants", s.HandleCreateTenant)
+			r.With(need(auth.PermTenantsRead)).Get("/m365/tenants", s.HandleListTenants)
+			r.With(need(auth.PermTenantsRead)).Get("/m365/tenants/{id}", s.HandleGetTenant)
+			r.With(need(auth.PermTenantsWrite)).Put("/m365/tenants/{id}", s.HandleUpdateTenant)
+			r.With(need(auth.PermTenantsDelete)).Delete("/m365/tenants/{id}", s.HandleDeleteTenant)
+			r.With(need(auth.PermTenantsWrite)).Post("/m365/tenants/{id}/test", s.HandleTestTenant)
 
 			// Jobs
-			r.Post("/jobs", s.HandleCreateJob)
-			r.Get("/jobs", s.HandleListJobs)
-			r.Get("/jobs/{id}", s.HandleGetJob)
-			r.Put("/jobs/{id}", s.HandleUpdateJob)
-			r.Delete("/jobs/{id}", s.HandleDeleteJob)
-			r.Post("/jobs/{id}/run", s.HandleTriggerJob)
+			r.With(need(auth.PermJobsWrite)).Post("/jobs", s.HandleCreateJob)
+			r.With(need(auth.PermJobsRead)).Get("/jobs", s.HandleListJobs)
+			r.With(need(auth.PermJobsRead)).Get("/jobs/{id}", s.HandleGetJob)
+			r.With(need(auth.PermJobsWrite)).Put("/jobs/{id}", s.HandleUpdateJob)
+			r.With(need(auth.PermJobsDelete)).Delete("/jobs/{id}", s.HandleDeleteJob)
+			r.With(need(auth.PermJobsRun)).Post("/jobs/{id}/run", s.HandleTriggerJob)
 
-			// Runs
-			r.Get("/runs", s.HandleListRuns)
-			r.Get("/runs/{id}", s.HandleGetRun)
-			r.Post("/runs/{id}/cancel", s.HandleCancelRun)
+			// Runs: reachable exactly when their job is
+			r.With(need(auth.PermJobsRead)).Get("/runs", s.HandleListRuns)
+			r.With(need(auth.PermJobsRead)).Get("/runs/{id}", s.HandleGetRun)
+			r.With(need(auth.PermJobsRun)).Post("/runs/{id}/cancel", s.HandleCancelRun)
+
+			// Access control
+			r.With(need(auth.PermRBACManage)).Get("/rbac/permissions", s.HandleListPermissions)
+			r.With(need(auth.PermRBACManage)).Get("/rbac/roles", s.HandleListRoles)
+			r.With(need(auth.PermRBACManage)).Post("/rbac/roles", s.HandleCreateRole)
+			r.With(need(auth.PermRBACManage)).Put("/rbac/roles/{name}", s.HandleUpdateRole)
+			r.With(need(auth.PermRBACManage)).Delete("/rbac/roles/{name}", s.HandleDeleteRole)
+			r.With(need(auth.PermRBACManage)).Get("/rbac/bindings", s.HandleListBindings)
+			r.With(need(auth.PermRBACManage)).Post("/rbac/bindings", s.HandleCreateBinding)
+			r.With(need(auth.PermRBACManage)).Delete("/rbac/bindings/{id}", s.HandleDeleteBinding)
+			// API key creation offers the roles a key can take
+			r.With(need(auth.PermAPIKeysManage)).Get("/apikeys/roles", s.HandleListRoles)
+
+			// Audit log
+			r.With(need(auth.PermAuditRead)).Get("/audit", s.HandleListAudit)
 		})
 	})
 }
@@ -225,6 +245,9 @@ func (s *ServerAPI) HandleAgentEnroll(w http.ResponseWriter, r *http.Request) {
 		DockerHost: req.DockerHost,
 		DBEngines:  db.CleanDBEngines(req.DBEngines),
 		DBTools:    req.DBTools || len(req.DBEngines) > 0,
+		// Scope comes from the token, never from the agent: an enrolling host must
+		// not be able to choose who administers it
+		Labels: token.Labels.OrEmpty(),
 	}
 
 	now := time.Now().UTC()
@@ -389,9 +412,9 @@ func (s *ServerAPI) serveUpdateFile(w http.ResponseWriter, r *http.Request, path
 	http.ServeFile(w, r, path(goos, goarch))
 }
 
-// HandleListAgents returns all registered agents
+// HandleListAgents returns the agents within the principal's scope
 func (s *ServerAPI) HandleListAgents(w http.ResponseWriter, r *http.Request) {
-	agents, err := s.DB.ListAgents(r.Context())
+	agents, err := s.DB.ListAgents(r.Context(), scope(r, auth.PermAgentsRead))
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, "Failed to fetch agents")
 		return
@@ -411,7 +434,7 @@ func (s *ServerAPI) HandleGetAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	agent, err := s.DB.GetAgentByID(r.Context(), id)
+	agent, err := s.DB.GetAgentByID(r.Context(), id, scope(r, auth.PermAgentsRead))
 	if err != nil {
 		s.writeError(w, http.StatusNotFound, "Agent not found")
 		return
@@ -422,22 +445,50 @@ func (s *ServerAPI) HandleGetAgent(w http.ResponseWriter, r *http.Request) {
 
 // HandleDeleteAgent removes an agent
 func (s *ServerAPI) HandleDeleteAgent(w http.ResponseWriter, r *http.Request) {
-	idStr := chi.URLParam(r, "id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		s.writeError(w, http.StatusBadRequest, "Invalid agent ID")
+	agent, ok := s.agentFromPath(w, r, auth.PermAgentsDelete)
+	if !ok {
 		return
 	}
-
-	if err := s.DB.DeleteAgent(r.Context(), id); err != nil {
+	if err := s.DB.DeleteAgent(r.Context(), agent.ID); err != nil {
 		s.writeError(w, http.StatusInternalServerError, "Failed to delete agent")
 		return
 	}
 	if s.Verifier != nil {
-		s.Verifier.Invalidate(id)
+		s.Verifier.Invalidate(agent.ID)
 	}
+	s.audit(r, "agent.delete", "agent", agent.ID.String(), agent.Hostname, agent.Labels, nil)
 
 	s.writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+// SetLabelsRequest replaces an object's labels (PUT /agents/{id}/labels)
+type SetLabelsRequest struct {
+	Labels db.Labels `json:"labels"`
+}
+
+// HandleSetAgentLabels replaces an agent's labels; agents:write is needed on the old
+// and the new labels
+func (s *ServerAPI) HandleSetAgentLabels(w http.ResponseWriter, r *http.Request) {
+	agent, ok := s.agentFromPath(w, r, auth.PermAgentsWrite)
+	if !ok {
+		return
+	}
+	var req SetLabelsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	labels, ok := s.newLabels(w, r, auth.PermAgentsWrite, agent.Labels, req.Labels.OrEmpty())
+	if !ok {
+		return
+	}
+	if err := s.DB.SetAgentLabels(r.Context(), agent.ID, labels); err != nil {
+		s.agentWriteErr(w, err, "Failed to update agent")
+		return
+	}
+	s.audit(r, "agent.labels", "agent", agent.ID.String(), agent.Hostname, labels, map[string]any{"old": agent.Labels})
+	agent.Labels = labels
+	s.writeJSON(w, http.StatusOK, agent)
 }
 
 // HandleMergeAgent moves the jobs and run history of one agent onto another agent
@@ -460,17 +511,21 @@ func (s *ServerAPI) HandleMergeAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	source, err := s.DB.GetAgentByID(ctx, from)
+	source, err := s.DB.GetAgentByID(ctx, from, scope(r, auth.PermAgentsRead))
 	if err != nil {
 		s.writeError(w, http.StatusNotFound, "Agent not found")
 		return
 	}
-	target, err := s.DB.GetAgentByID(ctx, req.Into)
+	target, err := s.DB.GetAgentByID(ctx, req.Into, scope(r, auth.PermAgentsRead))
 	if err != nil {
 		s.writeError(w, http.StatusNotFound, "Target agent not found")
 		return
 	}
-	jobs, err := s.DB.ListJobs(ctx)
+	if !s.allow(w, r, auth.PermAgentsWrite, source.Labels, target.Labels) {
+		return
+	}
+	// Every job of the source moves, whoever's scope it is in: it keeps its labels
+	jobs, err := s.DB.ListJobs(ctx, db.Unscoped)
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, "Failed to list jobs")
 		return
@@ -504,6 +559,7 @@ func (s *ServerAPI) HandleMergeAgent(w http.ResponseWriter, r *http.Request) {
 		s.Verifier.Invalidate(from)
 	}
 	slog.Info("Merged agent", "from", source.Hostname, "from_type", source.AgentType, "into", target.Hostname, "jobs", jobsMoved, "runs", runsMoved)
+	s.audit(r, "agent.merge", "agent", source.ID.String(), source.Hostname, source.Labels, map[string]any{"into": target.ID, "into_hostname": target.Hostname, "jobs": jobsMoved, "runs": runsMoved})
 	s.writeJSON(w, http.StatusOK, MergeAgentResponse{Status: "merged", From: from, Into: req.Into, JobsMoved: jobsMoved, RunsMoved: runsMoved})
 }
 
@@ -524,6 +580,10 @@ func (s *ServerAPI) HandleCreateToken(w http.ResponseWriter, r *http.Request) {
 	if req.ExpiresAt.IsZero() {
 		req.ExpiresAt = time.Now().Add(24 * time.Hour) // 24h default expiry
 	}
+	req.Labels = req.Labels.OrEmpty()
+	if !s.validLabels(w, req.Labels) || !s.allow(w, r, auth.PermAgentsEnroll, req.Labels) {
+		return
+	}
 
 	rawToken, tokenHash, err := auth.GenerateSecureToken(32)
 	if err != nil {
@@ -538,12 +598,14 @@ func (s *ServerAPI) HandleCreateToken(w http.ResponseWriter, r *http.Request) {
 		MaxUses:   req.MaxUses,
 		UsesCount: 0,
 		ExpiresAt: req.ExpiresAt,
+		Labels:    req.Labels,
 	}
 
 	if err := s.DB.CreateEnrollmentToken(r.Context(), token); err != nil {
 		s.writeError(w, http.StatusInternalServerError, "Failed to save enrollment token")
 		return
 	}
+	s.audit(r, "token.create", "token", token.ID.String(), token.Name, token.Labels, map[string]any{"max_uses": token.MaxUses, "expires_at": token.ExpiresAt})
 
 	resp := CreateTokenResponse{
 		ID:        token.ID,
@@ -551,6 +613,7 @@ func (s *ServerAPI) HandleCreateToken(w http.ResponseWriter, r *http.Request) {
 		RawToken:  rawToken,
 		ExpiresAt: token.ExpiresAt,
 		MaxUses:   token.MaxUses,
+		Labels:    token.Labels,
 	}
 
 	s.writeJSON(w, http.StatusCreated, resp)
@@ -559,11 +622,11 @@ func (s *ServerAPI) HandleCreateToken(w http.ResponseWriter, r *http.Request) {
 // HandleSetAgentDebug toggles remote debug logging for an agent; the agent applies it
 // on its next heartbeat (within ~30s), no restart needed
 func (s *ServerAPI) HandleSetAgentDebug(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		s.writeError(w, http.StatusBadRequest, "Invalid agent ID")
+	agent, ok := s.agentFromPath(w, r, auth.PermAgentsWrite)
+	if !ok {
 		return
 	}
+	id := agent.ID
 	var req SetAgentDebugRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.writeError(w, http.StatusBadRequest, "Invalid request body")
@@ -579,16 +642,17 @@ func (s *ServerAPI) HandleSetAgentDebug(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	slog.Info("Agent debug logging toggled", "agent_id", id, "enabled", req.Enabled)
+	s.audit(r, "agent.debug", "agent", id.String(), agent.Hostname, agent.Labels, map[string]any{"enabled": req.Enabled})
 	s.writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "debug_logging": req.Enabled})
 }
 
 // HandleSetAgentAutoUpdate toggles the per-agent auto-update opt-in
 func (s *ServerAPI) HandleSetAgentAutoUpdate(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		s.writeError(w, http.StatusBadRequest, "Invalid agent ID")
+	agent, ok := s.agentFromPath(w, r, auth.PermAgentsWrite)
+	if !ok {
 		return
 	}
+	id := agent.ID
 	var req SetAgentDebugRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.writeError(w, http.StatusBadRequest, "Invalid request body")
@@ -599,17 +663,18 @@ func (s *ServerAPI) HandleSetAgentAutoUpdate(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	slog.Info("Agent auto-update toggled", "agent_id", id, "enabled", req.Enabled)
+	s.audit(r, "agent.auto_update", "agent", id.String(), agent.Hostname, agent.Labels, map[string]any{"enabled": req.Enabled})
 	s.writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "auto_update": req.Enabled})
 }
 
 // HandleRequestAgentUpdate asks an agent to update to the server's version on its
 // next heartbeat
 func (s *ServerAPI) HandleRequestAgentUpdate(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		s.writeError(w, http.StatusBadRequest, "Invalid agent ID")
+	agent, ok := s.agentFromPath(w, r, auth.PermAgentsWrite)
+	if !ok {
 		return
 	}
+	id := agent.ID
 	if s.Updates == nil || !s.Updates.Enabled() {
 		s.writeError(w, http.StatusConflict, "This server is not a release build; agents cannot be updated from it")
 		return
@@ -619,6 +684,7 @@ func (s *ServerAPI) HandleRequestAgentUpdate(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	slog.Info("Agent update requested", "agent_id", id, "version", s.Updates.Version)
+	s.audit(r, "agent.update", "agent", id.String(), agent.Hostname, agent.Labels, map[string]any{"version": s.Updates.Version})
 	s.writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "version": s.Updates.Version})
 }
 
@@ -638,6 +704,11 @@ func (s *ServerAPI) HandleDeleteToken(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, "Invalid token ID")
 		return
 	}
+	token, err := s.DB.GetEnrollmentToken(r.Context(), id, scope(r, auth.PermAgentsEnroll))
+	if err != nil {
+		s.writeError(w, http.StatusNotFound, "Token not found")
+		return
+	}
 	if err := s.DB.DeleteEnrollmentToken(r.Context(), id); err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			s.writeError(w, http.StatusNotFound, "Token not found")
@@ -648,12 +719,13 @@ func (s *ServerAPI) HandleDeleteToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slog.Info("Enrollment token invalidated", "token_id", id)
+	s.audit(r, "token.delete", "token", id.String(), token.Name, token.Labels, nil)
 	s.writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
 // HandleListTokens lists all enrollment tokens
 func (s *ServerAPI) HandleListTokens(w http.ResponseWriter, r *http.Request) {
-	tokens, err := s.DB.ListEnrollmentTokens(r.Context())
+	tokens, err := s.DB.ListEnrollmentTokens(r.Context(), scope(r, auth.PermAgentsEnroll))
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, "Failed to list tokens")
 		return
@@ -672,7 +744,7 @@ func (s *ServerAPI) HandleGetToken(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, "Invalid token ID")
 		return
 	}
-	token, err := s.DB.GetEnrollmentToken(r.Context(), id)
+	token, err := s.DB.GetEnrollmentToken(r.Context(), id, scope(r, auth.PermAgentsEnroll))
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			s.writeError(w, http.StatusNotFound, "Token not found")
@@ -709,10 +781,20 @@ func (s *ServerAPI) HandleCloneTarget(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, "pxar_format must be v1 or v2")
 		return
 	}
-	source, err := s.DB.GetTargetByID(r.Context(), id)
+	source, err := s.DB.GetTargetByID(r.Context(), id, scope(r, auth.PermTargetsRead))
 	if err != nil {
 		s.writeError(w, http.StatusNotFound, "Target not found")
 		return
+	}
+	// The clone keeps the source's labels and key ring
+	if !s.allow(w, r, auth.PermTargetsWrite, source.Labels) {
+		return
+	}
+	if source.KeyRingID != nil {
+		if _, err := s.DB.GetKeyRing(r.Context(), *source.KeyRingID, scope(r, auth.PermKeyringsRead)); err != nil {
+			s.writeError(w, http.StatusForbidden, "The clone would share the source's key ring, which you cannot read (keyrings:read)")
+			return
+		}
 	}
 	if req.Namespace == strings.Trim(source.Namespace, "/") {
 		s.writeError(w, http.StatusBadRequest, "The clone must use a different namespace than "+source.Name)
@@ -728,6 +810,7 @@ func (s *ServerAPI) HandleCloneTarget(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, "Failed to clone target (is the name unique?)")
 		return
 	}
+	s.audit(r, "target.clone", "target", target.ID.String(), target.Name, target.Labels, map[string]any{"source": source.ID, "namespace": target.Namespace})
 	s.writeJSON(w, http.StatusCreated, target)
 }
 
@@ -775,7 +858,16 @@ func (s *ServerAPI) HandleCreateTarget(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, "Invalid key ring ID")
 		return
 	}
+	req.Labels = req.Labels.OrEmpty()
+	if !s.validLabels(w, req.Labels) || !s.allow(w, r, auth.PermTargetsWrite, req.Labels) {
+		return
+	}
+	// Checked before anything is written, so a refusal leaves no half-made target
+	if !s.checkEncryptionAccess(w, r, req.EncryptionMode, ringID, nil, req.Labels, req.MasterPublicKey) {
+		return
+	}
 	target := &db.BackupTarget{
+		Labels:      req.Labels,
 		Name:        req.Name,
 		TargetType:  req.TargetType,
 		Endpoint:    strings.TrimRight(req.Endpoint, "/"),
@@ -801,6 +893,7 @@ func (s *ServerAPI) HandleCreateTarget(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, msg)
 		return
 	}
+	s.audit(r, "target.create", "target", target.ID.String(), target.Name, target.Labels, map[string]any{"endpoint": target.Endpoint, "datastore": target.Datastore, "namespace": target.Namespace, "encryption": target.EncryptionMode})
 
 	s.writeJSON(w, http.StatusCreated, target.Sanitize())
 }
@@ -814,14 +907,21 @@ func (s *ServerAPI) HandleUpdateTarget(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, "Invalid target ID")
 		return
 	}
-	existing, err := s.DB.GetTargetByID(r.Context(), id)
+	existing, err := s.DB.GetTargetByID(r.Context(), id, scope(r, auth.PermTargetsRead))
 	if err != nil {
 		s.writeError(w, http.StatusNotFound, "Target not found")
+		return
+	}
+	if !s.allow(w, r, auth.PermTargetsWrite, existing.Labels) {
 		return
 	}
 	var req CreateTargetRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.writeError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	labels, ok := s.newLabels(w, r, auth.PermTargetsWrite, existing.Labels, req.Labels)
+	if !ok {
 		return
 	}
 	if req.Name == "" || req.Endpoint == "" || req.Datastore == "" {
@@ -860,7 +960,11 @@ func (s *ServerAPI) HandleUpdateTarget(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, "Invalid key ring ID")
 		return
 	}
+	if !s.checkEncryptionAccess(w, r, req.EncryptionMode, ringID, existing.KeyRingID, labels, req.MasterPublicKey) {
+		return
+	}
 	target := &db.BackupTarget{
+		Labels:          labels,
 		ID:              existing.ID,
 		Name:            req.Name,
 		TargetType:      req.TargetType,
@@ -906,12 +1010,13 @@ func (s *ServerAPI) HandleUpdateTarget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slog.Info("Backup target updated", "target_id", id, "name", target.Name, "namespace", target.Namespace, "encryption", target.EncryptionMode)
+	s.audit(r, "target.update", "target", id.String(), target.Name, target.Labels, map[string]any{"old_labels": existing.Labels, "token_changed": strings.TrimSpace(req.AuthToken) != "", "encryption": target.EncryptionMode})
 	s.writeJSON(w, http.StatusOK, target.Sanitize())
 }
 
 // HandleListTargets returns all backup targets
 func (s *ServerAPI) HandleListTargets(w http.ResponseWriter, r *http.Request) {
-	targets, err := s.DB.ListTargets(r.Context())
+	targets, err := s.DB.ListTargets(r.Context(), scope(r, auth.PermTargetsRead))
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, "Failed to list targets")
 		return
@@ -934,7 +1039,7 @@ func (s *ServerAPI) HandleGetTarget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	target, err := s.DB.GetTargetByID(r.Context(), id)
+	target, err := s.DB.GetTargetByID(r.Context(), id, scope(r, auth.PermTargetsRead))
 	if err != nil {
 		s.writeError(w, http.StatusNotFound, "Target not found")
 		return
@@ -945,17 +1050,15 @@ func (s *ServerAPI) HandleGetTarget(w http.ResponseWriter, r *http.Request) {
 
 // HandleDeleteTarget deletes a target
 func (s *ServerAPI) HandleDeleteTarget(w http.ResponseWriter, r *http.Request) {
-	idStr := chi.URLParam(r, "id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		s.writeError(w, http.StatusBadRequest, "Invalid target ID")
+	target, ok := s.targetFromPath(w, r, auth.PermTargetsDelete)
+	if !ok {
 		return
 	}
-
-	if err := s.DB.DeleteTarget(r.Context(), id); err != nil {
+	if err := s.DB.DeleteTarget(r.Context(), target.ID); err != nil {
 		s.writeError(w, http.StatusInternalServerError, "Failed to delete target")
 		return
 	}
+	s.audit(r, "target.delete", "target", target.ID.String(), target.Name, target.Labels, nil)
 
 	s.writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
@@ -968,6 +1071,10 @@ func (s *ServerAPI) HandleCreateJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	job.Labels = job.Labels.OrEmpty()
+	if !s.validLabels(w, job.Labels) || !s.allow(w, r, auth.PermJobsWrite, job.Labels) {
+		return
+	}
 	if msg, err := s.validateJob(r.Context(), &job, nil); err != nil {
 		s.writeError(w, http.StatusBadRequest, msg)
 		return
@@ -979,13 +1086,14 @@ func (s *ServerAPI) HandleCreateJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.syncJobSchedule(r.Context(), &job)
+	s.audit(r, "job.create", "job", job.ID.String(), job.Name, job.Labels, map[string]any{"type": job.JobType, "agent": job.AgentID, "target": job.TargetID})
 
 	s.writeJSON(w, http.StatusCreated, job.Sanitize())
 }
 
 // HandleListJobs returns all jobs
 func (s *ServerAPI) HandleListJobs(w http.ResponseWriter, r *http.Request) {
-	jobs, err := s.DB.ListJobs(r.Context())
+	jobs, err := s.DB.ListJobs(r.Context(), scope(r, auth.PermJobsRead))
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, "Failed to list jobs")
 		return
@@ -1008,7 +1116,7 @@ func (s *ServerAPI) HandleGetJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job, err := s.DB.GetJobByID(r.Context(), id)
+	job, err := s.DB.GetJobByID(r.Context(), id, scope(r, auth.PermJobsRead))
 	if err != nil {
 		s.writeError(w, http.StatusNotFound, "Job not found")
 		return
@@ -1019,17 +1127,16 @@ func (s *ServerAPI) HandleGetJob(w http.ResponseWriter, r *http.Request) {
 
 // HandleDeleteJob deletes a job
 func (s *ServerAPI) HandleDeleteJob(w http.ResponseWriter, r *http.Request) {
-	idStr := chi.URLParam(r, "id")
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		s.writeError(w, http.StatusBadRequest, "Invalid job ID")
+	job, ok := s.jobFromPath(w, r, auth.PermJobsDelete)
+	if !ok {
 		return
 	}
-
+	id := job.ID
 	if err := s.DB.DeleteJob(r.Context(), id); err != nil {
 		s.writeError(w, http.StatusInternalServerError, "Failed to delete job")
 		return
 	}
+	s.audit(r, "job.delete", "job", id.String(), job.Name, job.Labels, nil)
 	if s.Scheduler != nil {
 		if err := s.Scheduler.Remove(r.Context(), id); err != nil {
 			slog.Warn("Backup schedule could not be removed; the startup reconcile will retry", "job_id", id, "error", err)
@@ -1041,16 +1148,8 @@ func (s *ServerAPI) HandleDeleteJob(w http.ResponseWriter, r *http.Request) {
 
 // HandleTriggerJob starts an on-demand backup execution for a job
 func (s *ServerAPI) HandleTriggerJob(w http.ResponseWriter, r *http.Request) {
-	idStr := chi.URLParam(r, "id")
-	jobID, err := uuid.Parse(idStr)
-	if err != nil {
-		s.writeError(w, http.StatusBadRequest, "Invalid job ID")
-		return
-	}
-
-	job, err := s.DB.GetJobByID(r.Context(), jobID)
-	if err != nil {
-		s.writeError(w, http.StatusNotFound, "Job not found")
+	job, ok := s.jobFromPath(w, r, auth.PermJobsRun)
+	if !ok {
 		return
 	}
 
@@ -1086,6 +1185,7 @@ func (s *ServerAPI) HandleTriggerJob(w http.ResponseWriter, r *http.Request) {
 		run.RunID = we.GetRunID()
 	}
 
+	s.audit(r, "job.run", "job", job.ID.String(), job.Name, job.Labels, map[string]any{"run": run.ID})
 	s.writeJSON(w, http.StatusAccepted, map[string]interface{}{
 		"id":          run.ID,
 		"workflow_id": workflowID,
@@ -1096,7 +1196,7 @@ func (s *ServerAPI) HandleTriggerJob(w http.ResponseWriter, r *http.Request) {
 
 // HandleListRuns returns recent backup runs
 func (s *ServerAPI) HandleListRuns(w http.ResponseWriter, r *http.Request) {
-	runs, err := s.DB.ListRuns(r.Context(), 50)
+	runs, err := s.DB.ListRuns(r.Context(), 50, scope(r, auth.PermJobsRead))
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, "Failed to list runs")
 		return
@@ -1105,6 +1205,25 @@ func (s *ServerAPI) HandleListRuns(w http.ResponseWriter, r *http.Request) {
 		runs = []*db.BackupRun{}
 	}
 	s.writeJSON(w, http.StatusOK, runs)
+}
+
+// jobFromPath loads the job named in the path within jobs:read and checks perm on
+// its labels (404 when unreadable, 403 when readable but perm is missing)
+func (s *ServerAPI) jobFromPath(w http.ResponseWriter, r *http.Request, perm string) (*db.BackupJob, bool) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "Invalid job ID")
+		return nil, false
+	}
+	job, err := s.DB.GetJobByID(r.Context(), id, scope(r, auth.PermJobsRead))
+	if err != nil {
+		s.writeError(w, http.StatusNotFound, "Job not found")
+		return nil, false
+	}
+	if !s.allow(w, r, perm, job.Labels) {
+		return nil, false
+	}
+	return job, true
 }
 
 // Helper methods

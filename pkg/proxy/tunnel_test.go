@@ -36,7 +36,7 @@ type fakeTargets struct {
 	targets map[uuid.UUID]*db.BackupTarget
 }
 
-func (f *fakeTargets) GetTargetByID(_ context.Context, id uuid.UUID) (*db.BackupTarget, error) {
+func (f *fakeTargets) GetTargetByID(_ context.Context, id uuid.UUID, _ db.Scope) (*db.BackupTarget, error) {
 	if t, ok := f.targets[id]; ok {
 		return t, nil
 	}
