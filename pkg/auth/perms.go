@@ -69,10 +69,12 @@ func AllPermissions() []string {
 // KnownPermission reports whether p is in the catalog
 func KnownPermission(p string) bool { return slices.Contains(AllPermissions(), p) }
 
-// GlobalOnly permissions administer access itself; a binding or API key whose role
-// holds one must have an empty selector, otherwise a scoped administrator could grant
-// themselves a global role
-var GlobalOnly = []string{PermRBACManage, PermAPIKeysManage}
+// GlobalOnly permissions can only be held on everything: a binding or API key whose
+// role holds one must have an empty selector. rbac:manage and apikeys:manage administer
+// access itself (a scoped administrator could otherwise grant themselves a global
+// role); temporal:ui opens the Temporal UI, which is not label-scoped and shows every
+// workflow.
+var GlobalOnly = []string{PermRBACManage, PermAPIKeysManage, PermTemporalUI}
 
 // HasGlobalOnly reports whether a permission set contains a global-only permission
 func HasGlobalOnly(perms []string) bool {
@@ -103,7 +105,7 @@ func readPerms() []string {
 
 // BuiltinRoles are rewritten into the roles table at every start
 func BuiltinRoles() map[string][]string {
-	viewer := append(readPerms(), PermTemporalUI)
+	viewer := readPerms()
 	operator := append(slices.Clone(viewer),
 		PermJobsWrite, PermJobsRun, PermJobsDelete,
 		PermAgentsWrite, PermAgentsEnroll,
@@ -119,5 +121,5 @@ func BuiltinRoles() map[string][]string {
 var BuiltinDescriptions = map[string]string{
 	RoleAdmin:    "Everything, including access management and API keys",
 	RoleOperator: "Read everything; create, run and delete jobs; manage agents, targets and tenants (no deletes of those, no credentials or key export)",
-	RoleViewer:   "Read everything and open the Temporal UI",
+	RoleViewer:   "Read everything",
 }

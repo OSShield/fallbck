@@ -35,6 +35,7 @@ Durations use Go syntax: `12h`, `90s`, `8760h`.
 | `oidc.allowed_groups` | `FALLBCK_OIDC_ALLOWED_GROUPS` | anyone | Only these groups may sign in. Signing in still needs a [role binding](../operations/access.md). |
 | `oidc.allowed_emails` | `FALLBCK_OIDC_ALLOWED_EMAILS` | anyone | Only these emails may sign in. Same deal. |
 | `oidc.groups_claim` | | `groups` | ID token claim that carries groups. |
+| `oidc.binding_claims` | `FALLBCK_OIDC_BINDING_CLAIMS` | `[roles]` | Further claims that `claim` role bindings can match (string or list values). `[]` turns claim bindings off. |
 | `session_ttl` | `FALLBCK_SESSION_TTL` | `12h` | Admin session lifetime. |
 | `insecure_disable` | `FALLBCK_AUTH_INSECURE_DISABLE` | `false` | No login at all. Refused unless the server runs with `--dev`. |
 
@@ -76,6 +77,14 @@ Register `<public_url>/auth/callback` as the redirect URI. List env vars are com
 | `ui.enabled` | `FALLBCK_TEMPORAL_UI_ENABLED` | `true` | Temporal Web UI under `/temporal/`, for roles with `temporal:ui`. |
 | `ui.port` | `FALLBCK_TEMPORAL_UI_PORT` | `8233` | Loopback. |
 | `ui.read_only` | `FALLBCK_TEMPORAL_UI_READ_ONLY` | `true` | Hides terminate, cancel, signal, reset and schedule edits. The UI isn't label-scoped, so with this off anyone who can open it can stop any team's backups. Cancel runs from FallBCK instead. |
+
+## `audit`
+
+| Key | Env | Default | What it does |
+|---|---|---|---|
+| `retention` | `FALLBCK_AUDIT_RETENTION` | `8760h` | How long audit entries stay. A daily prune deletes older ones. `0` keeps everything. |
+| `export` | `FALLBCK_AUDIT_EXPORT` | | Where entries go right before they're pruned: an absolute file path (JSON lines, appended), `http(s)://...` (POSTed as `application/x-ndjson`), `udp://host:port` or `tcp://host:port` (syslog), or `syslog:` for the local daemon. Empty: pruned entries are gone. See [Access control](../operations/access.md#retention-and-export). |
+| `export_headers` | | | Extra headers for an HTTP export, e.g. `Authorization`. |
 
 ## Flags and other env
 

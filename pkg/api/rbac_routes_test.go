@@ -24,7 +24,7 @@ func TestEveryAdminRouteIsGated(t *testing.T) {
 	}
 	nobody := &auth.Principal{Kind: auth.PrincipalSession, Subject: "nobody"}
 	viewer := &auth.Principal{Kind: auth.PrincipalSession, Subject: "viewer", Bindings: []auth.Binding{
-		{Role: auth.RoleViewer, Permissions: auth.BuiltinRoles()[auth.RoleViewer], Selector: db.Labels{"team": "a"}},
+		{Role: auth.RoleViewer, Permissions: auth.BuiltinRoles()[auth.RoleViewer], Selector: db.MustSelector("team=a")},
 	}}
 	public := map[string]bool{"/api/v1/health": true, "/api/v1/agents/enroll": true}
 
@@ -88,7 +88,7 @@ func TestEveryAdminRouteIsGated(t *testing.T) {
 
 // TestLabelMoveNeedsBothScopes covers newLabels, the rule every relabel goes through
 func TestLabelMoveNeedsBothScopes(t *testing.T) {
-	op := &auth.Principal{Bindings: []auth.Binding{{Role: auth.RoleOperator, Permissions: auth.BuiltinRoles()[auth.RoleOperator], Selector: db.Labels{"team": "a"}}}}
+	op := &auth.Principal{Bindings: []auth.Binding{{Role: auth.RoleOperator, Permissions: auth.BuiltinRoles()[auth.RoleOperator], Selector: db.MustSelector("team=a")}}}
 	s := newTestAPI()
 	cases := []struct {
 		name     string

@@ -64,7 +64,7 @@ func (s *ServerAPI) HandleMe(w http.ResponseWriter, r *http.Request) {
 func (s *ServerAPI) HandleCreateAPIKey(w http.ResponseWriter, r *http.Request) {
 	var req CreateAPIKeyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		s.writeError(w, http.StatusBadRequest, "Invalid request body")
+		s.writeError(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
 		return
 	}
 	if req.Name == "" {
@@ -77,10 +77,6 @@ func (s *ServerAPI) HandleCreateAPIKey(w http.ResponseWriter, r *http.Request) {
 
 	if req.Role == "" {
 		req.Role = auth.RoleAdmin
-	}
-	req.Selector = req.Selector.OrEmpty()
-	if !s.validLabels(w, req.Selector) {
-		return
 	}
 	role, err := s.DB.GetRole(r.Context(), req.Role)
 	if err != nil {

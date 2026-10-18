@@ -51,6 +51,33 @@ function setFormLabels(form, labels, name = 'labels') {
   const el = form.querySelector(`[name="${name}"]`);
   if (el) el.value = formatLabels(labels);
 }
+// previewSelector shows how the server reads a selector field (its own parser, so
+// the preview is exactly what gets stored), in the .selector-preview next to it
+const selectorPreviewTimers = new WeakMap();
+function previewSelector(input) {
+  const out = input.parentElement.querySelector('.selector-preview');
+  if (!out) return;
+  clearTimeout(selectorPreviewTimers.get(input));
+  selectorPreviewTimers.set(input, setTimeout(async () => {
+    const q = input.value.trim();
+    if (!q) { out.innerText = 'Matches everything.'; out.style.color = ''; return; }
+    try {
+      const resp = await apiFetch('/api/v1/rbac/selector?q=' + encodeURIComponent(q));
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Invalid selector');
+      out.innerText = 'Reads as: ' + (data.requirements || []).map(r => ({
+        in: r.values.length === 1 ? `${r.key} is ${r.values[0]}` : `${r.key} is one of ${r.values.join(', ')}`,
+        notin: `${r.key} is not ${r.values.join(' or ')} (or missing)`,
+        exists: `has ${r.key}`, '!': `has no ${r.key}`
+      }[r.op])).join(' AND ');
+      out.style.color = '';
+    } catch (err) {
+      out.innerText = err.message;
+      out.style.color = 'var(--danger-text)';
+    }
+  }, 250));
+}
+
 function labelChips(labels) {
   return Object.keys(labels || {}).sort().map(k => `<span class="badge badge-neutral" style="font-family: var(--font-mono); font-size: 11px;">${rdEsc(k)}=${rdEsc(labels[k])}</span>`).join(' ');
 }

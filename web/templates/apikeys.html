@@ -22,7 +22,7 @@
       {{range .Keys}}
       <tr>
         <td><strong>{{.Name}}</strong><br><span style="font-size: 11px; color: var(--text-dim);">{{.ID}}</span></td>
-        <td><span class="badge badge-info">{{.Role}}</span><br>{{if .Selector}}{{template "label-chips" .Selector}}{{else}}<span style="font-size: 11px; color: var(--text-muted);">on everything</span>{{end}}</td>
+        <td><span class="badge badge-info">{{.Role}}</span><br>{{if .Selector}}<code style="font-size: 11px;">{{.Selector}}</code>{{else}}<span style="font-size: 11px; color: var(--text-muted);">on everything</span>{{end}}</td>
         <td>{{.CreatedBy}}</td>
         <td>{{formatTime .CreatedAt}}</td>
         <td>{{formatTime .LastUsedAt}}</td>
@@ -65,9 +65,10 @@
         <select id="apikey-role" name="role" class="form-control"></select>
       </div>
       <div class="form-group">
-        <label>Selector (one key=value per line; empty = everything)</label>
-        <textarea name="selector" class="form-control" rows="2" placeholder="team=web" style="font-family: var(--font-mono); font-size: 12px;"></textarea>
-        <span class="form-text">The key can do what the role allows on objects carrying all of these labels. It can never reach further than you: you must hold every permission of the role on a selector this one narrows.</span>
+        <label>Selector (empty = everything)</label>
+        <input type="text" name="selector" class="form-control" placeholder="team=web, env in (prod, stage)" style="font-family: var(--font-mono); font-size: 12px;" oninput="previewSelector(this)" autocomplete="off">
+        <span class="form-text selector-preview"></span>
+        <span class="form-text">The key can do what the role allows on the objects this selector matches. It can never reach further than you: you must hold every permission of the role on a selector this one narrows.</span>
       </div>
       <div id="apikey-result-container" style="display: none;" class="alert alert-success">
         <p><strong>Copy this key now — it is shown only once.</strong></p>
@@ -91,7 +92,7 @@ async function submitAPIKeyForm(e) {
     payload.expires_at = new Date(Date.now() + days * 24 * 3600 * 1000);
   }
   try {
-    payload.selector = parseLabels(formData.get('selector'));
+    payload.selector = (formData.get('selector') || '').trim();
     const resp = await apiFetch('/api/v1/apikeys', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

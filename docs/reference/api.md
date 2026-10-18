@@ -47,7 +47,7 @@ POST /api/v1/tokens
 
 | Method | Path | Notes |
 |---|---|---|
-| `POST` | `/apikeys` | `{"name": "...", "expires_at": "...", "role": "viewer", "selector": {"team": "web"}}`. Expiry is optional; role defaults to `admin`, selector to everything. Returns `raw_key` once. |
+| `POST` | `/apikeys` | `{"name": "...", "expires_at": "...", "role": "viewer", "selector": "team=web"}`. Expiry is optional; role defaults to `admin`, selector to everything. Returns `raw_key` once. |
 | `GET` | `/apikeys` | |
 | `GET` | `/apikeys/roles` | The roles a key can take. |
 | `DELETE` | `/apikeys/{id}` | Revokes the key. |
@@ -215,8 +215,12 @@ All of these need `rbac:manage`, except the audit log.
 | `PUT` | `/rbac/roles/{name}` | Same body. Built-in roles are refused. |
 | `DELETE` | `/rbac/roles/{name}` | Refused while anything is bound to it. |
 | `GET` | `/rbac/bindings` | |
-| `POST` | `/rbac/bindings` | `{"kind": "group", "subject": "web-team", "role": "operator", "selector": {"team": "web"}}`. `kind` is `user` (email) or `group`. |
+| `POST` | `/rbac/bindings` | `{"kind": "group", "subject": "web-team", "role": "operator", "selector": "team in (web, api)"}`. `kind` is `user` (email), `group`, or `claim` with subject `claim=value` for a claim in `oidc.binding_claims`. |
 | `DELETE` | `/rbac/bindings/{id}` | Refused for the last binding with `rbac:manage` on everything. |
+| `GET` | `/rbac/subjects` | Emails, groups and claim values seen at sign-in, with when, plus the configured binding claims. |
+| `GET` | `/rbac/selector?q=...` | Parses a selector and returns its canonical form and clauses. `rbac:manage` or `apikeys:manage`. |
+
+Selectors are strings in [Kubernetes label selector syntax](../operations/access.md#selectors), and responses always use the canonical string. Requests may still send the older object form, `{"team": "web"}`, which means `team=web`. Bindings come back with `last_seen` (the subject's last sign-in, or null) and `stale` (not seen for 90 days).
 | `GET` | `/audit` | `audit:read`. Query: `actor` (substring), `action` (prefix), `resource`, `from`, `to` (RFC 3339 or `YYYY-MM-DD`), `limit` (max 5000), `format=csv`. |
 
 ## Agent-only endpoints

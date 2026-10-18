@@ -17,11 +17,11 @@ import (
 )
 
 // Binding is one grant held by a principal: the permissions of a role on the objects
-// whose labels contain Selector (empty: everything)
+// Selector matches (empty: everything)
 type Binding struct {
-	Role        string    `json:"role"`
-	Permissions []string  `json:"permissions"`
-	Selector    db.Labels `json:"selector"`
+	Role        string      `json:"role"`
+	Permissions []string    `json:"permissions"`
+	Selector    db.Selector `json:"selector"`
 }
 
 // Scope is the set of objects perm reaches for the principal: the union of the
@@ -33,7 +33,7 @@ func (p *Principal) Scope(perm string) db.Scope {
 		return s
 	}
 	for _, b := range p.Bindings {
-		if !slices.Contains(b.Permissions, perm) {
+		if !b.grants(perm) {
 			continue
 		}
 		if len(b.Selector) == 0 {
@@ -62,7 +62,7 @@ func (p *Principal) Permissions() []string {
 	}
 	for _, b := range p.Bindings {
 		for _, perm := range b.Permissions {
-			if !slices.Contains(out, perm) {
+			if b.grants(perm) && !slices.Contains(out, perm) {
 				out = append(out, perm)
 			}
 		}
@@ -71,14 +71,14 @@ func (p *Principal) Permissions() []string {
 	return out
 }
 
-// Covers reports whether one binding grants perm on a selector that sel narrows
-// (sel contains all of its entries), so everything sel reaches is already reachable
-func (p *Principal) Covers(perm string, sel db.Labels) bool {
+// Covers reports whether one binding grants perm on a selector that sel narrows, so
+// everything sel reaches is already reachable
+func (p *Principal) Covers(perm string, sel db.Selector) bool {
 	if p == nil {
 		return false
 	}
 	for _, b := range p.Bindings {
-		if slices.Contains(b.Permissions, perm) && sel.Contains(b.Selector) {
+		if b.grants(perm) && sel.Narrows(b.Selector) {
 			return true
 		}
 	}
@@ -89,7 +89,7 @@ func (p *Principal) Covers(perm string, sel db.Labels) bool {
 // permission must be covered on a selector sel narrows, and global-only permissions
 // need an empty selector. Used for API keys (a key never reaches further than its
 // creator) and for bindings created by a principal.
-func Narrower(p *Principal, perms []string, sel db.Labels) error {
+func Narrower(p *Principal, perms []string, sel db.Selector) error {
 	if err := CheckGlobalOnly(perms, sel); err != nil {
 		return err
 	}
@@ -101,31 +101,41 @@ func Narrower(p *Principal, perms []string, sel db.Labels) error {
 	return nil
 }
 
-// CheckGlobalOnly refuses a selector on a role holding rbac:manage or apikeys:manage
-func CheckGlobalOnly(perms []string, sel db.Labels) error {
+// CheckGlobalOnly refuses a selector on a role holding a global-only permission
+func CheckGlobalOnly(perms []string, sel db.Selector) error {
 	if len(sel) > 0 && HasGlobalOnly(perms) {
 		return fmt.Errorf("roles with %s can only be granted on everything (empty selector)", strings.Join(GlobalOnly, " or "))
 	}
 	return nil
 }
 
-func describeSelector(sel db.Labels) string {
+func describeSelector(sel db.Selector) string {
 	if len(sel) == 0 {
 		return "everything"
 	}
 	return "{" + sel.String() + "}"
 }
 
+// grants reports whether the binding gives perm. A global-only permission on a scoped
+// binding gives nothing: creating such a binding is refused, and this covers rows from
+// before a permission became global-only.
+func (b Binding) grants(perm string) bool {
+	if !slices.Contains(b.Permissions, perm) {
+		return false
+	}
+	return len(b.Selector) == 0 || !slices.Contains(GlobalOnly, perm)
+}
+
 // AdminBindings is the global admin grant (insecure dev mode)
 func AdminBindings() []Binding {
-	return []Binding{{Role: RoleAdmin, Permissions: AllPermissions(), Selector: db.Labels{}}}
+	return []Binding{{Role: RoleAdmin, Permissions: AllPermissions()}}
 }
 
 // ---- resolver ---------------------------------------------------------------------
 
 // BindingStore loads bindings and roles (implemented by *db.DB)
 type BindingStore interface {
-	BindingsFor(ctx context.Context, email string, groups []string) ([]*db.RoleBinding, error)
+	BindingsFor(ctx context.Context, email string, groups, claims []string) ([]*db.RoleBinding, error)
 	GetRole(ctx context.Context, name string) (*db.Role, error)
 }
 
@@ -180,22 +190,26 @@ func (r *Resolver) Flush() {
 }
 
 // Session resolves an OIDC identity: user bindings on its email (only when the IdP
-// did not mark it unverified) plus group bindings on its groups claim
-func (r *Resolver) Session(ctx context.Context, email string, emailUnverified bool, groups []string) ([]Binding, error) {
+// did not mark it unverified), group bindings on its groups claim and claim bindings
+// on its binding claims ("<claim>=<value>")
+func (r *Resolver) Session(ctx context.Context, email string, emailUnverified bool, groups, claims []string) ([]Binding, error) {
 	if emailUnverified {
 		email = ""
 	}
-	g := slices.Clone(groups)
-	sort.Strings(g)
-	key := "s\x00" + strings.ToLower(email) + "\x00" + strings.Join(g, "\x00")
+	sorted := func(s []string) string {
+		c := slices.Clone(s)
+		sort.Strings(c)
+		return strings.Join(c, "\x00")
+	}
+	key := "s\x00" + strings.ToLower(email) + "\x01" + sorted(groups) + "\x01" + sorted(claims)
 	return r.cached(key, func() ([]Binding, error) {
-		rows, err := r.store.BindingsFor(ctx, email, groups)
+		rows, err := r.store.BindingsFor(ctx, email, groups, claims)
 		if err != nil {
 			return nil, err
 		}
 		out := make([]Binding, 0, len(rows))
 		for _, b := range rows {
-			out = append(out, Binding{Role: b.Role, Permissions: b.Permissions, Selector: b.Selector.OrEmpty()})
+			out = append(out, Binding{Role: b.Role, Permissions: b.Permissions, Selector: b.Selector})
 		}
 		return out, nil
 	})
@@ -213,7 +227,7 @@ func (r *Resolver) APIKey(ctx context.Context, key *db.APIKey) ([]Binding, error
 	if err != nil {
 		return nil, err
 	}
-	return []Binding{{Role: key.Role, Permissions: perms[0].Permissions, Selector: key.Selector.OrEmpty()}}, nil
+	return []Binding{{Role: key.Role, Permissions: perms[0].Permissions, Selector: key.Selector}}, nil
 }
 
 // ---- middleware -----------------------------------------------------------------
@@ -225,6 +239,20 @@ func RequirePerm(perm string) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if !PrincipalFrom(r.Context()).Can(perm) {
 				forbid(w, r, "missing permission "+perm)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// RequireAnyPerm is RequirePerm for a route that serves holders of any of perms
+func RequireAnyPerm(perms ...string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			p := PrincipalFrom(r.Context())
+			if !slices.ContainsFunc(perms, p.Can) {
+				forbid(w, r, "missing permission "+strings.Join(perms, " or "))
 				return
 			}
 			next.ServeHTTP(w, r)

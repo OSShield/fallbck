@@ -26,6 +26,8 @@ type SessionClaims struct {
 	// EmailUnverified: the IdP said email_verified=false, so user bindings on the
 	// email never match
 	EmailUnverified bool `json:"email_unverified,omitempty"`
+	// BindingClaims are the identity's "<claim>=<value>" pairs for claim bindings
+	BindingClaims []string `json:"binding_claims,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -39,6 +41,7 @@ func (tm *TokenManager) CreateSession(id *Identity, ttl time.Duration) (string, 
 		Name:             id.Name,
 		Groups:           id.Groups,
 		EmailUnverified:  id.EmailUnverified,
+		BindingClaims:    id.Claims,
 		RegisteredClaims: registered(id.Subject, AudienceSession, ttl),
 	}
 	signed, err := tm.sign(claims)

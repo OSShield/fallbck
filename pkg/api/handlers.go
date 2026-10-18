@@ -171,6 +171,8 @@ func (s *ServerAPI) RegisterRoutes(r chi.Router, admin, agent Middleware) {
 			r.With(need(auth.PermRBACManage)).Get("/rbac/bindings", s.HandleListBindings)
 			r.With(need(auth.PermRBACManage)).Post("/rbac/bindings", s.HandleCreateBinding)
 			r.With(need(auth.PermRBACManage)).Delete("/rbac/bindings/{id}", s.HandleDeleteBinding)
+			r.With(need(auth.PermRBACManage)).Get("/rbac/subjects", s.HandleListSeenSubjects)
+			r.With(auth.RequireAnyPerm(auth.PermRBACManage, auth.PermAPIKeysManage)).Get("/rbac/selector", s.HandleParseSelector)
 			// API key creation offers the roles a key can take
 			r.With(need(auth.PermAPIKeysManage)).Get("/apikeys/roles", s.HandleListRoles)
 

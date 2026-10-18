@@ -17,7 +17,7 @@ func principal(bindings ...Binding) *Principal {
 
 func bind(role string, sel db.Labels) Binding {
 	perms := BuiltinRoles()[role]
-	return Binding{Role: role, Permissions: perms, Selector: sel}
+	return Binding{Role: role, Permissions: perms, Selector: db.SelectorFromLabels(sel)}
 }
 
 func TestScopeAndAllowed(t *testing.T) {
@@ -64,7 +64,7 @@ func TestScopeShape(t *testing.T) {
 		t.Fatalf("duplicate selectors should collapse: %+v", s)
 	}
 	sql, args := s.SQL("j.labels", []any{"x"})
-	if sql != "(j.labels @> $2::jsonb OR j.labels @> $3::jsonb)" || len(args) != 3 {
+	if sql != "((j.labels @> $2::jsonb) OR (j.labels @> $3::jsonb))" || len(args) != 3 {
 		t.Errorf("SQL = %s %v", sql, args)
 	}
 	if sql, _ := (db.Scope{}).SQL("labels", nil); sql != "FALSE" {
@@ -82,6 +82,7 @@ func TestScopeShape(t *testing.T) {
 func TestNarrower(t *testing.T) {
 	teamA := db.Labels{"team": "a"}
 	scopedOp := principal(bind(RoleOperator, teamA))
+	setOp := &Principal{Bindings: []Binding{{Role: RoleOperator, Permissions: BuiltinRoles()[RoleOperator], Selector: db.MustSelector("team in (a, b), !legacy")}}}
 	admin := principal(bind(RoleAdmin, nil))
 	viewer := BuiltinRoles()[RoleViewer]
 	operator := BuiltinRoles()[RoleOperator]
@@ -90,26 +91,48 @@ func TestNarrower(t *testing.T) {
 		name  string
 		p     *Principal
 		perms []string
-		sel   db.Labels
+		sel   string
 		ok    bool
 	}{
-		{"admin grants anything globally", admin, AllPermissions(), nil, true},
-		{"admin grants scoped viewer", admin, viewer, teamA, true},
-		{"scoped operator grants its own scope", scopedOp, operator, teamA, true},
-		{"scoped operator grants a narrower scope", scopedOp, viewer, db.Labels{"team": "a", "env": "prod"}, true},
-		{"scoped operator cannot widen to everything", scopedOp, viewer, nil, false},
-		{"scoped operator cannot cross scopes", scopedOp, viewer, db.Labels{"team": "b"}, false},
-		{"scoped operator cannot add permissions", scopedOp, []string{PermTargetsCredentials}, teamA, false},
-		{"global-only needs an empty selector", admin, []string{PermAPIKeysManage}, teamA, false},
-		{"rbac:manage on a selector is refused", admin, []string{PermRBACManage, PermJobsRead}, teamA, false},
+		{"admin grants anything globally", admin, AllPermissions(), "", true},
+		{"admin grants scoped viewer", admin, viewer, "team=a", true},
+		{"scoped operator grants its own scope", scopedOp, operator, "team=a", true},
+		{"scoped operator grants a narrower scope", scopedOp, viewer, "team=a, env=prod", true},
+		{"scoped operator cannot widen to everything", scopedOp, viewer, "", false},
+		{"scoped operator cannot cross scopes", scopedOp, viewer, "team=b", false},
+		{"scoped operator cannot widen with in", scopedOp, viewer, "team in (a, b)", false},
+		{"scoped operator cannot use exists", scopedOp, viewer, "team", false},
+		{"scoped operator cannot add permissions", scopedOp, []string{PermTargetsCredentials}, "team=a", false},
+		{"set binding grants a subset of its values", setOp, viewer, "team=b, !legacy", true},
+		{"set binding needs its notin/!key clause", setOp, viewer, "team=b", false},
+		{"set binding grants with in subset", setOp, viewer, "team in (a), !legacy, env=prod", true},
+		{"global-only needs an empty selector", admin, []string{PermAPIKeysManage}, "team=a", false},
+		{"rbac:manage on a selector is refused", admin, []string{PermRBACManage, PermJobsRead}, "team=a", false},
+		{"temporal:ui on a selector is refused", admin, []string{PermTemporalUI}, "team=a", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := Narrower(tc.p, tc.perms, tc.sel)
+			err := Narrower(tc.p, tc.perms, db.MustSelector(tc.sel))
 			if (err == nil) != tc.ok {
 				t.Errorf("Narrower = %v, want ok=%v", err, tc.ok)
 			}
 		})
+	}
+}
+
+// TestGlobalOnlyIgnoredOnScopedBindings covers rows from before a permission became
+// global-only, e.g. a custom role with temporal:ui bound on team=a
+func TestGlobalOnlyIgnoredOnScopedBindings(t *testing.T) {
+	p := &Principal{Bindings: []Binding{{Role: "custom", Permissions: []string{PermTemporalUI, PermJobsRead}, Selector: db.MustSelector("team=a")}}}
+	if p.Can(PermTemporalUI) || slices.Contains(p.Permissions(), PermTemporalUI) {
+		t.Error("a scoped binding must not grant temporal:ui")
+	}
+	if !p.Allowed(PermJobsRead, db.Labels{"team": "a"}) {
+		t.Error("the binding's other permissions still apply")
+	}
+	global := &Principal{Bindings: []Binding{{Role: "custom", Permissions: []string{PermTemporalUI}}}}
+	if !global.Can(PermTemporalUI) {
+		t.Error("a global binding grants temporal:ui")
 	}
 }
 
@@ -143,9 +166,9 @@ func TestBuiltinRoles(t *testing.T) {
 // roleStore serves built-in roles and one group binding (ops → viewer on team=a)
 type roleStore struct{}
 
-func (roleStore) BindingsFor(_ context.Context, email string, groups []string) ([]*db.RoleBinding, error) {
+func (roleStore) BindingsFor(_ context.Context, email string, groups, _ []string) ([]*db.RoleBinding, error) {
 	if slices.Contains(groups, "ops") {
-		return []*db.RoleBinding{{Kind: db.BindingGroup, Subject: "ops", Role: RoleViewer, Permissions: BuiltinRoles()[RoleViewer], Selector: db.Labels{"team": "a"}}}, nil
+		return []*db.RoleBinding{{Kind: db.BindingGroup, Subject: "ops", Role: RoleViewer, Permissions: BuiltinRoles()[RoleViewer], Selector: db.MustSelector("team=a")}}, nil
 	}
 	return nil, nil
 }
@@ -167,7 +190,7 @@ func TestAuthenticateResolvesBindings(t *testing.T) {
 	a.RBAC = NewResolver(roleStore{}, time.Minute)
 
 	raw, key, _ := NewAPIKey("ci", "alice", nil)
-	key.Role, key.Selector = RoleOperator, db.Labels{"team": "a"}
+	key.Role, key.Selector = RoleOperator, db.MustSelector("team=a")
 	_ = store.CreateAPIKey(context.Background(), key)
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
 	r.Header.Set("Authorization", "Bearer "+raw)

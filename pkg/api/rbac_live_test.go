@@ -8,13 +8,16 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/osshield/fallbck/pkg/audit"
 	"github.com/osshield/fallbck/pkg/auth"
 	"github.com/osshield/fallbck/pkg/config"
 	"github.com/osshield/fallbck/pkg/db"
@@ -111,7 +114,7 @@ func TestLiveScopedOperator(t *testing.T) {
 	d := liveDB(t)
 	f := seed(t, d)
 	op := &auth.Principal{Kind: auth.PrincipalSession, Email: "op@example.com", Bindings: []auth.Binding{
-		{Role: auth.RoleOperator, Permissions: auth.BuiltinRoles()[auth.RoleOperator], Selector: db.Labels{"team": "a"}},
+		{Role: auth.RoleOperator, Permissions: auth.BuiltinRoles()[auth.RoleOperator], Selector: db.MustSelector("team=a")},
 	}}
 	h := liveRouter(d, op)
 
@@ -212,7 +215,7 @@ func TestLiveAuditAndKeys(t *testing.T) {
 		}
 	}
 	// Scoped audit readers see only entries recorded with their labels
-	scoped, _ := d.ListAudit(ctx, db.AuditFilter{}, db.Scope{Selectors: []db.Labels{{"team": "b"}}})
+	scoped, _ := d.ListAudit(ctx, db.AuditFilter{}, db.Scope{Selectors: []db.Selector{db.MustSelector("team=b")}})
 	if len(scoped) != 0 {
 		t.Errorf("team=b sees %d team=a entries", len(scoped))
 	}
@@ -232,7 +235,7 @@ func TestLiveAuditAndKeys(t *testing.T) {
 	var created CreateAPIKeyResponse
 	_ = json.Unmarshal(body, &created)
 	key, err := auth.LookupAPIKey(ctx, d, created.RawKey)
-	if err != nil || key.Role != "viewer" || key.Selector["team"] != "a" {
+	if err != nil || key.Role != "viewer" || key.Selector.String() != "team=a" {
 		t.Fatalf("stored key: %+v %v", key, err)
 	}
 	if code, _ := call(t, h, http.MethodPost, "/api/v1/apikeys", map[string]any{"name": "bad", "role": "admin", "selector": map[string]string{"team": "a"}}); code != http.StatusForbidden {
@@ -255,17 +258,17 @@ func TestLiveBindingsAndBootstrap(t *testing.T) {
 		t.Error("bootstrap ran twice")
 	}
 	res := auth.NewResolver(d, time.Minute)
-	b, err := res.Session(ctx, "FIRST@example.com", false, nil)
+	b, err := res.Session(ctx, "FIRST@example.com", false, nil, nil)
 	if err != nil || len(b) != 1 || len(b[0].Selector) != 0 {
 		t.Fatalf("first admin bindings: %+v %v", b, err)
 	}
-	if b, _ := res.Session(ctx, "first@example.com", true, nil); len(b) != 0 {
+	if b, _ := res.Session(ctx, "first@example.com", true, nil, nil); len(b) != 0 {
 		t.Error("an unverified email matched a user binding")
 	}
-	if err := d.CreateBinding(ctx, &db.RoleBinding{Kind: db.BindingGroup, Subject: "ops", Role: auth.RoleViewer, Selector: db.Labels{"team": "a"}}); err != nil {
+	if err := d.CreateBinding(ctx, &db.RoleBinding{Kind: db.BindingGroup, Subject: "ops", Role: auth.RoleViewer, Selector: db.MustSelector("team=a")}); err != nil {
 		t.Fatal(err)
 	}
-	if b, _ := res.Session(ctx, "nobody@example.com", false, []string{"ops"}); len(b) != 1 || b[0].Selector["team"] != "a" {
+	if b, _ := res.Session(ctx, "nobody@example.com", false, []string{"ops"}, nil); len(b) != 1 || b[0].Selector.String() != "team=a" {
 		t.Errorf("group binding: %+v", b)
 	}
 	all, _ := d.ListBindings(ctx)
@@ -288,25 +291,194 @@ func TestLiveBindingsAndBootstrap(t *testing.T) {
 func TestLiveScopeAgreesWithSQL(t *testing.T) {
 	d := liveDB(t)
 	ctx := context.Background()
-	objects := []db.Labels{{}, {"team": "a"}, {"team": "b"}, {"team": "a", "env": "prod"}, {"env": "prod"}, {"team": "A"}, {"fallbck.io/x": "1", "team": "a"}}
+	objects := []db.Labels{{}, {"team": "a"}, {"team": "b"}, {"team": "a", "env": "prod"}, {"env": "prod"}, {"team": "A"}, {"fallbck.io/x": "1", "team": "a"}, {"env": "stage"}, {"team": "a", "env": "stage"}, {"team": ""}}
+	sel := func(texts ...string) db.Scope {
+		var out db.Scope
+		for _, t := range texts {
+			out.Selectors = append(out.Selectors, db.MustSelector(t))
+		}
+		return out
+	}
 	scopes := []db.Scope{
 		{}, db.Unscoped,
-		{Selectors: []db.Labels{{"team": "a"}}},
-		{Selectors: []db.Labels{{"team": "a", "env": "prod"}}},
-		{Selectors: []db.Labels{{"team": "b"}, {"env": "prod"}}},
-		{Selectors: []db.Labels{{"fallbck.io/x": "1"}}},
-		{Selectors: []db.Labels{{"team": ""}}},
+		sel("team=a"), sel("team=a, env=prod"), sel("team=b", "env=prod"), sel("fallbck.io/x=1"), sel("team="),
+		sel("team in (a, b)"), sel("team notin (a)"), sel("team!=b"), sel("team"), sel("!team"), sel("!env, team"),
+		sel("team in (a, A), env notin (prod, stage)"), sel(""), sel("team in (b)", "!team"),
 	}
 	for _, s := range scopes {
 		for _, o := range objects {
 			where, args := s.SQL("$1::jsonb", []any{o.JSON()})
 			var got bool
-			if err := d.Pool.QueryRow(ctx, `SELECT $1::jsonb IS NOT NULL AND `+where, args...).Scan(&got); err != nil {
+			if err := d.Pool.QueryRow(ctx, `SELECT (`+where+`) IS NOT DISTINCT FROM TRUE OR ($1::jsonb IS NULL)`, args...).Scan(&got); err != nil {
 				t.Fatalf("%+v: %v", s, err)
+			}
+			var isNull bool
+			if err := d.Pool.QueryRow(ctx, `SELECT ($1::jsonb IS NULL) OR (`+where+`) IS NULL`, args...).Scan(&isNull); err != nil || isNull {
+				t.Errorf("scope %+v on %v renders NULL (%v)", s, o, err)
 			}
 			if want := s.Matches(o); got != want {
 				t.Errorf("scope %+v on %v: SQL %v, Go %v", s, o, got, want)
 			}
 		}
+	}
+}
+
+// TestLiveSelectorMigration upgrades bindings and API keys written by migration 022
+// (label objects) to the canonical selector strings of 023
+func TestLiveSelectorMigration(t *testing.T) {
+	url := os.Getenv("FALLBCK_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("FALLBCK_TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	if _, err := pool.Exec(ctx, `DROP SCHEMA public CASCADE; CREATE SCHEMA public;
+		CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`); err != nil {
+		t.Fatal(err)
+	}
+	migrations, _ := db.LoadMigrations()
+	for _, m := range migrations {
+		if m.Version > 22 {
+			break
+		}
+		if _, err := pool.Exec(ctx, m.SQL); err != nil {
+			t.Fatalf("%s: %v", m.Name, err)
+		}
+		_, _ = pool.Exec(ctx, `INSERT INTO schema_migrations (version, name) VALUES ($1, $2)`, m.Version, m.Name)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO role_bindings (id, kind, subject, role, selector) VALUES
+			(gen_random_uuid(), 'group', 'ops', 'viewer', '{"team": "a", "env": "prod", "Zone": "x"}'),
+			(gen_random_uuid(), 'user', 'root@example.com', 'admin', '{}');
+		INSERT INTO api_keys (id, name, key_hash, created_by, role, selector) VALUES (gen_random_uuid(), 'k', 'h', 'test', 'viewer', '{"team": "a"}')`); err != nil {
+		t.Fatal(err)
+	}
+	d := &db.DB{Pool: pool}
+	if err := d.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	bindings, err := d.ListBindings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, b := range bindings {
+		got[b.Subject] = b.Selector.String()
+	}
+	if got["ops"] != "Zone=x, env=prod, team=a" || got["root@example.com"] != "" {
+		t.Errorf("migrated selectors: %v", got)
+	}
+	var raw string
+	_ = pool.QueryRow(ctx, `SELECT selector FROM role_bindings WHERE subject = 'ops'`).Scan(&raw)
+	if raw != db.MustSelector("team=a, env=prod, Zone=x").String() {
+		t.Errorf("stored %q is not the canonical form the server writes", raw)
+	}
+	_ = pool.QueryRow(ctx, `SELECT selector FROM api_keys`).Scan(&raw)
+	if raw != "team=a" {
+		t.Errorf("api key selector %q", raw)
+	}
+	// The unique constraint survived the type change
+	if err := d.CreateBinding(ctx, &db.RoleBinding{Kind: db.BindingGroup, Subject: "ops", Role: auth.RoleViewer, Selector: db.MustSelector("env=prod, team=a, Zone=x")}); err == nil {
+		t.Error("a duplicate binding was accepted after the migration")
+	}
+}
+
+func TestLiveClaimBindingsAndLastSeen(t *testing.T) {
+	d := liveDB(t)
+	ctx := context.Background()
+	if err := d.CreateBinding(ctx, &db.RoleBinding{Kind: db.BindingClaim, Subject: "roles=Backup.Operator", Role: auth.RoleOperator, Selector: db.MustSelector("team in (a, b)")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.CreateBinding(ctx, &db.RoleBinding{Kind: db.BindingUser, Subject: "Old@Example.com", Role: auth.RoleViewer}); err != nil {
+		t.Fatal(err)
+	}
+	res := auth.NewResolver(d, time.Minute)
+	b, err := res.Session(ctx, "x@example.com", false, nil, []string{"roles=Backup.Operator"})
+	if err != nil || len(b) != 1 || b[0].Selector.String() != "team in (a, b)" {
+		t.Fatalf("claim binding: %+v %v", b, err)
+	}
+	if b, _ := res.Session(ctx, "x@example.com", false, nil, []string{"roles=Other"}); len(b) != 0 {
+		t.Error("another claim value matched")
+	}
+
+	if err := d.RecordSignIn(ctx, "old@example.com", []string{"ops"}, []string{"roles=Backup.Operator"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Pool.Exec(ctx, `UPDATE idp_subjects SET last_seen = NOW() - interval '100 days' WHERE kind = 'user'`); err != nil {
+		t.Fatal(err)
+	}
+	bindings, _ := d.ListBindings(ctx)
+	for _, x := range bindings {
+		switch x.Kind {
+		case db.BindingUser:
+			if x.LastSeen == nil || !x.Stale {
+				t.Errorf("user binding not seen for 100 days: last_seen %v stale %v", x.LastSeen, x.Stale)
+			}
+		case db.BindingClaim:
+			if x.LastSeen == nil || x.Stale {
+				t.Errorf("claim binding just seen: last_seen %v stale %v", x.LastSeen, x.Stale)
+			}
+		}
+	}
+	seen, _ := d.ListSeenSubjects(ctx)
+	if len(seen) != 3 {
+		t.Errorf("seen subjects: %+v", seen)
+	}
+
+	// The API refuses claim bindings on claims the server does not read
+	admin := &auth.Principal{Kind: auth.PrincipalSession, Email: "root@example.com", Bindings: auth.AdminBindings()}
+	h := liveRouter(d, admin)
+	if code, body := call(t, h, http.MethodPost, "/api/v1/rbac/bindings", map[string]any{"kind": "claim", "subject": "department=IT", "role": "viewer", "selector": ""}); code != http.StatusBadRequest {
+		t.Errorf("unconfigured claim: %d %s", code, body)
+	}
+	if code, body := call(t, h, http.MethodPost, "/api/v1/rbac/bindings", map[string]any{"kind": "group", "subject": "web", "role": "viewer", "selector": "team in (web, api), !legacy"}); code != http.StatusCreated {
+		t.Errorf("set-based binding: %d %s", code, body)
+	}
+	if code, body := call(t, h, http.MethodGet, "/api/v1/rbac/selector?q=team+in+(b,a)", nil); code != http.StatusOK || !bytes.Contains(body, []byte(`"team in (a, b)"`)) {
+		t.Errorf("selector preview: %d %s", code, body)
+	}
+}
+
+func TestLiveAuditPrune(t *testing.T) {
+	d := liveDB(t)
+	ctx := context.Background()
+	if _, err := d.Pool.Exec(ctx, `INSERT INTO audit_log (at, actor_kind, actor, action) VALUES
+		(NOW() - interval '400 days', 'session', 'a', 'job.create'),
+		(NOW() - interval '380 days', 'session', 'b', 'job.delete'),
+		(NOW() - interval '10 days', 'session', 'c', 'job.run')`); err != nil {
+		t.Fatal(err)
+	}
+	// A failing export keeps everything
+	failing := func(context.Context, []*db.AuditEntry) error { return errors.New("sink down") }
+	if n, err := audit.Prune(ctx, d, 365*24*time.Hour, failing, "test"); err == nil || n != 0 {
+		t.Fatalf("prune with a failing export: %d %v", n, err)
+	}
+	path := filepath.Join(t.TempDir(), "audit.jsonl")
+	export, err := audit.NewExport(path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := audit.Prune(ctx, d, 365*24*time.Hour, export, path)
+	if err != nil || n != 2 {
+		t.Fatalf("prune: %d %v", n, err)
+	}
+	data, _ := os.ReadFile(path)
+	if strings.Count(string(data), "\n") != 2 || !strings.Contains(string(data), `"job.create"`) || strings.Contains(string(data), `"job.run"`) {
+		t.Errorf("export file: %s", data)
+	}
+	left, _ := d.ListAudit(ctx, db.AuditFilter{}, db.Unscoped)
+	var actions []string
+	for _, e := range left {
+		actions = append(actions, e.Action)
+	}
+	if !slices.Equal(actions, []string{"audit.prune", "job.run"}) {
+		t.Errorf("left after prune: %v", actions)
+	}
+	if _, err := d.Pool.Exec(ctx, `DELETE FROM audit_log`); err == nil {
+		t.Error("a plain DELETE got past the append-only trigger")
 	}
 }

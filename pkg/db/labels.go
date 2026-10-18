@@ -90,12 +90,12 @@ func (l Labels) String() string {
 }
 
 // Scope is the set of objects one permission reaches for a principal: everything
-// (All), nothing (zero value), or the objects whose labels contain any of the
-// selectors. It is the only input to both forms of the access decision: Matches for
-// an object in hand and SQL for queries, so the two cannot drift apart.
+// (All), nothing (zero value), or the objects matched by any of the selectors. It is
+// the only input to both forms of the access decision: Matches for an object in hand
+// and SQL for queries, so the two cannot drift apart.
 type Scope struct {
 	All       bool
-	Selectors []Labels
+	Selectors []Selector
 }
 
 // Unscoped reaches every row. Only for internal callers (workflows, agent endpoints,
@@ -108,7 +108,7 @@ func (s Scope) Matches(l Labels) bool {
 		return true
 	}
 	for _, sel := range s.Selectors {
-		if l.Contains(sel) {
+		if sel.Matches(l) {
 			return true
 		}
 	}
@@ -119,7 +119,7 @@ func (s Scope) Matches(l Labels) bool {
 func (s Scope) Empty() bool { return !s.All && len(s.Selectors) == 0 }
 
 // SQL renders the scope as a WHERE fragment on a jsonb labels column, appending its
-// parameters to args: TRUE, FALSE, or (col @> $n::jsonb OR ...)
+// parameters to args: TRUE, FALSE, or (selector OR selector ...)
 func (s Scope) SQL(col string, args []any) (string, []any) {
 	if s.All {
 		return "TRUE", args
@@ -129,8 +129,7 @@ func (s Scope) SQL(col string, args []any) (string, []any) {
 	}
 	parts := make([]string, len(s.Selectors))
 	for i, sel := range s.Selectors {
-		args = append(args, sel.JSON())
-		parts[i] = fmt.Sprintf("%s @> $%d::jsonb", col, len(args))
+		parts[i], args = sel.sql(col, args)
 	}
 	return "(" + strings.Join(parts, " OR ") + ")", args
 }

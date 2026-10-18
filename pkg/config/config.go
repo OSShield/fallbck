@@ -85,6 +85,18 @@ type OIDCConfig struct {
 	AllowedEmails []string `yaml:"allowed_emails" json:"allowed_emails"`
 	// GroupsClaim is the ID token claim carrying group membership (default "groups")
 	GroupsClaim string `yaml:"groups_claim" json:"groups_claim"`
+	// BindingClaims are further ID token claims (string or list of strings) that
+	// "claim" role bindings can match, e.g. Entra app roles in "roles". Unset: roles.
+	// An empty list turns claim bindings off.
+	BindingClaims []string `yaml:"binding_claims" json:"binding_claims"`
+}
+
+// EffectiveBindingClaims applies the default (roles) when binding_claims is unset
+func (c OIDCConfig) EffectiveBindingClaims() []string {
+	if c.BindingClaims == nil {
+		return []string{"roles"}
+	}
+	return c.BindingClaims
 }
 
 // Enabled reports whether the OIDC configuration is populated
@@ -153,10 +165,26 @@ type ServerConfig struct {
 	Database    DatabaseConfig       `yaml:"database" json:"database"`
 	Temporal    TemporalServerConfig `yaml:"temporal" json:"temporal"`
 	Security    SecurityConfig       `yaml:"security" json:"security"`
+	Audit       AuditConfig          `yaml:"audit" json:"audit"`
 }
 
 // SecurityConfig holds the server master key that seals stored secrets (PBS API
 // tokens, backup encryption keys) at rest
+// AuditConfig controls how long audit log entries are kept and where they go before
+// they are pruned
+type AuditConfig struct {
+	// Retention is how long entries stay in the database; a daily prune deletes older
+	// ones. 0 keeps everything. Default 8760h (a year).
+	Retention time.Duration `yaml:"retention" json:"retention"`
+	// Export receives every entry right before it is pruned, as JSON lines: an
+	// absolute file path (appended), http(s)://... (POSTed as application/x-ndjson),
+	// udp://host:port or tcp://host:port (syslog), or syslog: (the local syslog).
+	// Empty: pruned entries are gone.
+	Export string `yaml:"export" json:"export"`
+	// ExportHeaders are added to HTTP exports, e.g. Authorization for a log collector
+	ExportHeaders map[string]string `yaml:"export_headers" json:"-"`
+}
+
 type SecurityConfig struct {
 	// MasterKeyFile holds 64 hex characters; generated on first start when missing
 	// (default <data_dir>/master.key). Back it up together with the database: the
@@ -261,6 +289,7 @@ func DefaultServerConfig() *ServerConfig {
 			ConnMaxLifetime: 5 * time.Minute,
 			AutoMigrate:     true,
 		},
+		Audit: AuditConfig{Retention: 365 * 24 * time.Hour},
 		Temporal: TemporalServerConfig{
 			Mode:      TemporalModeEmbedded,
 			Namespace: "default",
@@ -364,8 +393,13 @@ func LoadServerConfig(filePath string) (*ServerConfig, error) {
 	envList("FALLBCK_OIDC_SCOPES", &cfg.Auth.OIDC.Scopes)
 	envList("FALLBCK_OIDC_ALLOWED_GROUPS", &cfg.Auth.OIDC.AllowedGroups)
 	envList("FALLBCK_OIDC_ALLOWED_EMAILS", &cfg.Auth.OIDC.AllowedEmails)
+	envList("FALLBCK_OIDC_BINDING_CLAIMS", &cfg.Auth.OIDC.BindingClaims)
 	envBool("FALLBCK_AUTH_INSECURE_DISABLE", &cfg.Auth.InsecureDisable)
 	envDuration("FALLBCK_SESSION_TTL", &cfg.Auth.SessionTTL)
+	envDuration("FALLBCK_AUDIT_RETENTION", &cfg.Audit.Retention)
+	if v := os.Getenv("FALLBCK_AUDIT_EXPORT"); v != "" {
+		cfg.Audit.Export = v
+	}
 	envDuration("FALLBCK_AGENT_TOKEN_TTL", &cfg.AgentTokens.TTL)
 
 	envString("FALLBCK_TEMPORAL_MODE", &cfg.Temporal.Mode)

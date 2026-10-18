@@ -145,18 +145,18 @@ type CreateAPIKeyRequest struct {
 	// Role and Selector are the key's one binding; the creator must already hold
 	// every permission of the role on a selector this one narrows. Default: admin
 	// on everything.
-	Role     string    `json:"role"`
-	Selector db.Labels `json:"selector"`
+	Role     string      `json:"role"`
+	Selector db.Selector `json:"selector"`
 }
 
 // CreateAPIKeyResponse returns the raw key exactly once
 type CreateAPIKeyResponse struct {
-	ID        uuid.UUID  `json:"id"`
-	Name      string     `json:"name"`
-	RawKey    string     `json:"raw_key"`
-	ExpiresAt *time.Time `json:"expires_at,omitempty"`
-	Role      string     `json:"role"`
-	Selector  db.Labels  `json:"selector"`
+	ID        uuid.UUID   `json:"id"`
+	Name      string      `json:"name"`
+	RawKey    string      `json:"raw_key"`
+	ExpiresAt *time.Time  `json:"expires_at,omitempty"`
+	Role      string      `json:"role"`
+	Selector  db.Selector `json:"selector"`
 }
 
 // MeResponse describes the authenticated admin principal

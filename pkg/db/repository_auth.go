@@ -86,8 +86,8 @@ type APIKey struct {
 	ExpiresAt  *time.Time `json:"expires_at"`
 	RevokedAt  *time.Time `json:"revoked_at"`
 	// Role and Selector are the key's single access binding
-	Role     string `json:"role"`
-	Selector Labels `json:"selector"`
+	Role     string   `json:"role"`
+	Selector Selector `json:"selector"`
 }
 
 const apiKeyColumns = `id, name, key_hash, created_by, created_at, last_used_at, expires_at, revoked_at, role, selector`
@@ -113,7 +113,7 @@ func (d *DB) CreateAPIKey(ctx context.Context, key *APIKey) error {
 	}
 	_, err := d.Pool.Exec(ctx,
 		`INSERT INTO api_keys (id, name, key_hash, created_by, created_at, expires_at, role, selector) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		key.ID, key.Name, key.KeyHash, key.CreatedBy, key.CreatedAt, key.ExpiresAt, key.Role, key.Selector.JSON())
+		key.ID, key.Name, key.KeyHash, key.CreatedBy, key.CreatedAt, key.ExpiresAt, key.Role, key.Selector.String())
 	return err
 }
 

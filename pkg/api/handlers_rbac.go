@@ -31,12 +31,14 @@ type RoleRequest struct {
 	Permissions []string `json:"permissions"`
 }
 
-// BindingRequest grants a role (POST /rbac/bindings)
+// BindingRequest grants a role (POST /rbac/bindings). Selector is the string form
+// ("team=web, env in (prod, stage)") or, as before set-based selectors, an object of
+// labels.
 type BindingRequest struct {
-	Kind     string    `json:"kind"`
-	Subject  string    `json:"subject"`
-	Role     string    `json:"role"`
-	Selector db.Labels `json:"selector"`
+	Kind     string      `json:"kind"`
+	Subject  string      `json:"subject"`
+	Role     string      `json:"role"`
+	Selector db.Selector `json:"selector"`
 }
 
 // HandleListPermissions returns the permission catalog grouped by resource
@@ -169,20 +171,25 @@ func (s *ServerAPI) HandleListBindings(w http.ResponseWriter, r *http.Request) {
 func (s *ServerAPI) HandleCreateBinding(w http.ResponseWriter, r *http.Request) {
 	var req BindingRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		s.writeError(w, http.StatusBadRequest, "Invalid request body")
+		s.writeError(w, http.StatusBadRequest, "Invalid request body: "+err.Error())
 		return
 	}
 	req.Subject = strings.TrimSpace(req.Subject)
-	if req.Kind != db.BindingUser && req.Kind != db.BindingGroup {
-		s.writeError(w, http.StatusBadRequest, "kind must be user or group")
-		return
-	}
 	if req.Subject == "" {
-		s.writeError(w, http.StatusBadRequest, "subject is required (an email for users, a groups claim value for groups)")
+		s.writeError(w, http.StatusBadRequest, "subject is required (an email for users, a groups claim value for groups, claim=value for claims)")
 		return
 	}
-	req.Selector = req.Selector.OrEmpty()
-	if !s.validLabels(w, req.Selector) {
+	switch req.Kind {
+	case db.BindingUser, db.BindingGroup:
+	case db.BindingClaim:
+		claims := s.Config.Auth.OIDC.EffectiveBindingClaims()
+		name, value, ok := strings.Cut(req.Subject, "=")
+		if !ok || value == "" || !slices.Contains(claims, name) {
+			s.writeError(w, http.StatusBadRequest, "claim bindings name a configured claim and a value, claim=value; configured claims (auth.oidc.binding_claims): "+strings.Join(claims, ", "))
+			return
+		}
+	default:
+		s.writeError(w, http.StatusBadRequest, "kind must be user, group or claim")
 		return
 	}
 	role, err := s.DB.GetRole(r.Context(), req.Role)
@@ -293,4 +300,27 @@ func csvSafe(v string) string {
 		return "'" + v
 	}
 	return v
+}
+
+// HandleListSeenSubjects returns the emails, groups and claim values sign-ins have
+// shown, for the binding form's suggestions (rbac:manage)
+func (s *ServerAPI) HandleListSeenSubjects(w http.ResponseWriter, r *http.Request) {
+	subjects, err := s.DB.ListSeenSubjects(r.Context())
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "Failed to list known subjects")
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"subjects": subjects, "binding_claims": s.Config.Auth.OIDC.EffectiveBindingClaims()})
+}
+
+// HandleParseSelector checks a selector string and returns its canonical form and
+// clauses (GET /rbac/selector?q=...), so the UI previews exactly what the server
+// will store
+func (s *ServerAPI) HandleParseSelector(w http.ResponseWriter, r *http.Request) {
+	sel, err := db.ParseSelector(r.URL.Query().Get("q"))
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"selector": sel, "requirements": []db.Requirement(sel)})
 }

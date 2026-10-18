@@ -135,7 +135,7 @@ func (a *AdminAuth) Authenticate(r *http.Request) (*Principal, error) {
 	}
 	p := &Principal{Kind: PrincipalSession, Subject: claims.Subject, Email: claims.Email, Name: claims.Name}
 	if a.RBAC != nil {
-		if p.Bindings, err = a.RBAC.Session(r.Context(), claims.Email, claims.EmailUnverified, claims.Groups); err != nil {
+		if p.Bindings, err = a.RBAC.Session(r.Context(), claims.Email, claims.EmailUnverified, claims.Groups, claims.BindingClaims); err != nil {
 			return nil, fmt.Errorf("failed to resolve role bindings: %w", err)
 		}
 	}

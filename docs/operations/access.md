@@ -20,7 +20,7 @@ A role is a named set of permissions. Three ship with the server and can't be ed
 |---|---|
 | `admin` | Everything, including access management and API keys. |
 | `operator` | Reads everything. Creates, runs and deletes jobs. Manages agents, enrollment tokens, targets and tenants, but can't delete them, reveal PBS credentials or export keys. |
-| `viewer` | Reads everything and opens the Temporal UI. |
+| `viewer` | Reads everything. |
 
 Need something else? Clone one on the *Access* page and tick the boxes. Permissions are `resource:action`:
 
@@ -34,7 +34,7 @@ Need something else? Clone one on the *Access* page and tick the boxes. Permissi
 | `apikeys` | `manage` |
 | `rbac` | `manage` |
 | `audit` | `read` |
-| `temporal` | `ui` |
+| `temporal` | `ui` (the Temporal Web UI; admin only by default, see below) |
 
 Runs don't have permissions of their own. If you can see a job, you can see its runs.
 
@@ -42,10 +42,35 @@ Runs don't have permissions of their own. If you can see a job, you can see its 
 
 Agents, targets, jobs, M365 tenants, key rings and enrollment tokens carry **labels**: `key=value` pairs, Kubernetes syntax, up to 20 per object. Every form has a labels box, one pair per line.
 
-A **binding** grants a role to a subject on a **selector**:
+A **binding** grants a role to a subject on a **selector**. The subject is one of:
 
-- the subject is a user's verified email, or a value of the groups claim (`oidc.groups_claim`, default `groups`),
-- the selector is a set of labels, matched with AND and equality only. An object matches when it carries all of them. An empty selector matches everything.
+- **user**: a verified email,
+- **group**: a value of the groups claim (`oidc.groups_claim`, default `groups`),
+- **claim**: a value of another ID token claim, written `claim=value`. The server only reads the claims listed in `oidc.binding_claims`, which defaults to `roles`. That's what Entra ID app roles show up as, so `roles=Backup.Admin` works out of the box.
+
+The binding form suggests the emails, groups and claim values earlier sign-ins have shown, refused ones included. So when someone new can't get in, their groups are already in the list.
+
+The bindings list shows when each subject last turned up at a sign-in, and marks it **stale** after 90 days without one. A stale user binding is usually someone who left, so have a look and remove it. A stale group might just be quiet.
+
+### Selectors
+
+A selector is a comma-separated list of clauses, and every clause has to hold:
+
+| Clause | Matches objects that |
+|---|---|
+| `team=web` | have `team` set to `web` |
+| `team!=web` | don't have `team=web`, including objects without a `team` label |
+| `env in (prod, stage)` | have `env` set to one of those |
+| `env notin (dev, test)` | don't have `env` set to one of those, including objects without `env` |
+| `managed` | have a `managed` label, whatever its value |
+| `!legacy` | have no `legacy` label |
+
+An empty selector matches everything. It's the same syntax as Kubernetes label selectors. The form shows how the server reads what you type before you save.
+
+!!! warning "`!=` and `notin` match unlabelled objects"
+    `team notin (finance)` also covers every object with no `team` label at all. That's how Kubernetes does it, and it's usually not what you want for access. Pair it with `team` (has a team) when it matters: `team, team notin (finance)`.
+
+Old API clients that send a selector as an object (`{"team": "web"}`) still work. It's read as `team=web`.
 
 Bindings add up. Give `team-web` the `operator` role on `team=web` and `viewer` on everything, and they can run their own jobs and look at everyone else's.
 
@@ -56,7 +81,7 @@ A few rules keep scopes honest:
 - **Relabelling needs write on both sides.** You can't move an object out of your scope, or someone else's into it.
 - **A job needs its pieces.** Creating or editing one needs `jobs:write` on its labels plus `agents:read` on the agent, `targets:read` on the target and `tenants:read` on the M365 tenant.
 - **Key rings are shared.** Attaching a target to a ring needs `keyrings:read` on it. Turning on encryption without picking a ring creates one with the target's labels, which needs `keyrings:write` on those. Rotate and export are ring permissions because they hit every target on the ring.
-- **Access management is global.** A role with `rbac:manage` or `apikeys:manage` can only be bound with an empty selector. Otherwise a scoped admin could just grant themselves more.
+- **Some permissions are global only.** A role with `rbac:manage`, `apikeys:manage` or `temporal:ui` can only be bound with an empty selector. The first two would let a scoped admin grant themselves more. The Temporal UI shows every workflow regardless of labels. A custom role that still has one of them on a scoped binding from before simply doesn't get that permission.
 - **The last global access admin can't be removed.** Add another binding first.
 
 Changes land within 30 seconds. Sessions re-check their bindings on every request through a short cache, so removing someone's binding doesn't wait for their 12-hour session to run out.
@@ -84,13 +109,24 @@ Every change, credential reveal, key export, sign-in, refused sign-in and access
 
 Each entry keeps the labels the object had at the time. `audit:read` is scoped like everything else, so a team sees its own trail and not the rest.
 
-The table refuses `UPDATE` and `DELETE`, including from the server's own database user. There's no retention yet. When it gets big, prune by hand:
+The table refuses `UPDATE` and plain `DELETE`, including from the server's own database user.
 
-```sql
-ALTER TABLE audit_log DISABLE TRIGGER audit_log_append_only;
-DELETE FROM audit_log WHERE at < now() - interval '1 year';
-ALTER TABLE audit_log ENABLE TRIGGER audit_log_append_only;
+### Retention and export
+
+Once a day the server deletes entries older than `audit.retention` (a year by default, `0` keeps everything). Before deleting, it hands them to `audit.export` if you set one:
+
+```yaml
+audit:
+  retention: 8760h
+  export: /var/log/fallbck/audit.jsonl        # appended, one JSON object per line
+  # export: https://logs.example.com/ingest   # POSTed as application/x-ndjson
+  # export_headers: {Authorization: "Splunk <token>"}
+  # export: udp://syslog.example.com:514      # or tcp://, or syslog: for the local daemon
 ```
+
+A batch is only deleted once the export took it. If the export fails, nothing is deleted and the server tries again the next day. A batch can occasionally be exported twice, if the server dies right between export and delete, so dedupe on `id` if that matters to you.
+
+Each prune writes its own `audit.prune` entry with the cut-off, the count and where the rows went. A bad `audit.export` stops the server at startup, so you find out straight away rather than a year later.
 
 ## Dev mode
 
@@ -98,6 +134,7 @@ With `auth.insecure_disable` (only under `--dev`), every request is the global a
 
 ## Known gaps
 
-- The Temporal UI isn't scoped. Anyone with `temporal:ui` sees every workflow, whatever their selector, so leave it out of roles for scoped teams. It's read-only by default (`temporal.ui.read_only`). Turn that off and the same people can terminate or cancel any team's workflows, so only do it if every `temporal:ui` holder is a global admin anyway.
+- The Temporal UI isn't scoped, which is why `temporal:ui` is global only. It's also read-only by default (`temporal.ui.read_only`). Turn that off and whoever can open it can terminate or cancel any workflow.
 - A key ring's list of attached targets shows every target name on the ring, scoped or not.
-- Selectors are equality only. `in`, `notin` and exists are planned.
+- Groups and claims come from the sign-in and live in the session. Someone removed from a group at your IdP keeps that group's access until their session ends (12 hours by default). Removing the *binding* takes effect within 30 seconds.
+- There's no directory sync (SCIM or Graph). Suggestions only know what sign-ins have shown.

@@ -1,6 +1,6 @@
 {{define "content"}}
 <div class="page-header-actions">
-  <p style="color: var(--text-muted); font-size: 14px;">A <strong>role</strong> is a set of permissions. A <strong>binding</strong> grants a role to a user (their verified OIDC email) or a group (a value of the groups claim) on the objects whose labels contain the selector; an empty selector means everything. Access is the union of all bindings, and no binding means no access. Changes apply within 30 seconds.</p>
+  <p style="color: var(--text-muted); font-size: 14px;">A <strong>role</strong> is a set of permissions. A <strong>binding</strong> grants a role to a user (their verified OIDC email), a group (a value of the groups claim) or a claim value (such as an app role) on the objects its selector matches; an empty selector means everything. Access is the union of all bindings, and no binding means no access. Changes apply within 30 seconds. Bindings nobody has signed in with for 90 days are marked stale.</p>
 </div>
 
 <div class="card" style="margin-bottom: 16px;">
@@ -9,8 +9,8 @@
     <button class="btn btn-primary btn-sm" onclick="openModal('modal-binding')">+ Add binding</button>
   </div>
   <table class="data-table">
-    <thead><tr><th>Subject</th><th>Role</th><th>Selector</th><th>Created</th><th></th></tr></thead>
-    <tbody id="bindings-body"><tr><td colspan="5" style="color: var(--text-dim);">Loading…</td></tr></tbody>
+    <thead><tr><th>Subject</th><th>Role</th><th>Selector</th><th>Last sign-in</th><th>Created</th><th></th></tr></thead>
+    <tbody id="bindings-body"><tr><td colspan="6" style="color: var(--text-dim);">Loading…</td></tr></tbody>
   </table>
 </div>
 
@@ -36,14 +36,17 @@
         <div style="display: grid; grid-template-columns: 1fr 2fr; gap: 16px;">
           <div class="form-group">
             <label>Kind</label>
-            <select name="kind" class="form-control">
+            <select name="kind" class="form-control" onchange="updateSubjectHints()">
               <option value="user">User (email)</option>
               <option value="group">Group (groups claim)</option>
+              <option value="claim">Claim (claim=value)</option>
             </select>
           </div>
           <div class="form-group">
             <label>Subject</label>
-            <input type="text" name="subject" class="form-control" placeholder="alice@example.com or backup-operators" required>
+            <input type="text" name="subject" class="form-control" list="seen-subjects" placeholder="alice@example.com" required autocomplete="off">
+            <datalist id="seen-subjects"></datalist>
+            <span class="form-text" id="subject-hint"></span>
           </div>
         </div>
         <div class="form-group">
@@ -51,9 +54,10 @@
           <select name="role" class="form-control" id="binding-role"></select>
         </div>
         <div class="form-group">
-          <label>Selector (one key=value per line; empty = everything)</label>
-          <textarea name="selector" class="form-control" rows="2" placeholder="team=web" style="font-family: var(--font-mono); font-size: 12px;"></textarea>
-          <span class="form-text">The subject reaches objects carrying all of these labels. Roles with rbac:manage or apikeys:manage can only be granted on everything.</span>
+          <label>Selector (empty = everything)</label>
+          <input type="text" name="selector" class="form-control" placeholder="team=web, env in (prod, stage), !legacy" style="font-family: var(--font-mono); font-size: 12px;" oninput="previewSelector(this)" autocomplete="off">
+          <span class="form-text selector-preview"></span>
+          <span class="form-text">Clauses separated by commas, all must hold: <code>key=value</code>, <code>key!=value</code>, <code>key in (a, b)</code>, <code>key notin (a, b)</code> (also matches objects without the key), <code>key</code> (has it), <code>!key</code> (doesn't). Roles with rbac:manage, apikeys:manage or temporal:ui can only be granted on everything.</span>
         </div>
       </div>
       <div class="modal-footer">
@@ -95,6 +99,7 @@
 <script>
 let accessRoles = [];
 let accessCatalog = { groups: [], global_only: [] };
+let accessSeen = { subjects: [], binding_claims: [] };
 
 async function accessJSON(url, opts) {
   const resp = await apiFetch(url, opts);
@@ -105,10 +110,12 @@ async function accessJSON(url, opts) {
 
 async function loadAccess() {
   try {
-    const [catalog, roles, bindings] = await Promise.all([
-      accessJSON('/api/v1/rbac/permissions'), accessJSON('/api/v1/rbac/roles'), accessJSON('/api/v1/rbac/bindings')
+    const [catalog, roles, bindings, seen] = await Promise.all([
+      accessJSON('/api/v1/rbac/permissions'), accessJSON('/api/v1/rbac/roles'), accessJSON('/api/v1/rbac/bindings'), accessJSON('/api/v1/rbac/subjects')
     ]);
     accessCatalog = catalog;
+    accessSeen = seen;
+    updateSubjectHints();
     accessRoles = roles;
     renderRoles();
     renderBindings(bindings);
@@ -122,13 +129,14 @@ async function loadAccess() {
 function renderBindings(bindings) {
   const body = document.getElementById('bindings-body');
   if (!bindings.length) {
-    body.innerHTML = '<tr><td colspan="5" style="color: var(--text-dim);">No bindings.</td></tr>';
+    body.innerHTML = '<tr><td colspan="6" style="color: var(--text-dim);">No bindings.</td></tr>';
     return;
   }
   body.innerHTML = bindings.map(b => `<tr>
     <td><span class="badge badge-neutral">${rdEsc(b.kind)}</span> <strong>${rdEsc(b.subject)}</strong></td>
     <td><span class="badge badge-info">${rdEsc(b.role)}</span></td>
-    <td>${Object.keys(b.selector || {}).length ? labelChips(b.selector) : '<span style="color: var(--text-muted);">everything</span>'}</td>
+    <td>${b.selector ? `<code style="font-size: 12px;">${rdEsc(b.selector)}</code>` : '<span style="color: var(--text-muted);">everything</span>'}</td>
+    <td style="font-size: 12px;">${b.last_seen ? rdEsc(new Date(b.last_seen).toLocaleDateString()) : '<span style="color: var(--text-muted);">never</span>'}${b.stale ? ' <span class="badge badge-warning" title="No sign-in has shown this subject for 90 days">stale</span>' : ''}</td>
     <td style="font-size: 12px; color: var(--text-muted);">${rdEsc(new Date(b.created_at).toLocaleString())}<br>${rdEsc(b.created_by)}</td>
     <td style="text-align: right;"><button class="btn btn-danger btn-sm" data-id="${rdEsc(b.id)}" onclick="deleteBinding(this.dataset.id)">Remove</button></td>
   </tr>`).join('');
@@ -209,7 +217,7 @@ async function submitBinding(e) {
       kind: form.elements['kind'].value,
       subject: form.elements['subject'].value.trim(),
       role: form.elements['role'].value,
-      selector: parseLabels(form.elements['selector'].value)
+      selector: form.elements['selector'].value.trim()
     };
     await accessJSON('/api/v1/rbac/bindings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     showToast('Binding added', 'success');
@@ -230,6 +238,19 @@ async function deleteBinding(id) {
   } catch (err) {
     showToast(err.message, 'error');
   }
+}
+
+// updateSubjectHints offers what sign-ins have shown for the chosen kind
+function updateSubjectHints() {
+  const form = document.getElementById('binding-form');
+  const kind = form.elements['kind'].value;
+  const list = document.getElementById('seen-subjects');
+  list.innerHTML = accessSeen.subjects.filter(s => s.kind === kind).map(s => `<option value="${rdEsc(s.value)}">`).join('');
+  const claims = accessSeen.binding_claims || [];
+  form.elements['subject'].placeholder = { user: 'alice@example.com', group: 'backup-operators', claim: (claims[0] || 'roles') + '=Backup.Admin' }[kind];
+  document.getElementById('subject-hint').innerText = kind === 'claim'
+    ? (claims.length ? `Claims this server reads (auth.oidc.binding_claims): ${claims.join(', ')}.` : 'This server reads no binding claims (auth.oidc.binding_claims is empty).')
+    : (kind === 'group' ? 'Groups seen at sign-in are suggested.' : 'Emails seen at sign-in are suggested; unverified emails never match.');
 }
 
 document.addEventListener('DOMContentLoaded', loadAccess);

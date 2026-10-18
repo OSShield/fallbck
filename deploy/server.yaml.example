@@ -15,6 +15,10 @@ data_dir: "/var/lib/fallbck/server"
 # Containers can pass the key itself (64 hex chars) as FALLBCK_MASTER_KEY instead.
 security:
   master_key_file: "/var/lib/fallbck/server/master.key"
+audit:
+  retention: 8760h                                 # daily prune of older entries; 0 keeps everything
+  # export: /var/log/fallbck/audit.jsonl           # or https://..., udp://host:514, tcp://host:514, syslog:
+  # export_headers: {Authorization: "Bearer ..."}  # HTTP export only
 # agent_ca_bundle_path: "/etc/fallbck/proxy-ca.pem"   # only for private CAs on public_url
 # timezone: "Europe/Stockholm"     # cron schedules run here (default: TZ env / host zone, else UTC)
 
@@ -26,6 +30,7 @@ auth:
     scopes: [openid, profile, email, groups]
     allowed_groups: ["backup-admins"]            # optional
     allowed_emails: []                           # optional
+    # binding_claims: [roles]                    # claims "claim" role bindings can match (default: roles)
   session_ttl: 12h
   insecure_disable: false                        # dev only, requires --dev
 

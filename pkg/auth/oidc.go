@@ -26,6 +26,9 @@ type Identity struct {
 	// EmailUnverified is set when the IdP says email_verified=false; allowed_emails
 	// never matches such an identity (a missing claim is taken as verified)
 	EmailUnverified bool
+	// Claims are the values of the configured binding claims as "<claim>=<value>",
+	// which "claim" role bindings match
+	Claims []string
 }
 
 // ErrNotAuthorized is returned when an authenticated identity is not permitted to administer
@@ -118,6 +121,7 @@ func (o *OIDC) Exchange(ctx context.Context, code, nonce string) (*Identity, err
 		Email:   stringClaim(claims, "email"),
 		Name:    stringClaim(claims, "name"),
 		Groups:  stringSliceClaim(claims, o.cfg.GroupsClaim),
+		Claims:  bindingClaimValues(claims, o.cfg.EffectiveBindingClaims()),
 	}
 	if id.Name == "" {
 		id.Name = stringClaim(claims, "preferred_username")
@@ -159,6 +163,21 @@ func stringClaim(claims map[string]any, key string) string {
 		return v
 	}
 	return ""
+}
+
+// bindingClaimValues collects "<claim>=<value>" for each configured claim; a claim
+// may be a single string or a list of strings
+func bindingClaimValues(claims map[string]any, names []string) []string {
+	var out []string
+	for _, name := range names {
+		if v, ok := claims[name].(string); ok && v != "" {
+			out = append(out, name+"="+v)
+		}
+		for _, v := range stringSliceClaim(claims, name) {
+			out = append(out, name+"="+v)
+		}
+	}
+	return out
 }
 
 func stringSliceClaim(claims map[string]any, key string) []string {
