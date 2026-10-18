@@ -39,7 +39,7 @@ Volumes are copied live by default. For anything that hates being copied hot:
 |---|---|
 | `auto` (default) | `direct` if `/var/lib/docker/volumes` is visible, otherwise `helper` |
 | `direct` | reads `/var/lib/docker/volumes` straight off disk |
-| `helper` | streams each volume through a throwaway container (`docker_backup.helper_image`, default `alpine:3.20`) |
+| `helper` | streams each volume through a throwaway container (`docker_backup.helper_image`, default `alpine:3.24`) |
 
 Paused and helper-read volumes get staged in the spool first, so size the spool for your biggest one. The daemon is reached through `DOCKER_HOST` (unix sockets only) or `/var/run/docker.sock`. Override with `docker_backup.socket`.
 

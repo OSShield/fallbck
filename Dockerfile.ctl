@@ -2,7 +2,7 @@
 # fallbck-ctl: admin CLI. Authenticate with FALLBCK_API_KEY (created in the Web UI).
 # Built by GoReleaser (dockers_v2) from the prebuilt $TARGETPLATFORM/fallbck-ctl.
 
-FROM alpine:3
+FROM alpine:3.24
 
 RUN apk add --no-cache ca-certificates tzdata
 

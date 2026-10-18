@@ -4,7 +4,7 @@
 # context at $TARGETPLATFORM/fallbck-server. Build images with
 #   goreleaser release --snapshot --clean
 
-FROM alpine:3
+FROM alpine:3.24
 
 RUN apk add --no-cache ca-certificates tzdata curl
 

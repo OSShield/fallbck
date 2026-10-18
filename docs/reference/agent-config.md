@@ -58,5 +58,5 @@ See [Docker hosts](../agents/docker.md).
 | Key | Env | Default | What it does |
 |---|---|---|---|
 | `volume_access` | `FALLBCK_AGENT_DOCKER_VOLUME_ACCESS` | `auto` | `auto`, `direct` or `helper`. |
-| `helper_image` | `FALLBCK_AGENT_DOCKER_HELPER_IMAGE` | `alpine:3.20` | Image for helper containers. |
+| `helper_image` | `FALLBCK_AGENT_DOCKER_HELPER_IMAGE` | `alpine:3.24` | Image for helper containers. |
 | `socket` | `FALLBCK_AGENT_DOCKER_SOCKET` | `DOCKER_HOST` or `/var/run/docker.sock` | Unix sockets only. |

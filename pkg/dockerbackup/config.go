@@ -18,7 +18,7 @@ const (
 )
 
 // DefaultHelperImage mounts volumes and host directories for helper-mode reads
-const DefaultHelperImage = "alpine:3.20"
+const DefaultHelperImage = "alpine:3.24"
 
 // DefaultSocket is the Docker daemon socket unless DOCKER_HOST names another one
 const DefaultSocket = "/var/run/docker.sock"

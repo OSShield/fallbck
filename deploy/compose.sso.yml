@@ -36,7 +36,7 @@ services:
   # Caddy keeps its PKI root-only (0700); this one-shot job publishes the root
   # certificate into a small volume the non-root server user can read.
   caddy-ca:
-    image: alpine:3.20
+    image: alpine:3.24
     container_name: fallbck-caddy-ca
     depends_on:
       caddy:
