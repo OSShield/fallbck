@@ -109,7 +109,7 @@ func TestUIRenderRoutes(t *testing.T) {
 // aliceIsAdmin binds the admin role to alice@example.com and nothing to anyone else
 type aliceIsAdmin struct{}
 
-func (aliceIsAdmin) BindingsFor(_ context.Context, email string, _ []string) ([]*db.RoleBinding, error) {
+func (aliceIsAdmin) BindingsFor(_ context.Context, email string, _, _ []string) ([]*db.RoleBinding, error) {
 	if email != "alice@example.com" {
 		return nil, nil
 	}

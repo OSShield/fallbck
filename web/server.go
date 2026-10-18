@@ -359,7 +359,16 @@ func (u *UIHandler) authorizeLogin(r *http.Request, id *auth.Identity) string {
 			audit("auth.bootstrap", map[string]any{"role": auth.RoleAdmin})
 		}
 	}
-	bindings, err := u.deps.Admin.RBAC.Session(ctx, id.Email, id.EmailUnverified, id.Groups)
+	// Remember what this sign-in showed, refused or not: the Access page suggests
+	// these groups and claim values, and flags bindings nobody has used in a while
+	verified := id.Email
+	if id.EmailUnverified {
+		verified = ""
+	}
+	if err := u.DB.RecordSignIn(ctx, verified, id.Groups, id.Claims); err != nil {
+		slog.Warn("Recording the sign-in's groups and claims failed", "error", err)
+	}
+	bindings, err := u.deps.Admin.RBAC.Session(ctx, id.Email, id.EmailUnverified, id.Groups, id.Claims)
 	if err != nil {
 		slog.Error("Resolving role bindings failed", "error", err)
 		return "failed"
@@ -368,10 +377,10 @@ func (u *UIHandler) authorizeLogin(r *http.Request, id *auth.Identity) string {
 		reason := refusalReason(id)
 		slog.Warn("Sign-in refused: no role binding", "reason", reason, "subject", id.Subject, "email", id.Email,
 			"email_unverified", id.EmailUnverified, "groups", id.Groups)
-		audit("auth.denied", map[string]any{"reason": reason, "groups": id.Groups, "email_unverified": id.EmailUnverified})
+		audit("auth.denied", map[string]any{"reason": reason, "groups": id.Groups, "claims": id.Claims, "email_unverified": id.EmailUnverified})
 		return reason
 	}
-	audit("auth.login", map[string]any{"groups": id.Groups})
+	audit("auth.login", map[string]any{"groups": id.Groups, "claims": id.Claims})
 	return ""
 }
 
