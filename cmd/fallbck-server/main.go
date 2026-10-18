@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/osshield/fallbck/pkg/agentupdate"
 	"github.com/osshield/fallbck/pkg/api"
+	"github.com/osshield/fallbck/pkg/audit"
 	"github.com/osshield/fallbck/pkg/auth"
 	"github.com/osshield/fallbck/pkg/config"
 	"github.com/osshield/fallbck/pkg/db"
@@ -303,6 +304,13 @@ func main() {
 			os.Exit(1)
 		}
 		rbac = auth.NewResolver(database, auth.DefaultResolverTTL)
+		// Audit retention: entries older than audit.retention go to audit.export first
+		auditExport, err := audit.NewExport(cfg.Audit.Export, cfg.Audit.ExportHeaders)
+		if err != nil {
+			slog.Error("Audit log export is misconfigured", "error", err)
+			os.Exit(1)
+		}
+		go audit.RunPruner(ctx, database, cfg.Audit.Retention, auditExport, audit.Redact(cfg.Audit.Export))
 	}
 	adminAuth := auth.NewAdminAuth(tokenManager, keyStore, cfg.Auth.InsecureDisable)
 	adminAuth.RBAC = rbac
