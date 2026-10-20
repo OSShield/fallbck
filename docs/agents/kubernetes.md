@@ -5,7 +5,9 @@
 ## Install
 
 ```bash
-helm install fallbck-k8s-agent deploy/helm/fallbck-k8s-agent \
+helm repo add osshield https://helm.osshield.eu
+helm repo update
+helm upgrade --install fallbck-k8s-agent osshield/fallbck-k8s-agent \
   --namespace fallbck --create-namespace \
   --set server.url=https://backup.example.com \
   --set clusterName=prod \

@@ -290,15 +290,16 @@ jobs:
           DIGEST=$(grep -o 'sha256:[0-9a-f]\{64\}' push.log | head -1)
           [ -n "$DIGEST" ] || { echo "no digest in helm push output" >&2; exit 1; }
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
-          # Keyless signature on the OCI chart, same identity and trust as the images
-          cosign sign --yes "ghcr.io/osshield/fallbck/k8s-agent@$DIGEST"
+          # Keyless signature on the OCI chart, same identity and trust as the images.
+          cosign login ghcr.io -u "${{ github.actor }}" -p "$GITHUB_TOKEN"
+          cosign sign --yes "ghcr.io/osshield/fallbck/k8s-agent/fallbck-k8s-agent@$DIGEST"
 
       # SLSA build provenance for the chart, stored next to it in the registry; verify
-      # with: gh attestation verify oci://ghcr.io/osshield/fallbck/k8s-agent:<v> -o OSShield
+      # with: gh attestation verify oci://ghcr.io/osshield/fallbck/k8s-agent/fallbck-k8s-agent:<v> -o OSShield
       - name: Attest chart provenance
         uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
         with:
-          subject-name: ghcr.io/osshield/fallbck/k8s-agent
+          subject-name: ghcr.io/osshield/fallbck/k8s-agent/fallbck-k8s-agent
           subject-digest: ${{ steps.chart.outputs.digest }}
           push-to-registry: true
 

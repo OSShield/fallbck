@@ -1,6 +1,6 @@
 # Helm chart
 
-The chart for [`fallbck-k8s-agent`](../agents/kubernetes.md) lives in [`deploy/helm/fallbck-k8s-agent`](https://github.com/osshield/fallbck/tree/main/deploy/helm/fallbck-k8s-agent). You **have to** set `server.url`, `clusterName` and an enrollment key. Everything else has a sane default.
+The chart for [`fallbck-k8s-agent`](../agents/kubernetes.md) is published to the Helm repository at `https://helm.osshield.eu` with every release (`helm repo add osshield https://helm.osshield.eu`, then `osshield/fallbck-k8s-agent`). The source is in [`deploy/helm/fallbck-k8s-agent`](https://github.com/osshield/fallbck/tree/main/deploy/helm/fallbck-k8s-agent). You **have to** set `server.url`, `clusterName` and an enrollment key. Everything else has a sane default.
 
 ## Connection and identity
 

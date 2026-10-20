@@ -114,7 +114,7 @@ function agentWizardSections(type, target, serverUrl, token) {
     sections.push({
       title: 'Install the Helm chart',
       text: 'Run this with a kubeconfig that is cluster-admin on the target cluster. The agent enrolls as k8s-<clusterName> and keeps its identity in a Secret in the fallbck namespace; helm upgrade never touches it.',
-      code: `helm upgrade --install fallbck-k8s-agent \\\n  oci://cr.osshield.eu/helm/fallbck-k8s-agent \\\n  --namespace fallbck --create-namespace \\\n  --set server.url=${serverUrl} \\\n  --set clusterName=my-cluster \\\n  --set enrollment.key=${token}`,
+      code: `helm repo add osshield https://helm.osshield.eu\nhelm repo update\nhelm upgrade --install fallbck-k8s-agent osshield/fallbck-k8s-agent \\\n  --namespace fallbck --create-namespace \\\n  --set server.url=${serverUrl} \\\n  --set clusterName=my-cluster \\\n  --set enrollment.key=${token}`,
       note: 'Private or self-signed server certificate: add --set-file server.caCert=ca.pem or, for testing only, --set server.insecureSkipVerify=true.'
     });
     sections.push({
