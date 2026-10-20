@@ -7,10 +7,15 @@ go build ./... && go test ./...
 go test -tags sqlite ./pkg/temporal/embedded/ ./pkg/integration/   # boots a real Temporal in-process
 ```
 
-The server binary is big (about 175 MB) because the whole Temporal server and Web UI are baked in. The Dockerfiles use BuildKit cache mounts, so rebuilds stay quick.
+Some things are best tested against a real PBS instance - e.g. whether `proxmox-backup-client` restores what the agent encrypted, whether dedup and incremental reuse hold up. The `pbse2e` tests start a throwaway [ephemeral-pbs](https://github.com/osshield/ephemeral-pbs) container per package (needs Docker) and run the agent activity through the tunnel against it:
 
-!!! warning "gopbs replace"
-    `go.mod` currently `replace`s `github.com/osshield/gopbs` with a sibling checkout (`../gopbs-fallbck`, branch `fallbck-session-dialer`) that adds `pbs.Config.DialSession`. Until that's merged and tagged, Docker and CI builds need the replace pointed at a published version.
+```bash
+go test -tags pbse2e -count=1 ./pkg/tokencheck/ ./pkg/agent/
+```
+
+Set `FALLBCK_E2E_PBS_IMAGE` to try a local build of the image. Users, tokens and namespaces are configured in `pkg/pbse2e/pbs-config.yml`.
+
+The server binary is big (about 175 MB) because the whole Temporal server and Web UI are baked in. The Dockerfiles use BuildKit cache mounts, so rebuilds stay quick.
 
 For a local stack to poke at, see [Try it locally](getting-started/quick-start.md).
 
