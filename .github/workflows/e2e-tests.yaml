@@ -1,0 +1,36 @@
+name: E2E tests
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_call:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: e2e-tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  pbs:
+    name: Real PBS (ephemeral-pbs)
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Each package starts its own ephemeral-pbs container (pkg/pbse2e); pull once up front
+      - name: Pull ephemeral-pbs
+        run: docker pull ghcr.io/osshield/ephemeral-pbs:advanced
+
+      - name: Token check, encryption and incremental runs against a real PBS
+        run: go test -tags pbse2e -count=1 -v ./pkg/tokencheck/ ./pkg/agent/ -run 'TestTokenCheckRealPBS|TestPBS'

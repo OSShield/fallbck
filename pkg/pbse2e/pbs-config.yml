@@ -1,0 +1,22 @@
+# ephemeral-pbs config for the pbse2e tests (see pbse2e.go). Every token's secret is
+# default_token_secret.
+datastore: data
+default_token_secret: "12345678-1234-1234-1234-1234567890ab"
+
+namespaces:
+  e2e:
+  tokencheck:
+
+users:
+  # Least-privilege backup token: DatastoreBackup on the e2e namespace only
+  backup:
+    namespaces: [e2e]
+    permissions: [DatastoreBackup]
+    token:
+      - fallbck
+  # The token check test widens and narrows this one's ACLs
+  check:
+    namespaces: [tokencheck]
+    permissions: [DatastoreBackup]
+    token:
+      - fallbck

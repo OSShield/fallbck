@@ -76,7 +76,7 @@ function agentWizardRepo(target, pkg) {
         `sudo rpm --import https://rpm.osshield.eu/key\nsudo yum install ${pkg}`;
     case 'alpine':
       return `apk update\napk add curl\ncd /etc/apk/keys && curl -JO https://alpine.osshield.eu/key\n` +
-        `echo "https://alpine.osshield.eu" >> /etc/apk/repositories\napk update\napk add ${pkg}`;
+        `echo "https://alpine.osshield.eu/all" >> /etc/apk/repositories\napk update\napk add ${pkg}`;
   }
   return '';
 }
