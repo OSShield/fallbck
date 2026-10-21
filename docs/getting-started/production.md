@@ -70,7 +70,7 @@ auth:
 Register `https://backup.example.com/auth/callback` (your `public_url` plus the callback path) as the redirect URI in your IdP. The first person to sign in becomes the admin, so make that you, then hand out roles under *Access* ([Access control](../operations/access.md)). Every key has a `FALLBCK_*` environment variable too, which is handy for secrets. The full list is in [Server config](../reference/server-config.md).
 
 !!! danger "Back up the master key"
-    On first start the server generates `master.key` in its data dir. It seals your PBS API tokens and every target's encryption key. Lose it along with your exported key files and your encrypted backups are gone for good. Back it up with the database, and keep it somewhere that isn't the backup server.
+    On first start the server generates `master.key` in its data dir. It seals your PBS API tokens and every target's encryption key. Lose it along with your exported key files and your encrypted backups are gone for good unless you manually back up the encryption keys. Back it up with the database, and keep it somewhere that isn't the backup server.
 
 ## Put a reverse proxy in front
 
@@ -135,7 +135,79 @@ Whatever proxy you use, it has to:
     }
     ```
 
+=== "Traefik"
+
+    Traefik v3 has a 60-second read timeout on entrypoints by default, which is too short for the long polls. Turn it off or raise it in the static config:
+
+    ```yaml
+    # traefik.yml (static)
+    entryPoints:
+      websecure:
+        address: ":443"
+        transport:
+          respondingTimeouts:
+            readTimeout: 0
+    providers:
+      file:
+        filename: /etc/traefik/fallbck.yml
+    ```
+
+    Then route to the server over h2c in the dynamic config:
+
+    ```yaml
+    # fallbck.yml (dynamic)
+    http:
+      routers:
+        fallbck:
+          rule: Host(`backup.example.com`)
+          entryPoints: [websecure]
+          service: fallbck
+          tls: {}
+      services:
+        fallbck:
+          loadBalancer:
+            servers:
+              - url: h2c://fallbck-server:8080
+            responseForwarding:
+              flushInterval: -1
+    ```
+
+=== "HAProxy"
+
+    Enable HTTP/2 to the backend with `proto h2`, this enables both HTTP and gRPC:
+
+    ```haproxy
+    defaults
+        mode http
+        timeout connect 5s
+        timeout client  120s
+        timeout server  120s
+
+    frontend fallbck_in
+        bind :443 ssl crt /etc/haproxy/certs/backup.example.com.pem alpn h2,http/1.1
+        option forwardfor
+        http-request set-header X-Forwarded-Proto https
+        default_backend fallbck
+
+    backend fallbck
+        server fallbck fallbck-server:8080 proto h2
+    ```
+
 By default only a proxy on the same host may set `X-Forwarded-For`. If yours runs in a container or on another box, add its address or network to `trusted_proxies` (for Docker, its compose network, e.g. `172.16.0.0/12`). Otherwise the audit log shows the proxy's address for everyone, and the per-address enrollment limit treats all agents as one client. Don't trust a whole private range when other hosts in it can reach the server directly: they could then fake their address.
+
+### Behind Cloudflare
+
+Cloudflare's proxy works for the Web UI and API. If you want to proxy agent traffic:
+
+- **Turn on gRPC** under *Network* in the Cloudflare dashboard. Agents speak gRPC on the same hostname, and without it they can't connect at all.
+- **Keep your own proxy in front of the server.** Cloudflare only proxies gRPC to an origin that speaks HTTP/2 over TLS on 443, and `fallbck-server` only does plaintext h2c. Put Caddy or nginx (as above) in between with a real cert or a Cloudflare Origin CA cert, and set SSL mode to *Full (strict)*.
+- **Trust Cloudflare's ranges.** Add your local proxy plus the ranges from <https://www.cloudflare.com/ips/> to `trusted_proxies`. Then firewall the origin so only Cloudflare can reach it, or anyone who skips Cloudflare can fake their address.
+- **Keep the WAF and bot checks off agent traffic.** Agents aren't browsers and can't solve a challenge. Bot Fight Mode can't be skipped per path, so switch it off, or use Super Bot Fight Mode with a skip rule for `/api/v1/agents/*` and gRPC requests.
+
+!!! warning "Backups through the tunnel"
+    Cloudflare cuts a request after about 100 seconds without a response from the origin (only Enterprise can raise that), and Free and Pro plans cap request bodies at 100 MB. A backup through the server's PBS tunnel is one long gRPC stream, so a large or slow run may get cut off. Test a big backup and a long incremental before you rely on it.
+
+    The safe setup is a second hostname for agents with the proxy off (grey cloud), pointed at the same reverse proxy, and set as the agents' `server_url`. Or turn on [direct PBS](../agents/index.md) for jobs whose agents can reach PBS themselves, so the backup data never goes through Cloudflare.
 
 ## Next up
 

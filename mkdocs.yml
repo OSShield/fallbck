@@ -5,8 +5,16 @@ repo_url: https://github.com/osshield/fallbck
 repo_name: osshield/fallbck
 edit_uri: edit/main/docs/
 
+extra_css:
+  - stylesheets/fallbck.css
+
 theme:
   name: material
+  logo: assets/fallbck-horizontal.svg
+  favicon: assets/fallbck-icon.svg
+  font:
+    text: Barlow
+    code: JetBrains Mono
   features:
     - navigation.sections
     - navigation.top
@@ -17,9 +25,13 @@ theme:
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
+      primary: custom
+      accent: custom
       toggle: {icon: material/weather-night, name: Dark mode}
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
+      primary: custom
+      accent: custom
       toggle: {icon: material/weather-sunny, name: Light mode}
 
 markdown_extensions:
