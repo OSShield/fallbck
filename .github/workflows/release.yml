@@ -312,10 +312,10 @@ jobs:
       - name: Upload MSI to the GitHub release and winget repository
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          W_VERSION: "${GITHUB_REF#refs/tags/v}"
           W_INSTALLERURL: "https://win.osshield.eu"
         run: |
           gh release upload "${GITHUB_REF#refs/tags/}" dist/msi/fallbck-agent_Windows_x86_64.msi --clobber
+          export W_VERSION="${GITHUB_REF#refs/tags/v}"
           export W_SHA256SUM=$(sha256sum dist/msi/fallbck-agent_Windows_x86_64.msi | cut -d ' ' -f 1)
           cat deploy/windows/winget.yaml | envsubst > dist/win-fallbck-agent-manifest.yaml
           curl -fsS -X PUT -H "Authorization: Bearer ${{ steps.trusted_token.outputs.trusted_token }}" -F manifest=@dist/win-fallbck-agent-manifest.yaml -F installer=@dist/msi/fallbck-agent_Windows_x86_64.msi https://win.osshield.eu/upload
