@@ -28,7 +28,7 @@ import (
 )
 
 // ReleaseBase is where goreleaser publishes the archives
-const ReleaseBase = "https://github.com/osshield/fallbck/releases/download"
+const ReleaseBase = "https://github.com/OSShield/fallbck/releases/download"
 
 // retryAfter is how long a failed fetch is remembered before it is tried again
 const retryAfter = 10 * time.Minute

@@ -886,7 +886,7 @@ func (u *UIHandler) HandleInstallScriptPS(w http.ResponseWriter, r *http.Request
 param(
   [string]$Server = "%[1]s",
   [Parameter(Mandatory = $true)][string]$Token,
-  [string]$MsiUrl = "https://github.com/osshield/fallbck/releases/latest/download/fallbck-agent_Windows_x86_64.msi",
+  [string]$MsiUrl = "https://github.com/OSShield/fallbck/releases/latest/download/fallbck-agent_Windows_x86_64.msi",
   [string]$MsiPath = "",
   [string]$CaCert = ""
 )

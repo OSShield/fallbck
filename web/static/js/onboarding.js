@@ -56,7 +56,7 @@ function agentWizardSection(s, i) {
   return wrap;
 }
 
-const AGENT_WIZARD_RELEASES = 'https://github.com/osshield/fallbck/releases';
+const AGENT_WIZARD_RELEASES = 'https://github.com/OSShield/fallbck/releases';
 const AGENT_WIZARD_RAW = 'https://raw.githubusercontent.com/osshield/fallbck/main';
 
 // Package repository setup per platform. Proxmox VE nodes are administered as root

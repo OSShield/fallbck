@@ -1,6 +1,6 @@
 # Linux packages
 
-Every release ships `.deb`, `.rpm` and `.apk` packages for `fallbck-server` and `fallbck-agent`. Grab them from the [releases page](https://github.com/osshield/fallbck/releases).
+Every release ships `.deb`, `.rpm` and `.apk` packages for `fallbck-server` and `fallbck-agent`. Grab them from the [releases page](https://github.com/OSShield/fallbck/releases).
 
 | Package | Service | Config |
 |---|---|---|

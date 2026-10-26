@@ -4,7 +4,7 @@
 
 ## Install
 
-Grab the MSI from the [releases page](https://github.com/osshield/fallbck/releases). Double-click it and it asks for the server URL, the enrollment key and, optionally, a CA bundle. It then enrolls and starts the service.
+Grab the MSI from the [releases page](https://github.com/OSShield/fallbck/releases). Double-click it and it asks for the server URL, the enrollment key and, optionally, a CA bundle. It then enrolls and starts the service.
 
 With winget, add the OSShield source once and install from it. Winget runs the MSI silently, so pass the server URL and the enrollment key as MSI properties with `--custom`:
 
