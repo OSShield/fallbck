@@ -33,6 +33,7 @@
       <option value="">Any last run</option>
       <option value="completed">Completed</option>
       <option value="failed">Failed</option>
+      <option value="partial">Partial</option>
       <option value="running">Running</option>
       <option value="cancelled">Cancelled</option>
       <option value="never">Never ran</option>
@@ -125,6 +126,7 @@
                 <a href="/runs/{{.LastRun.RunID}}" style="text-decoration: none;">
                   {{if eq (printf "%s" .LastRun.Status) "completed"}}<span class="badge badge-success">Completed</span>
                   {{else if eq (printf "%s" .LastRun.Status) "failed"}}<span class="badge badge-danger">Failed</span>
+                  {{else if eq (printf "%s" .LastRun.Status) "partial"}}<span class="badge badge-warning">Partial</span>
                   {{else if eq (printf "%s" .LastRun.Status) "cancelled"}}<span class="badge badge-neutral">Cancelled</span>
                   {{else}}<span class="badge badge-warning">{{.LastRun.Status}}</span>{{end}}
                 </a>

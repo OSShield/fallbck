@@ -146,8 +146,13 @@ func Evaluate(in Input) []Alert {
 		if reason := cannotRun(a, summary, j); reason != "" {
 			add(LevelDanger, fmt.Sprintf("Job %q cannot run on this agent", j.Name), reason, j)
 		}
-		if lr := in.LastRuns[j.ID]; lr != nil && lr.Status == db.RunStatusFailed {
-			add(LevelWarning, fmt.Sprintf("Last run of %q failed", j.Name), fmt.Sprintf("Failed %s.", lr.At.Format("2006-01-02 15:04")), j)
+		if lr := in.LastRuns[j.ID]; lr != nil {
+			switch lr.Status {
+			case db.RunStatusFailed:
+				add(LevelWarning, fmt.Sprintf("Last run of %q failed", j.Name), fmt.Sprintf("Failed %s.", lr.At.Format("2006-01-02 15:04")), j)
+			case db.RunStatusPartial:
+				add(LevelWarning, fmt.Sprintf("Last run of %q was partial", j.Name), fmt.Sprintf("Finished %s with some units failed; see the run for details.", lr.At.Format("2006-01-02 15:04")), j)
+			}
 		}
 	}
 

@@ -240,7 +240,8 @@ func Run(ctx context.Context, o RunOptions) (*temporal.BackupExecutionResult, er
 			total.ErrorMessage = msg
 			return total, errors.New(msg)
 		}
-		total.ErrorMessage = "completed with " + msg
+		total.Status = "partial"
+		total.ErrorMessage = msg
 		slog.Warn("Microsoft 365 backup completed with failed units", "failed", failed, "units", len(units))
 	}
 	return total, nil
