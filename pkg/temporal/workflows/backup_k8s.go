@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/osshield/fallbck/pkg/db"
 	"github.com/osshield/fallbck/pkg/k8sbackup"
 	"github.com/osshield/fallbck/pkg/rundetail"
 	fbtemporal "github.com/osshield/fallbck/pkg/temporal"
@@ -154,7 +155,8 @@ func runKubernetesBackup(ctx workflow.Context, session *fbtemporal.BackupSession
 		out.err = fmt.Errorf("%d of %d volumes failed: %s", len(failed), len(results), joinFailures(failed))
 		out.result.ErrorMessage = out.err.Error()
 	case len(failed) > 0:
-		out.result.ErrorMessage = fmt.Sprintf("completed with %d failed volume(s): %s", len(failed), joinFailures(failed))
+		out.result.Status = db.RunStatusPartial
+		out.result.ErrorMessage = fmt.Sprintf("%d of %d volumes failed: %s", len(failed), len(results), joinFailures(failed))
 		logger.Warn("Kubernetes backup completed with volume failures", "failed", len(failed))
 	}
 	return out
