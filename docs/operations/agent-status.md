@@ -11,7 +11,7 @@ Click any hostname on the Agents page to get to **/agents/&lt;id&gt;**, which ha
     - an agent version behind the server's
     - spool space below `min_free_bytes`
     - jobs this agent can't run: DB tools missing, not a PVE/Docker host, a credential profile it doesn't have or that's for another engine
-    - jobs whose last run failed
+    - jobs whose last run failed, or was **partial** (some units, volumes or users failed while the rest reached PBS)
 - The credential profiles and client tools it reported.
 - Its jobs with their last run, and its recent runs.
 

@@ -103,6 +103,15 @@ func TestSpoolFailedRunAndVersion(t *testing.T) {
 	}
 }
 
+func TestPartialLastRun(t *testing.T) {
+	a := agentWith(t, nil)
+	job := &db.BackupJob{ID: uuid.New(), AgentID: a.ID, Name: "m365", Enabled: true, JobType: db.JobTypeFilesystem}
+	got := Evaluate(Input{Agent: a, Jobs: []*db.BackupJob{job}, ServerVersion: a.Version, LastRuns: map[uuid.UUID]*db.JobLastRun{job.ID: {Status: db.RunStatusPartial, At: time.Now()}}})
+	if s := titles(got); !strings.Contains(s, `warning:Last run of "m365" was partial`) {
+		t.Errorf("missing partial warning in:\n%s", s)
+	}
+}
+
 func TestVersionCompare(t *testing.T) {
 	cases := []struct {
 		agent, server string

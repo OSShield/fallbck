@@ -416,6 +416,8 @@ const (
 	RunStatusRunning   RunStatus = "running"
 	RunStatusCompleted RunStatus = "completed"
 	RunStatusFailed    RunStatus = "failed"
+	// RunStatusPartial: some of the actions/contents in the backup might have failed
+	RunStatusPartial RunStatus = "partial"
 	// RunStatusCancelling: cancellation requested, waiting for the agent to stop
 	RunStatusCancelling RunStatus = "cancelling"
 	RunStatusCancelled  RunStatus = "cancelled"

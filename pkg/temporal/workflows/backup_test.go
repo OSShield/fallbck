@@ -296,13 +296,13 @@ func TestBackupJobWorkflowKubernetes(t *testing.T) {
 	if finalized == nil {
 		t.Fatal("FinalizeBackupRun not called")
 	}
-	if finalized.Status != db.RunStatusCompleted || finalized.SnapshotID != resResult.SnapshotID {
+	if finalized.Status != db.RunStatusPartial || finalized.SnapshotID != resResult.SnapshotID {
 		t.Errorf("finalized: %+v", finalized)
 	}
 	if finalized.BytesScanned != 150 || finalized.ChunkCount != 6 {
 		t.Errorf("aggregation: scanned=%d chunks=%d", finalized.BytesScanned, finalized.ChunkCount)
 	}
-	if !strings.Contains(finalized.ErrorMessage, "app/bad") || !strings.Contains(finalized.ErrorMessage, "1 failed volume") {
+	if !strings.Contains(finalized.ErrorMessage, "app/bad") || !strings.Contains(finalized.ErrorMessage, "volumes failed") {
 		t.Errorf("error message: %q", finalized.ErrorMessage)
 	}
 }

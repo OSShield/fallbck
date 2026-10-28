@@ -250,6 +250,7 @@
               <a href="/runs/{{.LastRun.RunID}}" style="text-decoration: none;">
                 {{if eq (printf "%s" .LastRun.Status) "completed"}}<span class="badge badge-success">Completed</span>
                 {{else if eq (printf "%s" .LastRun.Status) "failed"}}<span class="badge badge-danger">Failed</span>
+                {{else if eq (printf "%s" .LastRun.Status) "partial"}}<span class="badge badge-warning">Partial</span>
                 {{else if eq (printf "%s" .LastRun.Status) "cancelled"}}<span class="badge badge-neutral">Cancelled</span>
                 {{else}}<span class="badge badge-warning">{{.LastRun.Status}}</span>{{end}}
               </a>
@@ -284,11 +285,12 @@
             {{if eq .Status "completed"}}<span class="badge badge-success"><span class="badge-dot"></span> Completed</span>
             {{else if eq .Status "running"}}<span class="badge badge-warning"><span class="badge-dot"></span> Running</span>
             {{else if eq .Status "failed"}}<span class="badge badge-danger"><span class="badge-dot"></span> Failed</span>
+            {{else if eq .Status "partial"}}<span class="badge badge-warning"><span class="badge-dot"></span> Partial</span>
             {{else if eq .Status "cancelling"}}<span class="badge badge-warning"><span class="badge-dot"></span> Cancelling</span>
             {{else if eq .Status "cancelled"}}<span class="badge badge-neutral"><span class="badge-dot"></span> Cancelled</span>
             {{else}}<span class="badge badge-neutral"><span class="badge-dot"></span> {{.Status}}</span>{{end}}
           </td>
-          <td><strong>{{.JobName}}</strong>{{if .ErrorMessage}}<div style="font-size: 11px; color: var(--danger-text); max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{{.ErrorMessage}}">{{.ErrorMessage}}</div>{{end}}</td>
+          <td><strong>{{.JobName}}</strong>{{if .ErrorMessage}}<div style="font-size: 11px; color: {{if eq .Status "partial"}}var(--warning-text){{else}}var(--danger-text){{end}}; max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{{.ErrorMessage}}">{{.ErrorMessage}}</div>{{end}}</td>
           <td>{{formatBytes .BytesUploaded}}</td>
           <td style="color: var(--text-muted); font-size: 13px;">{{formatTime .CreatedAt}}</td>
           <td style="color: var(--text-muted); font-size: 13px; font-family: var(--font-mono);">{{.DurationString}}</td>

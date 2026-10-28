@@ -575,7 +575,7 @@ func TestRunFailedUnitAndRetrySkip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Status != "completed" || !strings.Contains(res.ErrorMessage, "completed with 1 of 3 units failed") || !strings.Contains(res.ErrorMessage, "bob@contoso.com") {
+	if res.Status != "partial" || !strings.HasPrefix(res.ErrorMessage, "1 of 3 units failed") || !strings.Contains(res.ErrorMessage, "bob@contoso.com") {
 		t.Fatalf("result %+v", res)
 	}
 	if _, ok := ups["m365-contoso-user-bob_contoso.com"]; ok {

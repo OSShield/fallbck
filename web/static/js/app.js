@@ -1365,7 +1365,8 @@ function rdEsc(s) {
 function rdStatus(s) {
   const m = {
     completed: ['badge-success', 'Completed'], running: ['badge-warning', 'Running'],
-    failed: ['badge-danger', 'Failed'], cancelling: ['badge-warning', 'Cancelling'],
+    failed: ['badge-danger', 'Failed'], partial: ['badge-warning', 'Partial'],
+    cancelling: ['badge-warning', 'Cancelling'],
     cancelled: ['badge-neutral', 'Cancelled'], pending: ['badge-neutral', 'Pending'],
   };
   const [cls, label] = m[s] || ['badge-neutral', s || 'Unknown'];
@@ -1450,7 +1451,7 @@ function renderRun(run) {
   ]));
 
   if (run.error_message) {
-    html += rdCard('Error', rdPre(run.error_message));
+    html += rdCard(run.status === 'partial' ? 'Failed units' : 'Error', rdPre(run.error_message));
   }
 
   // Live progress while running; after a failed or cancelled run, the last reported
