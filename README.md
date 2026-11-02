@@ -3,12 +3,12 @@
     srcset="./docs/assets/fallbck-horizontal-dark.svg"
     alt="FallBCK Dark Logo"
     media="(prefers-color-scheme: dark)"
-    width="300" height="125"
+    width="300" height="100"
     />
     <img
     src="./docs/assets/fallbck-horizontal.svg"
     alt="FallBCK Light Logo"
-    width="300" height="125"
+    width="300" height="100"
     />
   </picture>
 
