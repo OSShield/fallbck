@@ -49,9 +49,10 @@ You need a host with Docker and the compose plugin:
 
 ```bash
 eval "$(fallbck-ctl targets credentials <target>)"
-proxmox-backup-client restore host/dock01-docker/2026-09-17T02:00:00Z docker.pxar /var/tmp/fallbck-docker-restore
-bash /var/tmp/fallbck-docker-restore/collect/fallbck-docker-restore.sh --dry-run
-bash /var/tmp/fallbck-docker-restore/collect/fallbck-docker-restore.sh --yes   # --containers also recreates standalone ones
+D=$(mktemp -d -p /var/tmp fallbck-docker-restore.XXXXXX)
+proxmox-backup-client restore host/dock01-docker/2026-09-17T02:00:00Z docker.pxar "$D"
+bash "$D/collect/fallbck-docker-restore.sh" --dry-run
+bash "$D/collect/fallbck-docker-restore.sh" --yes   # --containers also recreates standalone ones
 ```
 
 The runbook restores `daemon.json`, recreates networks and volumes, copies each `vol-<name>` back in through a helper container, loads saved images and pulls the rest by digest, puts the compose files back and runs `docker compose up -d` per project. For containers that aren't part of a compose project it prints a best-effort `docker run`, and only runs it with `--containers`.

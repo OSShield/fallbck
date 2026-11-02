@@ -27,10 +27,13 @@ Restore onto a **fresh install of the same PVE major version**. Pull the archive
 
 ```bash
 eval "$(fallbck-ctl targets credentials pbs-main)"     # sets PBS_REPOSITORY / PBS_PASSWORD / PBS_FINGERPRINT
-proxmox-backup-client restore host/pve01-pve/2026-09-11T02:00:00Z pve.pxar /var/tmp/fallbck-pve-restore
-bash /var/tmp/fallbck-pve-restore/collect/fallbck-pve-restore.sh --dry-run
-bash /var/tmp/fallbck-pve-restore/collect/fallbck-pve-restore.sh --yes    # add --data for the data paths too
+D=$(mktemp -d -p /var/tmp fallbck-pve-restore.XXXXXX)
+proxmox-backup-client restore host/pve01-pve/2026-09-11T02:00:00Z pve.pxar "$D"
+bash "$D/collect/fallbck-pve-restore.sh" --dry-run
+bash "$D/collect/fallbck-pve-restore.sh" --yes    # add --data for the data paths too
 ```
+
+`$D` only lives in that shell. If you reboot partway through, run `echo $D` first and note the path. The script finds its archive on its own when you run it from there.
 
 The script:
 
