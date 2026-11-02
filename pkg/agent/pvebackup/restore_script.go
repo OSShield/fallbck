@@ -40,10 +40,11 @@ func restoreCommands(m *pvespec.Manifest, namespace string) []string {
 		fmt.Sprintf("# 1. Install Proxmox VE %s on the new host, then fetch the archive with PBS credentials", pveMajorString(m)),
 		"#    (fallbck-ctl targets credentials <target> prints these exports):",
 		"export PBS_REPOSITORY='<token id>@<pbs host>:<datastore>' PBS_PASSWORD='<token secret>' PBS_FINGERPRINT='<sha256 fingerprint>'",
-		fmt.Sprintf("proxmox-backup-client restore %s %s.pxar /var/tmp/fallbck-pve-restore%s", snapshot, pvespec.ArchiveName, ns),
+		"D=$(mktemp -d -p /var/tmp fallbck-pve-restore.XXXXXX)",
+		fmt.Sprintf("proxmox-backup-client restore %s %s.pxar \"$D\"%s", snapshot, pvespec.ArchiveName, ns),
 		"# 2. Review, then run the generated restore script (dry run first):",
-		fmt.Sprintf("bash /var/tmp/fallbck-pve-restore/%s/%s --dry-run", pvespec.CollectEntry, pvespec.RestoreScriptName),
-		fmt.Sprintf("bash /var/tmp/fallbck-pve-restore/%s/%s --yes            # add %s to also restore the data entries", pvespec.CollectEntry, pvespec.RestoreScriptName, dataRestoreHint),
+		fmt.Sprintf("bash \"$D/%s/%s\" --dry-run", pvespec.CollectEntry, pvespec.RestoreScriptName),
+		fmt.Sprintf("bash \"$D/%s/%s\" --yes            # add %s to also restore the data entries", pvespec.CollectEntry, pvespec.RestoreScriptName, dataRestoreHint),
 	}
 }
 
@@ -79,7 +80,13 @@ func restoreScript(m *pvespec.Manifest, namespace string) string {
 	w("SNAPSHOT=%q", snapshot)
 	w("ARCHIVE=%q", pvespec.ArchiveName+".pxar")
 	w("PBS_NS=%q", namespace)
-	w("RESTORE_DIR=\"${RESTORE_DIR:-/var/tmp/fallbck-pve-restore}\"")
+	// Default to the restored archive this script sits in; anywhere else RESTORE_DIR is
+	// required, so the fetch never lands in a guessed (or shared) directory
+	w("SCRIPT_PARENT=\"$(dirname \"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\")\"")
+	w("if [ -z \"${RESTORE_DIR:-}\" ]; then")
+	w("  if [ -d \"$SCRIPT_PARENT/%s\" ]; then RESTORE_DIR=\"$SCRIPT_PARENT\"", pvespec.CollectEntry)
+	w("  else echo 'set RESTORE_DIR to a new root-only directory, e.g. RESTORE_DIR=$(mktemp -d -p /var/tmp fallbck-pve-restore.XXXXXX)' >&2; exit 2; fi")
+	w("fi")
 	w("COLLECT=\"$RESTORE_DIR/%s\"", pvespec.CollectEntry)
 	w("YES=0; DRY=0; DATA=0")
 	w("for arg in \"$@\"; do case \"$arg\" in --yes) YES=1;; --dry-run) DRY=1;; %s) DATA=1;; *) echo \"usage: $0 [--dry-run] [--yes] [%s]\"; exit 2;; esac; done", dataRestoreHint, dataRestoreHint)

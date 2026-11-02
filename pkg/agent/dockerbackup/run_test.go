@@ -452,13 +452,43 @@ func TestRunPrecheckWithoutDaemon(t *testing.T) {
 }
 
 func TestUntarRefusesEscapes(t *testing.T) {
-	var b bytes.Buffer
-	tw := tar.NewWriter(&b)
-	_ = tw.WriteHeader(&tar.Header{Name: "vol/../../etc/passwd", Typeflag: tar.TypeReg, Mode: 0o644, Size: 1})
-	_, _ = tw.Write([]byte("x"))
-	_ = tw.Close()
-	if err := untar(&b, t.TempDir(), "vol"); err == nil {
-		t.Error("escaping entry accepted")
+	outside := t.TempDir()
+	victim := filepath.Join(outside, "victim")
+	type entry struct{ name, link string }
+	for _, tc := range []struct {
+		label   string
+		entries []entry
+	}{
+		{"dotdot", []entry{{name: "vol/../../etc/passwd"}}},
+		{"file over symlink", []entry{{name: "vol/a", link: victim}, {name: "vol/a"}}},
+		{"file under symlink", []entry{{name: "vol/d", link: outside}, {name: "vol/d/victim"}}},
+		{"hardlink via symlink", []entry{{name: "vol/d", link: outside}, {name: "vol/h", link: "hard:vol/d/victim"}}},
+	} {
+		label, entries := tc.label, tc.entries
+		if err := os.WriteFile(victim, []byte("original"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		var b bytes.Buffer
+		tw := tar.NewWriter(&b)
+		for _, e := range entries {
+			switch {
+			case strings.HasPrefix(e.link, "hard:"):
+				_ = tw.WriteHeader(&tar.Header{Name: e.name, Typeflag: tar.TypeLink, Linkname: strings.TrimPrefix(e.link, "hard:")})
+			case e.link != "":
+				_ = tw.WriteHeader(&tar.Header{Name: e.name, Typeflag: tar.TypeSymlink, Linkname: e.link})
+			default:
+				_ = tw.WriteHeader(&tar.Header{Name: e.name, Typeflag: tar.TypeReg, Mode: 0o644, Size: 1})
+				_, _ = tw.Write([]byte("x"))
+			}
+		}
+		_ = tw.Close()
+		err := untar(&b, t.TempDir(), "vol")
+		if got, _ := os.ReadFile(victim); string(got) != "original" {
+			t.Errorf("%s: wrote outside the destination (err %v)", label, err)
+		}
+		if label != "file over symlink" && err == nil {
+			t.Errorf("%s: escaping entry accepted", label)
+		}
 	}
 }
 

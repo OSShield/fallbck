@@ -233,7 +233,7 @@ func TestRestoreScript(t *testing.T) {
 		}
 	}
 	cmds := restoreCommands(m, "prod")
-	if len(cmds) < 5 || !strings.Contains(strings.Join(cmds, "\n"), "restore host/pve01-pve/2026-09-11T02:00:00Z pve.pxar /var/tmp/fallbck-pve-restore --ns prod") {
+	if len(cmds) < 5 || !strings.Contains(strings.Join(cmds, "\n"), "restore host/pve01-pve/2026-09-11T02:00:00Z pve.pxar \"$D\" --ns prod") {
 		t.Errorf("commands %v", cmds)
 	}
 }

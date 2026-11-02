@@ -81,11 +81,17 @@ func extractViaHelper(ctx context.Context, files *hostFiles, source, dst string)
 
 // untar extracts a tar stream below dst, stripping the leading component strip.
 // Modes, ownership (best effort), times, symlinks and hardlinks are preserved;
-// entries escaping dst are refused.
+// everything goes through an os.Root, so no entry (nor a symlink planted by an earlier
+// entry) can write outside dst.
 func untar(r io.Reader, dst, strip string) error {
 	if err := os.MkdirAll(dst, 0o700); err != nil {
 		return err
 	}
+	root, err := os.OpenRoot(dst)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
 	tr := tar.NewReader(r)
 	type deferred struct {
 		path string
@@ -114,21 +120,25 @@ func untar(r io.Reader, dst, strip string) error {
 		if strings.HasPrefix(name, "../") || strings.Contains(name, "/../") || path.IsAbs(name) {
 			return fmt.Errorf("volume archive entry %q escapes the destination", hdr.Name)
 		}
-		target := filepath.Join(dst, filepath.FromSlash(name))
+		target := filepath.FromSlash(name)
 		mode := hdr.FileInfo().Mode()
+		if hdr.Typeflag != tar.TypeDir {
+			if err := root.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+				return fmt.Errorf("volume archive entry %q: %w", hdr.Name, err)
+			}
+			// Replace whatever is there rather than writing through it
+			_ = root.Remove(target)
+		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(target, 0o700); err != nil {
-				return err
+			if err := root.MkdirAll(target, 0o700); err != nil {
+				return fmt.Errorf("volume archive entry %q: %w", hdr.Name, err)
 			}
 			dirs = append(dirs, deferred{target, mode.Perm(), hdr.ModTime})
 		case tar.TypeReg, tar.TypeRegA:
-			if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
-				return err
-			}
-			f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode.Perm())
+			f, err := root.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode.Perm())
 			if err != nil {
-				return err
+				return fmt.Errorf("volume archive entry %q: %w", hdr.Name, err)
 			}
 			if _, err := io.Copy(f, tr); err != nil {
 				_ = f.Close()
@@ -137,32 +147,21 @@ func untar(r io.Reader, dst, strip string) error {
 			if err := f.Close(); err != nil {
 				return err
 			}
-			_ = os.Chmod(target, mode.Perm())
-			_ = os.Lchown(target, hdr.Uid, hdr.Gid)
-			_ = os.Chtimes(target, hdr.ModTime, hdr.ModTime)
+			_ = root.Chmod(target, mode.Perm())
+			_ = root.Lchown(target, hdr.Uid, hdr.Gid)
+			_ = root.Chtimes(target, hdr.ModTime, hdr.ModTime)
 		case tar.TypeSymlink:
-			if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
-				return err
+			if err := root.Symlink(hdr.Linkname, target); err != nil {
+				return fmt.Errorf("volume archive entry %q: %w", hdr.Name, err)
 			}
-			_ = os.Remove(target)
-			if err := os.Symlink(hdr.Linkname, target); err != nil {
-				return err
-			}
-			_ = os.Lchown(target, hdr.Uid, hdr.Gid)
+			_ = root.Lchown(target, hdr.Uid, hdr.Gid)
 		case tar.TypeLink:
 			link := path.Clean(hdr.Linkname)
 			if strip != "" {
 				link = strings.TrimPrefix(link, strip+"/")
 			}
-			if strings.HasPrefix(link, "../") || path.IsAbs(link) {
-				return fmt.Errorf("volume archive hardlink %q escapes the destination", hdr.Linkname)
-			}
-			if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
-				return err
-			}
-			_ = os.Remove(target)
-			if err := os.Link(filepath.Join(dst, filepath.FromSlash(link)), target); err != nil {
-				return err
+			if err := root.Link(filepath.FromSlash(link), target); err != nil {
+				return fmt.Errorf("volume archive hardlink %q: %w", hdr.Linkname, err)
 			}
 		default:
 			// devices, fifos and sockets are not part of a volume backup
@@ -171,8 +170,8 @@ func untar(r io.Reader, dst, strip string) error {
 	// Directory modes and times last, so the writes above were not blocked by them
 	for i := len(dirs) - 1; i >= 0; i-- {
 		d := dirs[i]
-		_ = os.Chmod(d.path, d.mode)
-		_ = os.Chtimes(d.path, d.mod, d.mod)
+		_ = root.Chmod(d.path, d.mode)
+		_ = root.Chtimes(d.path, d.mod, d.mod)
 	}
 	return nil
 }

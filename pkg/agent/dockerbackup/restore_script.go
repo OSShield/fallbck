@@ -41,10 +41,11 @@ func restoreCommands(m *dockerspec.Manifest, namespace string) []string {
 		"# 1. Install Docker (and the compose plugin) on the new host, then fetch the archive with PBS credentials",
 		"#    (fallbck-ctl targets credentials <target> prints these exports):",
 		"export PBS_REPOSITORY='<token id>@<pbs host>:<datastore>' PBS_PASSWORD='<token secret>' PBS_FINGERPRINT='<sha256 fingerprint>'",
-		fmt.Sprintf("proxmox-backup-client restore %s %s.pxar /var/tmp/fallbck-docker-restore%s", snapshot, dockerspec.ArchiveName, ns),
+		"D=$(mktemp -d -p /var/tmp fallbck-docker-restore.XXXXXX)",
+		fmt.Sprintf("proxmox-backup-client restore %s %s.pxar \"$D\"%s", snapshot, dockerspec.ArchiveName, ns),
 		"# 2. Review, then run the generated restore script (dry run first):",
-		fmt.Sprintf("bash /var/tmp/fallbck-docker-restore/%s/%s --dry-run", dockerspec.CollectEntry, dockerspec.RestoreScriptName),
-		fmt.Sprintf("bash /var/tmp/fallbck-docker-restore/%s/%s --yes            # add %s to also recreate standalone containers, %s to copy the host paths back", dockerspec.CollectEntry, dockerspec.RestoreScriptName, containersFlag, hostPathsFlag),
+		fmt.Sprintf("bash \"$D/%s/%s\" --dry-run", dockerspec.CollectEntry, dockerspec.RestoreScriptName),
+		fmt.Sprintf("bash \"$D/%s/%s\" --yes            # add %s to also recreate standalone containers, %s to copy the host paths back", dockerspec.CollectEntry, dockerspec.RestoreScriptName, containersFlag, hostPathsFlag),
 	}
 }
 
@@ -67,8 +68,9 @@ func restoreScript(m *dockerspec.Manifest, namespace, helperImage string) string
 	w("#")
 	w("# Run on a host with Docker (and the compose plugin) installed, as root, after")
 	w("# restoring the archive:")
-	w("#   proxmox-backup-client restore %s %s.pxar /var/tmp/fallbck-docker-restore%s", snapshot, dockerspec.ArchiveName, nsFlag(namespace))
-	w("#   bash /var/tmp/fallbck-docker-restore/%s/%s --dry-run", dockerspec.CollectEntry, dockerspec.RestoreScriptName)
+	w("#   D=$(mktemp -d -p /var/tmp fallbck-docker-restore.XXXXXX)")
+	w("#   proxmox-backup-client restore %s %s.pxar \"$D\"%s", snapshot, dockerspec.ArchiveName, nsFlag(namespace))
+	w("#   bash \"$D/%s/%s\" --dry-run", dockerspec.CollectEntry, dockerspec.RestoreScriptName)
 	w("#")
 	w("# Options: --dry-run (print only), --yes (no confirmations), %s (also run the", containersFlag)
 	w("# generated docker run commands for containers that are not part of a compose")
