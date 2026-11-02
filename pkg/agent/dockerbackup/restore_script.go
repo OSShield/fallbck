@@ -111,7 +111,7 @@ func restoreScript(m *dockerspec.Manifest, namespace, helperImage string) string
 	w("# ---- 1. Daemon configuration ------------------------------------------------")
 	if m.Daemon.Archived {
 		w("say 'Daemon configuration'")
-		w("if confirm 'Restore %s and restart the Docker daemon?'; then", m.Daemon.ConfigPath)
+		w("if confirm %s; then", shellQuote("Restore "+m.Daemon.ConfigPath+" and restart the Docker daemon?"))
 		w("  run mkdir -p %s", shellQuote(path.Dir(m.Daemon.ConfigPath)))
 		w("  run cp -a \"$COLLECT/daemon/daemon.json\" %s", shellQuote(m.Daemon.ConfigPath))
 		w("  run systemctl restart docker || echo '   restart the Docker daemon by hand' >&2")
@@ -174,6 +174,7 @@ func restoreScript(m *dockerspec.Manifest, namespace, helperImage string) string
 	vols := 0
 	for _, v := range m.Volumes {
 		if v.Entry == "" {
+			w("echo %s >&2", shellQuote("   volume "+v.Name+" was not archived ("+cmp.Or(v.Skipped, "excluded")+"); create it by hand with its driver options"))
 			continue
 		}
 		vols++
@@ -209,7 +210,7 @@ func restoreScript(m *dockerspec.Manifest, namespace, helperImage string) string
 	for _, im := range m.Images {
 		imgs++
 		if im.Saved != "" {
-			w("run docker load -i \"$COLLECT/%s\"", im.Saved)
+			w("run docker load -i \"$COLLECT/%s\" || echo '   loading %s failed' >&2", im.Saved, im.Saved)
 			continue
 		}
 		ref := ""
@@ -220,16 +221,17 @@ func restoreScript(m *dockerspec.Manifest, namespace, helperImage string) string
 		if len(im.RepoTags) > 0 {
 			tag = im.RepoTags[0]
 		}
+		failed := "echo " + shellQuote("   pulling "+cmp.Or(tag, ref)+" failed; load or rebuild it by hand") + " >&2"
 		switch {
 		case ref != "" && tag != "":
-			w("run docker pull %s || run docker pull %s", shellQuote(ref), shellQuote(tag))
+			w("run docker pull %s || run docker pull %s || %s", shellQuote(ref), shellQuote(tag), failed)
 			w("run docker tag %s %s 2>/dev/null || true", shellQuote(ref), shellQuote(tag))
 		case ref != "":
-			w("run docker pull %s", shellQuote(ref))
+			w("run docker pull %s || %s", shellQuote(ref), failed)
 		case tag != "":
-			w("run docker pull %s", shellQuote(tag))
+			w("run docker pull %s || %s", shellQuote(tag), failed)
 		default:
-			w("echo '   image %s has no reference and was not saved (used by %s); rebuild it' >&2", shortID(strings.TrimPrefix(im.ID, "sha256:")), strings.Join(im.UsedBy, ", "))
+			w("echo %s >&2", shellQuote(fmt.Sprintf("   image %s has no reference and was not saved (used by %s); rebuild it", shortID(strings.TrimPrefix(im.ID, "sha256:")), strings.Join(im.UsedBy, ", "))))
 		}
 	}
 	if imgs == 0 {
@@ -246,10 +248,10 @@ func restoreScript(m *dockerspec.Manifest, namespace, helperImage string) string
 			continue
 		}
 		hostPaths++
-		w("echo '   %s  <-  $RESTORE_DIR/%s'", h.Path, h.Entry)
+		w("echo %s\"$RESTORE_DIR/%s\"", shellQuote("   "+h.Path+"  <-  "), h.Entry)
 		w("if [ \"$HOSTPATHS\" = 1 ]; then")
 		w("  if [ -e %s ] && [ -n \"$(ls -A %s 2>/dev/null)\" ]; then", shellQuote(h.Path), shellQuote(h.Path))
-		w("    confirm '%s exists and is not empty; copy the archived files over it?' || { echo '   kept as is'; SKIP_HP_%d=1; }", h.Path, hostPaths)
+		w("    confirm %s || { echo '   kept as is'; SKIP_HP_%d=1; }", shellQuote(h.Path+" exists and is not empty; copy the archived files over it?"), hostPaths)
 		w("  fi")
 		w("  if [ \"${SKIP_HP_%d:-0}\" != 1 ]; then run mkdir -p %s; run cp -a \"$RESTORE_DIR/%s/.\" %s; fi", hostPaths, shellQuote(h.Path), h.Entry, shellQuote(h.Path))
 		w("fi")
@@ -276,22 +278,22 @@ func restoreScript(m *dockerspec.Manifest, namespace, helperImage string) string
 		for _, f := range p.Archived {
 			w("run mkdir -p %s", shellQuote(path.Dir(f.Source)))
 			w("if [ -e %s ] && ! cmp -s \"$COLLECT/%s\" %s; then", shellQuote(f.Source), f.File, shellQuote(f.Source))
-			w("  confirm 'Overwrite %s with the archived copy?' && run cp -a \"$COLLECT/%s\" %s", f.Source, f.File, shellQuote(f.Source))
+			w("  confirm %s && run cp -a \"$COLLECT/%s\" %s", shellQuote("Overwrite "+f.Source+" with the archived copy?"), f.File, shellQuote(f.Source))
 			w("else")
 			w("  run cp -a \"$COLLECT/%s\" %s", f.File, shellQuote(f.Source))
 			w("fi")
 		}
+		// --project-directory rather than cd: in a dry run the directory may not exist yet
 		args := []string{"docker", "compose", "-p", p.Name}
+		if p.WorkingDir != "" {
+			args = append(args, "--project-directory", p.WorkingDir)
+		}
 		for _, f := range p.ConfigFiles {
 			args = append(args, "-f", f)
 		}
 		args = append(args, "up", "-d")
 		w("if confirm 'Start project %s now?'; then", p.Name)
-		if p.WorkingDir != "" {
-			w("  ( cd %s && run %s )", shellQuote(p.WorkingDir), quoteAll(args))
-		} else {
-			w("  run %s", quoteAll(args))
-		}
+		w("  run %s", quoteAll(args))
 		w("fi")
 	}
 
@@ -321,7 +323,7 @@ func restoreScript(m *dockerspec.Manifest, namespace, helperImage string) string
 		w("")
 		w("say 'Bind mounts used by containers are NOT part of this backup; restore them from the host filesystem backup:'")
 		for _, bm := range m.BindMounts {
-			w("echo '   %s (%s)'", bm.Source, strings.Join(bm.Containers, ", "))
+			w("echo %s", shellQuote("   "+bm.Source+" ("+strings.Join(bm.Containers, ", ")+")"))
 		}
 	}
 	w("")

@@ -339,7 +339,7 @@ func TestRunHelperMode(t *testing.T) {
 	// Restore script
 	script, _ := os.ReadFile(filepath.Join(collectDir, dockerspec.RestoreScriptName))
 	for _, want := range []string{"docker network create --driver bridge --subnet 172.20.0.0/16 --gateway 172.20.0.1", "docker volume create --label com.docker.compose.project=app data",
-		"vol-data:/src:ro", "docker load -i \"$COLLECT/images/local_tools_dev.tar\"", "docker pull postgres@sha256:aaaa", "docker compose -p app -f /srv/app/docker-compose.yml up -d",
+		"vol-data:/src:ro", "docker load -i \"$COLLECT/images/local_tools_dev.tar\"", "docker pull postgres@sha256:aaaa", "docker compose -p app --project-directory /srv/app -f /srv/app/docker-compose.yml up -d",
 		"docker run -d --name tools", "/srv/app/init", "cp -a \"$RESTORE_DIR/host-srv-app/.\" /srv/app"} {
 		if !strings.Contains(string(script), want) {
 			t.Errorf("restore script lacks %q", want)
@@ -493,6 +493,55 @@ func TestUntarPreservesLayout(t *testing.T) {
 func TestShellQuote(t *testing.T) {
 	if shellQuote("plain-1.0") != "plain-1.0" || shellQuote("it's") != `'it'\''s'` || shellQuote("a b") != "'a b'" {
 		t.Error("quoting")
+	}
+}
+
+// The runbook's dry run must reach the end on a bare host
+// Also validate that hostile paths can't make it into the bash script without being escaped properly
+func TestRestoreScriptDryRun(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("no bash")
+	}
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "PWNED")
+	evil := "/srv/x'; touch " + marker + "; '"
+	m := &dockerspec.Manifest{
+		Volumes:    []dockerspec.Volume{{Name: "nfs", Driver: "local", Skipped: "remote driver"}},
+		Images:     []dockerspec.Image{{ID: "sha256:abc", RepoTags: []string{"gone:1"}}},
+		HostPaths:  []dockerspec.HostPath{{Path: evil, Entry: "host-x"}},
+		BindMounts: []dockerspec.BindMount{{Source: evil, Containers: []string{"c"}}},
+		Compose: []dockerspec.ComposeProject{{Name: "app", WorkingDir: filepath.Join(dir, "missing"),
+			ConfigFiles: []string{filepath.Join(dir, "missing", "compose.yml")},
+			Archived:    []dockerspec.ComposeFile{{File: "compose/app/compose.yml", Source: evil}}}},
+	}
+	collect := filepath.Join(dir, dockerspec.CollectEntry)
+	bin := filepath.Join(dir, "bin")
+	for _, d := range []string{collect, bin} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	script := filepath.Join(collect, dockerspec.RestoreScriptName)
+	// Fake docker: the daemon answers, nothing exists yet
+	fake := "#!/bin/sh\ncase \"$1\" in version) exit 0 ;; info) echo inactive ;; *) exit 1 ;; esac\n"
+	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(fake), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(script, []byte(restoreScript(m, "", "busybox")), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(bash, script, "--dry-run", "--host-paths")
+	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"))
+	out, err := cmd.CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "Done.") {
+		t.Fatalf("dry run did not finish: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("a quoted path ran as a command")
+	}
+	if !strings.Contains(string(out), "volume nfs was not archived (remote driver)") {
+		t.Errorf("skipped volume not reported:\n%s", out)
 	}
 }
 

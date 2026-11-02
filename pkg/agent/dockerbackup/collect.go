@@ -426,7 +426,7 @@ func (c *collector) compose() {
 				c.record("compose "+name+" "+f, how, "", fmt.Errorf("config file %s: %w", f, err))
 				continue
 			}
-			base := filepath.Base(f)
+			base := safeName(filepath.Base(f))
 			if seen[base] {
 				base = fmt.Sprintf("%d-%s", i, base)
 			}

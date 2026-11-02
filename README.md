@@ -104,6 +104,12 @@ go build ./... && go test ./...
 More in [Development](https://docs.fallbck.eu/development/). The docs source is in [`docs/`](docs/).
 
 
+## Restore Scripts
+We do include restore scripts (bash) in the backups to make restoring workloads easier under very "vanilla" circumstances, but they are not perfect and can only handle about 90-95% of cases reliably.
+
+Always double-check the results, and if necessary, restore parts manually. We are working on phasing out the scripts in favor of a CLI that has the capability to handle more complex tasks.
+
+
 ## Roadmap
 ### Easier restore functionality
 The plan is to provide a more user-friendly restore tool (via a fully local standalone CLI, not integrated into the server), which will simplify the process of restoring backups and data from PBS back into the respective source.
@@ -116,7 +122,7 @@ These are the future backup sources that are currently planned. If you miss any,
 - Cloud storage (via librclone, so all/most supported providers like S3-compatible, Azure blob, Mega, Dropbox)
 - Google Workspace (Gmail, Drive, Calendar, Contacts, etc.)
 - Build a better, responsive UI for the web interface
-- Other hypervisors
+- Other hypervisors, NAS backup
   - Here I need some community feedback on what would be the most useful. We only use proxmox in-house.
 
 ### Better integration with Proxmox Backup Server
