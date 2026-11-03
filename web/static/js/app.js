@@ -625,18 +625,20 @@ function setJobTypeIn(form, type) {
   const isPVE = type === 'pve';
   const isDocker = type === 'docker';
   const isM365 = type === 'm365';
+  const isGitHub = type === 'github';
   const isK8s = type === 'kubernetes'; // cluster jobs: only the onboarding form carries that fieldset
   const show = (id, on) => {
     const el = form.querySelector('#' + id);
     if (el) { el.hidden = !on; el.disabled = !on; }
   };
-  show('job-fs-fields', !isDB && !isPVE && !isDocker && !isK8s && !isM365);
+  show('job-fs-fields', !isDB && !isPVE && !isDocker && !isK8s && !isM365 && !isGitHub);
   show('job-db-fields', isDB);
   show('job-pve-fields', isPVE);
   show('job-docker-fields', isDocker);
   show('job-m365-fields', isM365);
+  show('job-github-fields', isGitHub);
   show('job-k8s-fields', isK8s);
-  show('job-backup-group', !isDB && !isM365); // those two carry the group in their own config
+  show('job-backup-group', !isDB && !isM365 && !isGitHub); // these carry the group in their own config
   filterJobAgents(form, type);
   if (form.elements['db_engine']) setDBEngine(form.elements['db_engine'].value, form);
   else updateDBTarget(form);
@@ -663,7 +665,7 @@ function filterJobAgents(form, type) {
     }
     if (type === 'pve') match = agentType === 'filesystem' && opt.dataset.pve === 'true';
     if (type === 'docker') match = agentType === 'filesystem' && opt.dataset.docker === 'true';
-    if (type === 'm365') match = agentType === 'filesystem'; // any agent with internet access
+    if (type === 'm365' || type === 'github') match = agentType === 'filesystem'; // any agent with internet access
     opt.hidden = !match; opt.disabled = !match;
     if (match && opt.selected) keep = true;
   }
@@ -783,6 +785,32 @@ function loadJobIntoForm(form, job) {
     form.elements['docker_images'].value = dc.images || 'refs';
     form.elements['docker_include_unused_volumes'].checked = dc.include_unused_volumes !== false;
     form.elements['docker_include_stopped'].checked = dc.include_stopped !== false;
+  }
+  if (jobType === 'github') {
+    const gc = job.github_config || {};
+    const src = gc.sources || {};
+    const ct = gc.content || {};
+    form.elements['gh_account_id'].value = gc.account_id || '';
+    form.elements['gh_orgs'].value = (src.orgs || []).map(o => o.type && o.type !== 'all' ? `${o.name}:${o.type}` : o.name).join('\n');
+    form.elements['gh_users'].value = (src.users || []).join('\n');
+    form.elements['gh_repos'].value = (src.repos || []).join('\n');
+    form.elements['gh_starred'].checked = !!src.starred;
+    const gists = src.gists || {};
+    form.elements['gh_gists_own'].checked = !!gists.own;
+    form.elements['gh_gists_starred'].checked = !!gists.starred;
+    form.elements['gh_gist_users'].value = (gists.users || []).join('\n');
+    form.elements['gh_gist_ids'].value = (gists.ids || []).join('\n');
+    form.elements['gh_skip_forks'].checked = !!gc.skip_forks;
+    form.elements['gh_skip_archived'].checked = !!gc.skip_archived;
+    form.elements['gh_include'].value = (gc.include || []).join('\n');
+    form.elements['gh_exclude'].value = (gc.exclude || []).join('\n');
+    form.elements['gh_wiki'].checked = ct.wiki !== false;
+    form.elements['gh_issues'].checked = ct.issues !== false;
+    form.elements['gh_releases'].checked = ct.releases !== false;
+    form.elements['gh_lfs'].checked = !!ct.lfs;
+    form.elements['gh_keep_mirrors'].checked = gc.keep_mirrors !== false;
+    form.elements['gh_concurrency'].value = gc.concurrency || '';
+    form.elements['gh_backup_id'].value = gc.backup_id || '';
   }
   if (jobType === 'm365') {
     const mc = job.m365_config || {};
@@ -917,6 +945,30 @@ function buildJobPayload(form) {
       exclude_paths: formLines(fd, 'm365_exclude_paths'),
       concurrency: parseInt(fd.get('m365_concurrency') || '0') || 0,
       backup_id: (fd.get('m365_backup_id') || '').trim()
+    };
+  }
+
+  if (payload.job_type === 'github') {
+    payload.backup_paths = [];
+    payload.exclude_paths = [];
+    const on = (name) => fd.get(name) === 'on';
+    payload.github_config = {
+      account_id: fd.get('gh_account_id') || '',
+      sources: {
+        orgs: formLines(fd, 'gh_orgs').map(l => { const [name, type] = l.split(':').map(x => x.trim()); return { name, type: type || 'all' }; }),
+        users: formLines(fd, 'gh_users'),
+        repos: formLines(fd, 'gh_repos'),
+        starred: on('gh_starred'),
+        gists: { own: on('gh_gists_own'), starred: on('gh_gists_starred'), users: formLines(fd, 'gh_gist_users'), ids: formLines(fd, 'gh_gist_ids') }
+      },
+      include: formLines(fd, 'gh_include'),
+      exclude: formLines(fd, 'gh_exclude'),
+      skip_forks: on('gh_skip_forks'),
+      skip_archived: on('gh_skip_archived'),
+      content: { wiki: on('gh_wiki'), issues: on('gh_issues'), releases: on('gh_releases'), lfs: on('gh_lfs') },
+      keep_mirrors: on('gh_keep_mirrors'),
+      concurrency: parseInt(fd.get('gh_concurrency') || '0') || 0,
+      backup_id: (fd.get('gh_backup_id') || '').trim()
     };
   }
 
@@ -1428,7 +1480,7 @@ function renderRun(run) {
   }
   const d = run.details || {};
   const type = d.type || 'filesystem';
-  const typeLabel = { filesystem: 'Filesystem', database: 'Database', kubernetes: 'Kubernetes', pve: 'Proxmox VE host', docker: 'Docker host', m365: 'Microsoft 365' }[type] || type;
+  const typeLabel = { filesystem: 'Filesystem', database: 'Database', kubernetes: 'Kubernetes', pve: 'Proxmox VE host', docker: 'Docker host', m365: 'Microsoft 365', github: 'GitHub' }[type] || type;
 
   const active = RUN_ACTIVE.includes(run.status);
   let html = '';
@@ -1457,7 +1509,7 @@ function renderRun(run) {
   // Live progress while running; after a failed or cancelled run, the last reported
   // per-item statuses are what remains when the agent never produced a detail blob
   const m = d.manifest || {};
-  const hasItemDetail = (m.volumes && m.volumes.length) || (m.databases && m.databases.length) || (m.units && m.units.length) || d.archives;
+  const hasItemDetail = (m.volumes && m.volumes.length) || (m.databases && m.databases.length) || (m.units && m.units.length) || (m.repos && m.repos.length) || d.archives;
   const items = run.progress && run.progress.items ? Object.keys(run.progress.items).length : 0;
   if (active && run.progress) html += renderProgress(run.progress);
   else if (!active && items && !hasItemDetail) html += renderProgress(run.progress, true);
@@ -1467,6 +1519,7 @@ function renderRun(run) {
   else if (type === 'pve') html += renderPVEDetail(d.manifest || {});
   else if (type === 'docker') html += renderDockerDetail(d.manifest || {});
   else if (type === 'm365') html += renderM365Detail(d.manifest || {});
+  else if (type === 'github') html += renderGitHubDetail(d.manifest || {});
   else if (d.archives || d.paths) html += renderFsDetail(d);
 
   if (run.log_tail) html += rdCard('Agent log (captured at the run)', rdPre(run.log_tail));
@@ -1678,6 +1731,39 @@ function renderM365Detail(m) {
   return html;
 }
 
+// GitHub: the account, one row per repository snapshot, warnings and restore notes
+function renderGitHubDetail(m) {
+  let html = '';
+  const a = m.account || {};
+  const repos = m.repos || [];
+  const counts = { completed: 0, failed: 0, skipped: 0, cancelled: 0 };
+  repos.forEach(r => { counts[r.status] = (counts[r.status] || 0) + 1; });
+  html += rdCard('GitHub', rdKV([
+    ['Account', rdEsc(a.login || '-') + (a.api_url ? ` <span style="color:var(--text-muted);font-size:12px;">${rdEsc(a.api_url)}</span>` : '')],
+    ['Agent', rdEsc((m.generator || {}).hostname || '-') + ((m.generator || {}).git ? ` (git ${rdEsc(m.generator.git)})` : '')],
+    ['Repositories and gists', `${repos.length} (${counts.completed} completed, ${counts.failed} failed)`],
+    ['Index group', rdMono((m.job || {}).group || '-')],
+  ]));
+  if (repos.length) {
+    const rows = repos.map(r => {
+      const flags = [r.private ? 'private' : '', r.fork ? 'fork' : '', r.archived ? 'archived' : '', r.wiki ? 'wiki' : ''].filter(Boolean).join(', ');
+      const meta = r.kind === 'gist' ? `${r.refs || 0} refs, ${r.comments || 0} comments`
+        : `${r.refs || 0} refs, ${r.issues || 0} issues, ${r.pulls || 0} PRs, ${r.releases || 0} releases`;
+      let snap = '-';
+      if (r.snapshot_time) snap = rdMono(new Date(r.snapshot_time * 1000).toISOString().replace(/\.\d+Z$/, 'Z'));
+      const note = [r.error, ...(r.warnings || [])].filter(Boolean).map(rdEsc).join('<br>');
+      return [rdEsc(r.full_name), rdEsc((r.sources || []).join(', ')), rdMono(r.group), rdStatus(r.status), rdEsc(meta) + (flags ? `<br><span style="color:var(--text-muted);font-size:12px;">${rdEsc(flags)}</span>` : ''), r.uploaded ? rdBytes(r.uploaded) : '-', snap, note || '-'];
+    });
+    html += rdCard('Repositories', rdTable(['Repository', 'Source', 'Group', 'Status', 'Contents', 'Uploaded', 'Snapshot', 'Notes'], rows));
+  }
+  if (m.warnings && m.warnings.length) html += rdCard('Warnings', rdPre(m.warnings.join('\n')));
+  if (m.restore) {
+    const pairs = Object.keys(m.restore).sort().map(k => [rdEsc(k), rdEsc(m.restore[k])]);
+    html += rdCard('Restore', rdKV(pairs));
+  }
+  return html;
+}
+
 function renderK8sDetail(m) {
   const k = m.kubernetes || {};
   const res = m.resources || {};
@@ -1870,3 +1956,77 @@ async function testTenant(id, btn) {
   }
 }
 
+
+// ===== GitHub accounts ==========================================================
+
+function githubAccountForm() { return document.getElementById('github-account-form'); }
+
+function newGitHubAccount() {
+  const form = githubAccountForm();
+  form.reset();
+  form.dataset.accountId = '';
+  setFormLabels(form, {}, 'gh_labels');
+  form.elements['gh_token'].placeholder = '';
+  form.elements['gh_token'].required = true;
+  document.getElementById('github-account-modal-title').innerText = 'Add GitHub Account';
+  openModal('modal-github-account');
+}
+
+async function editGitHubAccount(id) {
+  try {
+    const resp = await apiFetch(`/api/v1/github/accounts/${id}`);
+    if (!resp.ok) throw new Error('Failed to load account');
+    const a = await resp.json();
+    const form = githubAccountForm();
+    form.reset();
+    form.dataset.accountId = id;
+    form.elements['gh_name'].value = a.name || '';
+    form.elements['gh_api_url'].value = a.api_url || '';
+    form.elements['gh_token'].required = !a.has_token;
+    form.elements['gh_token'].placeholder = a.has_token ? 'leave blank to keep the stored token' : '';
+    if (a.token_expires) form.elements['gh_token_expires'].value = a.token_expires.slice(0, 10);
+    setFormLabels(form, a.labels, 'gh_labels');
+    document.getElementById('github-account-modal-title').innerText = 'Edit GitHub Account';
+    openModal('modal-github-account');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function submitGitHubAccountForm(e) {
+  e.preventDefault();
+  const form = e.target;
+  const id = form.dataset.accountId || '';
+  const v = (name) => (form.elements[name].value || '').trim();
+  const payload = { name: v('gh_name'), api_url: v('gh_api_url'), token: form.elements['gh_token'].value || '', labels: formLabels(form, 'gh_labels') };
+  const exp = v('gh_token_expires');
+  if (exp) payload.token_expires = new Date(exp + 'T00:00:00Z').toISOString();
+  try {
+    const resp = await apiFetch(id ? `/api/v1/github/accounts/${id}` : '/api/v1/github/accounts', {
+      method: id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.error || 'Failed to save account');
+    showToast(`Account ${data.name} saved`, 'success');
+    closeModal('modal-github-account');
+    setTimeout(() => window.location.reload(), 600);
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+// testGitHubAccount asks the server to read GET /user with the stored token
+async function testGitHubAccount(id, btn) {
+  if (btn) { btn.disabled = true; btn.innerText = 'Testing…'; }
+  try {
+    const resp = await apiFetch(`/api/v1/github/accounts/${id}/test`, { method: 'POST' });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.error || 'Test failed');
+    if (data.ok) showToast(`Connected as ${data.viewer.login}` + ((data.viewer.scopes || []).length ? ` (scopes: ${data.viewer.scopes.join(', ')})` : ''), 'success');
+    else showToast(data.error || 'Test failed', 'error');
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerText = 'Test'; }
+  }
+}

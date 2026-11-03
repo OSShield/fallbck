@@ -13,6 +13,7 @@ const (
 	TypePVE        = "pve"
 	TypeDocker     = "docker"
 	TypeM365       = "m365"
+	TypeGitHub     = "github"
 )
 
 // ArchiveStat is one pxar/catalog/payload archive uploaded in a snapshot

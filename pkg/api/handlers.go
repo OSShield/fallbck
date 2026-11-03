@@ -79,6 +79,7 @@ func (s *ServerAPI) RegisterRoutes(r chi.Router, admin, agent Middleware) {
 			r.Get("/agents/encryption-key", s.HandleAgentEncryptionKey)
 			r.Get("/agents/db-credentials", s.HandleDBCredentials)
 			r.Get("/agents/m365-credentials", s.HandleM365Credentials)
+			r.Get("/agents/github-credentials", s.HandleGitHubCredentials)
 			r.Post("/agents/ticket/refresh", s.HandleRefreshTicket)
 			r.Post("/agents/sub-ticket", s.HandleSubTicket)
 			// older kubernetes agents post here
@@ -153,6 +154,13 @@ func (s *ServerAPI) RegisterRoutes(r chi.Router, admin, agent Middleware) {
 			r.With(need(auth.PermTenantsWrite)).Put("/m365/tenants/{id}", s.HandleUpdateTenant)
 			r.With(need(auth.PermTenantsDelete)).Delete("/m365/tenants/{id}", s.HandleDeleteTenant)
 			r.With(need(auth.PermTenantsWrite)).Post("/m365/tenants/{id}/test", s.HandleTestTenant)
+			// GitHub accounts (SaaS credentials share the tenants permissions)
+			r.With(need(auth.PermTenantsWrite)).Post("/github/accounts", s.HandleCreateGitHubAccount)
+			r.With(need(auth.PermTenantsRead)).Get("/github/accounts", s.HandleListGitHubAccounts)
+			r.With(need(auth.PermTenantsRead)).Get("/github/accounts/{id}", s.HandleGetGitHubAccount)
+			r.With(need(auth.PermTenantsWrite)).Put("/github/accounts/{id}", s.HandleUpdateGitHubAccount)
+			r.With(need(auth.PermTenantsDelete)).Delete("/github/accounts/{id}", s.HandleDeleteGitHubAccount)
+			r.With(need(auth.PermTenantsWrite)).Post("/github/accounts/{id}/test", s.HandleTestGitHubAccount)
 
 			// Jobs
 			r.With(need(auth.PermJobsWrite)).Post("/jobs", s.HandleCreateJob)

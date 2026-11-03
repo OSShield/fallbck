@@ -20,6 +20,9 @@ func TestJobAllowedOnAgent(t *testing.T) {
 		{"m365", "filesystem", true},
 		{"m365", "kubernetes", false},
 		{"m365", "database", false},
+		{"github", "filesystem", true},
+		{"github", "kubernetes", false},
+		{"github", "database", false},
 	}
 	for _, c := range cases {
 		if got := JobAllowedOnAgent(c.job, c.agent); got != c.want {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/osshield/fallbck/pkg/auth"
 	"github.com/osshield/fallbck/pkg/db"
+	"github.com/osshield/fallbck/pkg/github"
 	"github.com/osshield/fallbck/pkg/k8sbackup"
 	"github.com/osshield/fallbck/pkg/m365"
 )
@@ -134,11 +135,15 @@ func (s *ServerAPI) HandleSubTicket(w http.ResponseWriter, r *http.Request) {
 			s.writeError(w, http.StatusNotFound, "job not found")
 			return
 		}
-		if !job.IsM365() {
-			s.writeError(w, http.StatusForbidden, "only kubernetes and Microsoft 365 runs write per-unit snapshots")
+		switch {
+		case job.IsM365():
+			prefix, hint = m365.GroupPrefix(claims.BackupID), "-<kind>-<name>"
+		case job.IsGitHub():
+			prefix, hint = github.GroupPrefix(claims.BackupID), "-<owner>-<repository>"
+		default:
+			s.writeError(w, http.StatusForbidden, "only kubernetes, Microsoft 365 and GitHub runs write per-unit snapshots")
 			return
 		}
-		prefix, hint = m365.GroupPrefix(claims.BackupID), "-<kind>-<name>"
 	}
 	if !subGroupAllowed(prefix, group) {
 		s.writeError(w, http.StatusForbidden, "backup_id must extend the run's backup group with "+hint)

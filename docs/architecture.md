@@ -55,7 +55,7 @@ The agent never sees PBS credentials and can't pick the datastore, namespace or 
 - **Encryption.** One key per target, sealed with the master key. `PrepareBackupSession` flags the session `encrypted`, the agent fetches the key with its ticket (`GET /api/v1/agents/encryption-key`), and gopbs encrypts chunks and blobs and signs the manifest. An encrypted session won't run without a key. Admins only ever get keys out as passphrase-protected key files.
 - **Databases.** Same path. The group becomes `host/db-<engine>-<host>`, and the job spec goes to the agent with the password redacted. The agent gets the password with its ticket (`GET /api/v1/agents/db-credentials`), from a local profile, or by passwordless local auth (`pkg/agent/dbbackup/local.go`). It dumps to a spool and uploads `db.pxar` plus `fallbck-db.json.blob`.
 - **Direct PBS.** With `direct_pbs` on a job, the agent gets the target's endpoint, fingerprint and token for that run (`GET /api/v1/agents/pbs-credentials`, which needs agent token + ticket and is only allowed for flagged jobs) and connects to PBS itself.
-- **Microsoft 365 and Kubernetes volumes.** Several snapshots per run. The agent mints a sub-ticket per unit (`POST /api/v1/agents/sub-ticket`). The sub-ticket's group has to extend the job's group, so an agent can't write outside its lane. M365 units are uploaded as caller-built virtual trees (`backup.Options.Tree`, gopbs `Archive.AddTree`), where unchanged items get reused without being fetched.
+- **Microsoft 365, GitHub and Kubernetes volumes.** Several snapshots per run. The agent mints a sub-ticket per unit (`POST /api/v1/agents/sub-ticket`). The sub-ticket's group has to extend the job's group, so an agent can't write outside its lane. M365 units are uploaded as caller-built virtual trees (`backup.Options.Tree`, gopbs `Archive.AddTree`), where unchanged items get reused without being fetched. GitHub units are directories on the agent: a bare `git --mirror` kept between runs (`git fetch` only), with the API metadata as JSON next to it. The token reaches git through `GIT_CONFIG_*` environment variables, scoped to the API's host.
 
 Retention is a PBS prune job. FallBCK never prunes or deletes on PBS. Restores use PBS's own tools, since the snapshots are standard pxar.
 
@@ -64,7 +64,7 @@ Retention is a PBS prune job. FallBCK never prunes or deletes on PBS. Restores u
 | Package | What's in it |
 |---|---|
 | `cmd/fallbck-server` | Server entry point: config, DB, embedded Temporal, worker, gateway, UI, the h2c listener |
-| `cmd/fallbck-agent` | The agent: enrollment, activity worker (files, PVE, Docker, M365, DB), heartbeats with capability flags, token rotation, self-update, `tools`, `migrate-db-agent` |
+| `cmd/fallbck-agent` | The agent: enrollment, activity worker (files, PVE, Docker, M365, GitHub, DB), heartbeats with capability flags, token rotation, self-update, `tools`, `migrate-db-agent` |
 | `cmd/fallbck-k8s-agent` | In-cluster agent. `worker` mode uploads one volume, `db-worker` mode dumps one database on the engine image |
 | `cmd/fallbck-ctl` | Admin CLI (API key auth) |
 | `pkg/api`, `web` | REST API and server-rendered Web UI (`/onboarding` is the only place jobs get created; `/jobs` lists and edits them; shared form bits in `templates/partials/`) |
@@ -87,6 +87,7 @@ Retention is a PBS prune job. FallBCK never prunes or deletes on PBS. Restores u
 | `pkg/pvebackup`, `pkg/agent/pvebackup` | PVE job spec and manifest; collectors, restore runbook |
 | `pkg/dockerbackup`, `pkg/agent/dockerbackup` | Docker job spec and settings; Engine API client, collectors, volume reads, pause, runbook |
 | `pkg/m365`, `pkg/agent/m365` | M365 job spec, tenant model, Graph auth; Graph client, delta index, virtual tree, collectors |
+| `pkg/github`, `pkg/agent/github` | GitHub job spec, account model, REST client, manifest; git mirroring, repository and gist selection, metadata collectors |
 | `pkg/inventory` | What agents report about their host (periodic summary and on-demand detail) |
 | `pkg/agenthealth` | The alerts on the agent status page |
 | `pkg/rundetail` | Type-specific per-run detail shown on `/runs/<id>` |

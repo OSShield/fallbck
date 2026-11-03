@@ -48,6 +48,10 @@
           <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 21h18M5 21V7l8-4v18M19 21V11l-6-4M9 9h.01M9 13h.01M9 17h.01"/></svg>
           M365 Tenants
         </a>
+        <a href="/github" class="nav-link {{if eq .ActiveNav "github"}}active{{end}}">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 3v12m0 0a3 3 0 103 3 3 3 0 00-3-3zm12-9a3 3 0 11-3 3 3 3 0 013-3zm0 6c0 4-6 4-9 6"/></svg>
+          GitHub Accounts
+        </a>
         {{end}}
         {{if index .Can "jobs:read"}}
         <a href="/jobs" class="nav-link {{if eq .ActiveNav "jobs"}}active{{end}}">

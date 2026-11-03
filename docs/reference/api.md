@@ -148,6 +148,28 @@ See [Encryption](../operations/encryption.md) for what all of this means.
 
 For certificate auth, use `"auth_method": "certificate"` with `certificate_pem` and `key_pem`. Secrets are write-only.
 
+## GitHub accounts
+
+| Method | Path | Notes |
+|---|---|---|
+| `POST` | `/github/accounts` | Create. |
+| `GET` | `/github/accounts` | |
+| `GET` | `/github/accounts/{id}` | |
+| `PUT` | `/github/accounts/{id}` | A blank `token` keeps the stored one. |
+| `DELETE` | `/github/accounts/{id}` | Refused while jobs still use it. |
+| `POST` | `/github/accounts/{id}/test` | Reads `/user` and returns the login and token scopes. |
+
+```json
+{
+  "name": "acme",
+  "api_url": "https://api.github.com",
+  "token": "ghp_...",
+  "token_expires": "2027-01-01T00:00:00Z"
+}
+```
+
+The token is write-only. These routes use the `tenants` permissions.
+
 ## Jobs
 
 | Method | Path | Notes |
@@ -176,7 +198,7 @@ Common fields:
 }
 ```
 
-`job_type` is one of `filesystem`, `database`, `kubernetes`, `pve`, `docker` or `m365`. Every type besides `filesystem` takes its settings in a matching object: `db_config`, `k8s_config`, `pve_config`, `docker_config` or `m365_config`. A database job, for example:
+`job_type` is one of `filesystem`, `database`, `kubernetes`, `pve`, `docker`, `m365` or `github`. Every type besides `filesystem` takes its settings in a matching object: `db_config`, `k8s_config`, `pve_config`, `docker_config`, `m365_config` or `github_config`. A database job, for example:
 
 ```json
 {
@@ -232,6 +254,6 @@ Selectors are strings in [Kubernetes label selector syntax](../operations/access
 
 These are what agents call, authenticated with their own bearer token. You won't need them unless you're writing an agent, but they're listed here so nothing's a mystery:
 
-`POST /agents/enroll` (enrollment token), `POST /agents/heartbeat`, `POST /agents/token/rotate`, `POST /agents/token/worker`, `POST /agents/ticket/refresh`, `POST /agents/sub-ticket`, `POST /agents/volume-ticket`, `POST /agents/run-progress`, `GET /agents/pbs-credentials`, `GET /agents/encryption-key`, `GET /agents/db-credentials`, `GET /agents/m365-credentials`, `GET /agents/update/{os}/{arch}`.
+`POST /agents/enroll` (enrollment token), `POST /agents/heartbeat`, `POST /agents/token/rotate`, `POST /agents/token/worker`, `POST /agents/ticket/refresh`, `POST /agents/sub-ticket`, `POST /agents/volume-ticket`, `POST /agents/run-progress`, `GET /agents/pbs-credentials`, `GET /agents/encryption-key`, `GET /agents/db-credentials`, `GET /agents/m365-credentials`, `GET /agents/github-credentials`, `GET /agents/update/{os}/{arch}`.
 
 The credential endpoints also need a valid backup ticket in `X-Fallbck-Backup-Ticket`. The [Architecture](../architecture.md) page explains the flow.

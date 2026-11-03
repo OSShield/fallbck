@@ -60,6 +60,7 @@ nav:
       - Proxmox VE hosts: agents/proxmox.md
       - Docker hosts: agents/docker.md
       - Microsoft 365: agents/m365.md
+      - GitHub: agents/github.md
   - Running it:
       - Access control: operations/access.md
       - Encryption: operations/encryption.md

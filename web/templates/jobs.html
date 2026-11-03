@@ -22,6 +22,7 @@
       <option value="pve">Proxmox VE host</option>
       <option value="docker">Docker host</option>
       <option value="m365">Microsoft 365</option>
+      <option value="github">GitHub</option>
       <option value="kubernetes">Kubernetes</option>
     </select>
     <select name="f_enabled" class="form-control" aria-label="Filter by state">
@@ -78,6 +79,7 @@
               {{if .IsKubernetes}}<span class="badge badge-info">Kubernetes</span>
               {{else if .IsDocker}}<span class="badge badge-info">Docker host</span>
               {{else if .IsM365}}<span class="badge badge-info">Microsoft 365</span>
+              {{else if .IsGitHub}}<span class="badge badge-info">GitHub</span>
               {{else if .IsPVE}}<span class="badge badge-info">Proxmox VE</span>
               {{else if .IsDatabase}}<span class="badge badge-info">Database</span>
               {{else}}<span class="badge badge-neutral">Files</span>{{end}}
@@ -91,6 +93,8 @@
                 <span style="font-size: 12px; color: var(--text-muted);">{{with .DockerConfig}}{{.Summary}}{{end}}</span>
               {{else if .IsM365}}
                 <span style="font-size: 12px; color: var(--text-muted);">{{with .M365Config}}{{.Summary}}{{end}}</span>
+              {{else if .IsGitHub}}
+                <span style="font-size: 12px; color: var(--text-muted);">{{with .GitHubConfig}}{{.Summary}}{{end}}</span>
               {{else if .IsPVE}}
                 <code style="display: inline-block; margin-right: 4px; font-size: 12px;">/etc</code>
                 {{with .PVEConfig}}{{range .DataPaths}}<code style="display: inline-block; margin-right: 4px; font-size: 12px;">{{.}}</code>{{end}}{{end}}
@@ -183,6 +187,7 @@
             <option value="pve">Proxmox VE host (configuration, package list, optional data paths; fallbck-agent on the node)</option>
             <option value="docker">Docker host (container, network and volume definitions, compose files, named volumes; fallbck-agent on the host)</option>
             <option value="m365">Microsoft 365 (mailboxes, OneDrive, SharePoint, Teams, Entra ID through Graph; any fallbck-agent with internet access)</option>
+            <option value="github">GitHub (organization, user, selected and starred repositories with wikis, issues and releases; any fallbck-agent with git and internet access)</option>
           </select>
         </div>
 
@@ -211,6 +216,7 @@
         {{template "job-fields-pve" .}}
         {{template "job-fields-docker" .}}
         {{template "job-fields-m365" .}}
+        {{template "job-fields-github" .}}
         {{template "job-fields-database" .}}
         {{template "job-schedule" .}}
         {{template "labels-field" "labels"}}

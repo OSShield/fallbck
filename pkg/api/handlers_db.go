@@ -41,7 +41,7 @@ func (s *ServerAPI) validateJob(ctx context.Context, job *db.BackupJob, existing
 		job.OneFileSystem = false // only filesystem jobs walk host paths
 	}
 	switch jobType {
-	case db.JobTypeDatabase, db.JobTypeM365:
+	case db.JobTypeDatabase, db.JobTypeM365, db.JobTypeGitHub:
 		job.BackupID = "" // these carry the group inside their own config
 	default:
 		if job.BackupID == "" {
@@ -68,11 +68,29 @@ func (s *ServerAPI) validateJob(ctx context.Context, job *db.BackupJob, existing
 	}
 
 	switch jobType {
+	case db.JobTypeGitHub:
+		if len(job.BackupPaths) > 0 {
+			return "GitHub jobs do not take backup paths", errors.New("paths on github job")
+		}
+		if job.DBConfig != nil || job.K8sConfig != nil || job.PVEConfig != nil || job.DockerConfig != nil || job.M365Config != nil {
+			return "GitHub jobs take github_config only", errors.New("foreign config on github job")
+		}
+		if job.GitHubConfig == nil {
+			return "GitHub jobs require github_config", errors.New("missing github_config")
+		}
+		if err := job.GitHubConfig.Validate(); err != nil {
+			return err.Error(), err
+		}
+		if s.DB != nil {
+			if _, err := s.DB.GetGitHubAccountByID(ctx, job.GitHubConfig.AccountID, p.Scope(auth.PermTenantsRead)); err != nil {
+				return "GitHub account not found", err
+			}
+		}
 	case db.JobTypeM365:
 		if len(job.BackupPaths) > 0 {
 			return "Microsoft 365 jobs do not take backup paths", errors.New("paths on m365 job")
 		}
-		if job.DBConfig != nil || job.K8sConfig != nil || job.PVEConfig != nil || job.DockerConfig != nil {
+		if job.DBConfig != nil || job.K8sConfig != nil || job.PVEConfig != nil || job.DockerConfig != nil || job.GitHubConfig != nil {
 			return "Microsoft 365 jobs take m365_config only", errors.New("foreign config on m365 job")
 		}
 		if job.M365Config == nil {
@@ -177,6 +195,9 @@ func (s *ServerAPI) validateJob(ctx context.Context, job *db.BackupJob, existing
 		}
 		if job.M365Config != nil {
 			return "Filesystem jobs do not take m365_config", errors.New("m365_config on filesystem job")
+		}
+		if job.GitHubConfig != nil {
+			return "Filesystem jobs do not take github_config", errors.New("github_config on filesystem job")
 		}
 		agentOS := ""
 		if agent != nil {

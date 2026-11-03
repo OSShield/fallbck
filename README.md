@@ -63,6 +63,7 @@ All below features are free and open source. There is no enterprise plan, there 
 | Containers | Docker | Backup of Docker images, containers, volumes, networks and compose definitions | Restore archive from PBS UI or CLI and run the script included in the backup for automatic restore, or copy/restore files manually as needed |
 | Containers | Kubernetes | Backup of Kubernetes API resources, volumes/volume snapshots, cluster state | Restore archive from PBS UI or CLI and run the script included in the backup for automatic restore, or copy/restore files manually as needed |
 | Containers | Databases | Supports backups of databases inside containers, same databases as above, with the credentials fetched from a kubernetes secret | Restore files or archives from PBS UI or CLI and run the script included in the backup for automatic restore, or copy/restore files manually as needed |
+| VCS | GitHub | Mirrors of organization, user, selected and starred repositories and gists, with wikis, issues, pull requests and releases, one snapshot group per repository | Restore the archive from PBS UI or CLI, then `git clone repo.git` or `git push --mirror` to a new remote |
 | Cloud | Microsoft 365 [Beta] | Backup of Microsoft 365 data including Outlook, OneDrive, Sharepoint, Teams and Entra data | Saved as much as possible as the native format, automatic restore functionality and documentation is still under active development |
 
 
@@ -111,8 +112,8 @@ The plan is to provide a more user-friendly restore tool (via a fully local stan
 ### Backup Sources
 These are the future backup sources that are currently planned. If you miss any, feel free to open an issue or contribute with a pull request:
 
-- VCS (Github, Gitlab, Gitea, Forgejo, etc.)
-  - Started
+- VCS (Gitlab, Gitea, Forgejo, etc.)
+  - GitHub is done, the others are next
 - Cloud storage (via librclone, so all/most supported providers like S3-compatible, Azure blob, Mega, Dropbox)
 - Google Workspace (Gmail, Drive, Calendar, Contacts, etc.)
 - Build a better, responsive UI for the web interface
