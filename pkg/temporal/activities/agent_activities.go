@@ -11,11 +11,13 @@ import (
 	"github.com/osshield/fallbck/pkg/agent/backup"
 	dbrun "github.com/osshield/fallbck/pkg/agent/dbbackup"
 	dockerrun "github.com/osshield/fallbck/pkg/agent/dockerbackup"
+	githubrun "github.com/osshield/fallbck/pkg/agent/github"
 	m365run "github.com/osshield/fallbck/pkg/agent/m365"
 	pverun "github.com/osshield/fallbck/pkg/agent/pvebackup"
 	"github.com/osshield/fallbck/pkg/agent/vss"
 	"github.com/osshield/fallbck/pkg/db"
 	dockerspec "github.com/osshield/fallbck/pkg/dockerbackup"
+	"github.com/osshield/fallbck/pkg/github"
 	"github.com/osshield/fallbck/pkg/m365"
 	pvespec "github.com/osshield/fallbck/pkg/pvebackup"
 	"github.com/osshield/fallbck/pkg/rundetail"
@@ -59,6 +61,10 @@ type AgentActivities struct {
 	SubTicket func(ctx context.Context, sessionTicket, group string) (ticket string, backupTime int64, err error)
 	// M365StateDir holds the per-job unit indexes of Microsoft 365 jobs (<data dir>/m365-state)
 	M365StateDir string
+	// GitHubCredentials fetches the token of a GitHub job (GET /api/v1/agents/github-credentials)
+	GitHubCredentials func(ctx context.Context, ticket string) (*github.Credentials, error)
+	// GitHubStateDir holds the per-job mirrors of GitHub jobs (<data dir>/github-state)
+	GitHubStateDir string
 	// CacheDir holds the per-group metadata caches for change detection
 	// (<data dir>/pxar-cache); empty disables change detection
 	CacheDir string
@@ -324,6 +330,83 @@ func (a *AgentActivities) ExecuteM365Backup(ctx context.Context, session *tempor
 	if err != nil {
 		if dbrun.IsPrecheck(err) {
 			return precheckFailed("Microsoft 365 backup", err, pt, a.LogTail)
+		}
+		if isTransportConfigErr(err) {
+			return nil, err
+		}
+		return failed(result, err)
+	}
+	return result, nil
+}
+
+// ExecuteGitHubBackup mirrors the repositories of a GitHub job: one snapshot per
+// repository (each with its own sub-ticket) plus the index snapshot in the job's group.
+func (a *AgentActivities) ExecuteGitHubBackup(ctx context.Context, session *temporal.BackupSessionInfo) (*temporal.BackupExecutionResult, error) {
+	info := activity.GetInfo(ctx)
+	if session.JobType != db.JobTypeGitHub || session.GitHubConfig == nil {
+		return nil, sdktemporal.NewNonRetryableApplicationError("session is not a GitHub backup", ErrTypeDBPrecheckFailed, nil)
+	}
+	session = sessionForAttempt(ctx, session, a.RefreshTicket)
+	slog.Info("Agent activity started: ExecuteGitHubBackup", "activity_id", info.ActivityID, "attempt", info.Attempt,
+		"job_id", session.JobID, "group", session.BackupID, "datastore", session.Datastore, "direct_pbs", session.DirectPBS)
+	if a.GitHubCredentials == nil || a.SubTicket == nil || a.GitHubStateDir == "" {
+		return nil, errors.New("this agent has no GitHub credential or sub-ticket fetcher (agent too old?)")
+	}
+
+	rt := startRunTracking(ctx, session.Ticket, session.BackupRunID, a.ReportProgress)
+	defer rt.stop()
+	pt, reportPh := rt.pt, rt.report
+
+	failed := func(result *temporal.BackupExecutionResult, err error) (*temporal.BackupExecutionResult, error) {
+		slog.Error("GitHub backup failed", "error", err, "phase", pt.Current())
+		if result == nil {
+			result = &temporal.BackupExecutionResult{}
+		}
+		result.Status, result.ErrorMessage = db.RunStatusFailed, err.Error()
+		return result, backupFailure(ctx, err, pt, a.LogTail)
+	}
+
+	pt.Set("fetching the GitHub token")
+	reportPh()
+	creds, err := a.GitHubCredentials(ctx, session.Ticket)
+	if err != nil {
+		return failed(nil, fmt.Errorf("fetching the GitHub token: %w", err))
+	}
+
+	upload := func(ctx context.Context, unit *githubrun.Unit, dir string, blobs []gopbs.Blob) (*temporal.BackupExecutionResult, error) {
+		us := *session
+		us.BackupPaths, us.ExcludePaths, us.OneFileSystem = []string{dir}, nil, false
+		if unit.Group != session.BackupID {
+			ticket, backupTime, err := a.SubTicket(ctx, session.Ticket, unit.Group)
+			if err != nil {
+				return nil, fmt.Errorf("minting the snapshot ticket: %w", err)
+			}
+			us.Ticket, us.BackupID, us.BackupTime = ticket, unit.Group, backupTime
+		}
+		tr, err := openTransport(ctx, &us, a.Tunnel, a.Credentials, a.EncryptionKey, nil)
+		if err != nil {
+			return nil, err
+		}
+		defer tr.close()
+		return backup.Run(ctx, tr.options(backup.Options{
+			Session: &us, Workers: a.Workers, ArchiveName: unit.Archive, Blobs: blobs,
+			CacheDir: a.groupCacheDir(&us),
+			OnPhase:  func(p string) { pt.Set(unit.Name + ": " + p); reportPh() },
+		}))
+	}
+	result, err := githubrun.Run(ctx, githubrun.RunOptions{
+		Session: session, Spec: session.GitHubConfig, Credentials: *creds,
+		StateDir: filepath.Join(a.GitHubStateDir, session.JobID.String()),
+		Upload:   upload,
+		Progress: func(p string) { pt.Set(p); reportPh() },
+		Items: func(items map[string]rundetail.ProgressItem) {
+			reportItems(a.ReportProgress, ctx, session.Ticket, session.BackupRunID, items)
+		},
+		Hostname: a.Hostname, Version: a.Version,
+	})
+	if err != nil {
+		if dbrun.IsPrecheck(err) {
+			return precheckFailed("GitHub backup", err, pt, a.LogTail)
 		}
 		if isTransportConfigErr(err) {
 			return nil, err

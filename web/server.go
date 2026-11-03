@@ -20,6 +20,7 @@ import (
 	"github.com/osshield/fallbck/pkg/auth"
 	"github.com/osshield/fallbck/pkg/config"
 	"github.com/osshield/fallbck/pkg/db"
+	"github.com/osshield/fallbck/pkg/github"
 	"github.com/osshield/fallbck/pkg/m365"
 	temporalui "github.com/osshield/fallbck/pkg/temporal/ui"
 )
@@ -105,6 +106,7 @@ func (u *UIHandler) RegisterRoutes(r chi.Router) {
 		r.With(need(auth.PermAgentsEnroll)).Get("/onboarding", u.HandleOnboarding)
 		r.With(need(auth.PermTargetsRead)).Get("/targets", u.HandleTargets)
 		r.With(need(auth.PermTenantsRead)).Get("/tenants", u.HandleTenants)
+		r.With(need(auth.PermTenantsRead)).Get("/github", u.HandleGitHubAccounts)
 		r.With(need(auth.PermJobsRead)).Get("/jobs", u.HandleJobs)
 		r.With(need(auth.PermJobsRead)).Get("/kubernetes", u.HandleKubernetes)
 		r.With(need(auth.PermJobsRead)).Get("/runs", u.HandleRuns)
@@ -654,18 +656,32 @@ func (u *UIHandler) HandleTenants(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (u *UIHandler) HandleGitHubAccounts(w http.ResponseWriter, r *http.Request) {
+	var accounts []*github.Account
+	if u.DB != nil {
+		accounts, _ = u.DB.ListGitHubAccounts(r.Context(), scope(r, auth.PermTenantsRead))
+	}
+	u.renderPage(w, r, "github_accounts.html", map[string]interface{}{
+		"Title":     "GitHub Accounts",
+		"ActiveNav": "github",
+		"Accounts":  accounts,
+	})
+}
+
 func (u *UIHandler) HandleJobs(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var jobs []*db.BackupJob
 	var agents []*db.Agent
 	var targets []*db.BackupTarget
 	var tenants []*m365.Tenant
+	var accounts []*github.Account
 
 	if u.DB != nil {
 		jobs, _ = u.DB.ListJobs(ctx, scope(r, auth.PermJobsRead))
 		agents, _ = u.DB.ListAgents(ctx, scope(r, auth.PermAgentsRead))
 		targets, _ = u.DB.ListTargets(ctx, scope(r, auth.PermTargetsRead))
 		tenants, _ = u.DB.ListTenants(ctx, scope(r, auth.PermTenantsRead))
+		accounts, _ = u.DB.ListGitHubAccounts(ctx, scope(r, auth.PermTenantsRead))
 	}
 	// Every job type is listed here (filtered client-side); the newest run per job feeds
 	// the last-run column and filter
@@ -678,14 +694,15 @@ func (u *UIHandler) HandleJobs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	u.renderPage(w, r, "jobs.html", map[string]interface{}{
-		"Title":         "Backup Jobs",
-		"ActiveNav":     "jobs",
-		"Timezone":      u.timezone(),
-		"Jobs":          jobs,
-		"Agents":        agents,
-		"AgentProfiles": agentProfiles(agents),
-		"Targets":       targets,
-		"Tenants":       tenants,
+		"Title":          "Backup Jobs",
+		"ActiveNav":      "jobs",
+		"Timezone":       u.timezone(),
+		"Jobs":           jobs,
+		"Agents":         agents,
+		"AgentProfiles":  agentProfiles(agents),
+		"Targets":        targets,
+		"Tenants":        tenants,
+		"GitHubAccounts": accounts,
 	})
 }
 

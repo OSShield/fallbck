@@ -30,6 +30,7 @@ import (
 	"github.com/osshield/fallbck/pkg/api"
 	"github.com/osshield/fallbck/pkg/config"
 	"github.com/osshield/fallbck/pkg/dockerbackup"
+	"github.com/osshield/fallbck/pkg/github"
 	"github.com/osshield/fallbck/pkg/inventory"
 	"github.com/osshield/fallbck/pkg/m365"
 	"github.com/osshield/fallbck/pkg/pvebackup"
@@ -411,6 +412,19 @@ func M365CredentialsFetcher(cfg *config.AgentConfig, store *TokenStore) func(ctx
 	return func(ctx context.Context, ticket string) (*m365.Credentials, error) {
 		var creds m365.Credentials
 		if err := TicketGet(ctx, httpClient, cfg, store, "/api/v1/agents/m365-credentials", ticket, &creds); err != nil {
+			return nil, err
+		}
+		return &creds, nil
+	}
+}
+
+// GitHubCredentialsFetcher retrieves the token of a GitHub job
+// (GET /api/v1/agents/github-credentials with the run's ticket)
+func GitHubCredentialsFetcher(cfg *config.AgentConfig, store *TokenStore) func(ctx context.Context, ticket string) (*github.Credentials, error) {
+	httpClient := ServerHTTPClient(cfg)
+	return func(ctx context.Context, ticket string) (*github.Credentials, error) {
+		var creds github.Credentials
+		if err := TicketGet(ctx, httpClient, cfg, store, "/api/v1/agents/github-credentials", ticket, &creds); err != nil {
 			return nil, err
 		}
 		return &creds, nil

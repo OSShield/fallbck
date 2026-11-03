@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"github.com/osshield/fallbck/pkg/dbbackup"
 	"github.com/osshield/fallbck/pkg/dockerbackup"
+	"github.com/osshield/fallbck/pkg/github"
 	"github.com/osshield/fallbck/pkg/k8sbackup"
 	"github.com/osshield/fallbck/pkg/m365"
 	"github.com/osshield/fallbck/pkg/pbs"
@@ -715,22 +716,22 @@ func (d *DB) CreateJob(ctx context.Context, job *BackupJob) error {
 	}
 
 	query := `
-		INSERT INTO backup_jobs (id, name, agent_id, target_id, schedule_cron, backup_paths, exclude_paths, enabled, direct_pbs, created_at, updated_at, job_type, db_config, k8s_config, pve_config, docker_config, m365_config, m365_tenant_id, backup_id, labels, one_file_system)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+		INSERT INTO backup_jobs (id, name, agent_id, target_id, schedule_cron, backup_paths, exclude_paths, enabled, direct_pbs, created_at, updated_at, job_type, db_config, k8s_config, pve_config, docker_config, m365_config, m365_tenant_id, backup_id, labels, one_file_system, github_config, github_account_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
 		RETURNING id
 	`
 	job.Labels = job.Labels.OrEmpty()
 	return d.Pool.QueryRow(ctx, query,
 		job.ID, job.Name, job.AgentID, job.TargetID, job.ScheduleCron,
 		backupPathsJSON, excludePathsJSON, job.Enabled, job.DirectPBS,
-		job.CreatedAt, job.UpdatedAt, cols.jobType, cols.db, cols.k8s, cols.pve, cols.docker, cols.m365, cols.tenantID, job.BackupID, job.Labels.JSON(), job.OneFileSystem,
+		job.CreatedAt, job.UpdatedAt, cols.jobType, cols.db, cols.k8s, cols.pve, cols.docker, cols.m365, cols.tenantID, job.BackupID, job.Labels.JSON(), job.OneFileSystem, cols.github, cols.accountID,
 	).Scan(&job.ID)
 }
 
 const jobSelect = `
 	SELECT j.id, j.name, j.agent_id, j.target_id, j.schedule_cron, j.backup_paths, j.exclude_paths,
 	       j.enabled, j.direct_pbs, j.created_at, j.updated_at,
-	       j.job_type, j.db_config, j.k8s_config, j.pve_config, j.docker_config, j.m365_config, j.backup_id, j.labels, j.one_file_system,
+	       j.job_type, j.db_config, j.k8s_config, j.pve_config, j.docker_config, j.m365_config, j.backup_id, j.labels, j.one_file_system, j.github_config,
 	       a.hostname as agent_name, t.name as target_name
 	FROM backup_jobs j
 	JOIN agents a ON j.agent_id = a.id
@@ -738,12 +739,12 @@ const jobSelect = `
 
 func (d *DB) scanJob(row pgx.Row) (*BackupJob, error) {
 	var j BackupJob
-	var backupPathsRaw, excludePathsRaw, dbConfigRaw, k8sConfigRaw, pveConfigRaw, dockerConfigRaw, m365ConfigRaw []byte
+	var backupPathsRaw, excludePathsRaw, dbConfigRaw, k8sConfigRaw, pveConfigRaw, dockerConfigRaw, m365ConfigRaw, githubConfigRaw []byte
 	err := row.Scan(
 		&j.ID, &j.Name, &j.AgentID, &j.TargetID, &j.ScheduleCron,
 		&backupPathsRaw, &excludePathsRaw,
 		&j.Enabled, &j.DirectPBS, &j.CreatedAt, &j.UpdatedAt,
-		&j.JobType, &dbConfigRaw, &k8sConfigRaw, &pveConfigRaw, &dockerConfigRaw, &m365ConfigRaw, &j.BackupID, &j.Labels, &j.OneFileSystem,
+		&j.JobType, &dbConfigRaw, &k8sConfigRaw, &pveConfigRaw, &dockerConfigRaw, &m365ConfigRaw, &j.BackupID, &j.Labels, &j.OneFileSystem, &githubConfigRaw,
 		&j.AgentName, &j.TargetName,
 	)
 	if err != nil {
@@ -761,6 +762,7 @@ func (d *DB) scanJob(row pgx.Row) (*BackupJob, error) {
 	j.PVEConfig = parsePVEConfig(j.JobType, pveConfigRaw)
 	j.DockerConfig = parseDockerConfig(j.JobType, dockerConfigRaw)
 	j.M365Config = parseM365Config(j.JobType, m365ConfigRaw)
+	j.GitHubConfig = parseGitHubConfig(j.JobType, githubConfigRaw)
 	return &j, nil
 }
 
@@ -792,10 +794,12 @@ func (d *DB) ListJobs(ctx context.Context, scope Scope) ([]*BackupJob, error) {
 
 // jobColumns are the type-specific column values of a job row
 type jobColumns struct {
-	jobType                    string
-	db, k8s, pve, docker, m365 []byte
+	jobType                            string
+	db, k8s, pve, docker, m365, github []byte
 	// tenantID is the m365_tenant_id foreign key (nil for every other type)
 	tenantID *uuid.UUID
+	// accountID is the github_account_id foreign key (nil for every other type)
+	accountID *uuid.UUID
 }
 
 // jobTypeColumns normalises the job type and serialises the configuration of that
@@ -807,7 +811,7 @@ func (d *DB) jobTypeColumns(job *BackupJob) (jobColumns, error) {
 	}
 	job.JobType = jobType
 	empty := []byte("{}")
-	cols := jobColumns{jobType: jobType, db: empty, k8s: empty, pve: empty, docker: empty, m365: empty}
+	cols := jobColumns{jobType: jobType, db: empty, k8s: empty, pve: empty, docker: empty, m365: empty, github: empty}
 	marshal := func(what string, v any) ([]byte, error) {
 		raw, err := json.Marshal(v)
 		if err != nil {
@@ -833,8 +837,26 @@ func (d *DB) jobTypeColumns(job *BackupJob) (jobColumns, error) {
 			id := job.M365Config.TenantID
 			cols.tenantID = &id
 		}
+	case jobType == JobTypeGitHub && job.GitHubConfig != nil:
+		cols.github, err = marshal("GitHub", job.GitHubConfig)
+		if job.GitHubConfig.AccountID != uuid.Nil {
+			id := job.GitHubConfig.AccountID
+			cols.accountID = &id
+		}
 	}
 	return cols, err
+}
+
+// parseGitHubConfig decodes the github_config column for GitHub jobs
+func parseGitHubConfig(jobType string, raw []byte) *github.Spec {
+	if jobType != JobTypeGitHub {
+		return nil
+	}
+	spec := &github.Spec{}
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, spec)
+	}
+	return spec
 }
 
 // parseM365Config decodes the m365_config column for Microsoft 365 jobs

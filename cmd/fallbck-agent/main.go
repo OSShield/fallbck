@@ -145,6 +145,8 @@ func main() {
 			acts.M365Credentials = runtime.M365CredentialsFetcher(cfg, store)
 			acts.SubTicket = runtime.SubTicketFetcher(cfg, store)
 			acts.M365StateDir = filepath.Join(cfg.DataDir, "m365-state")
+			acts.GitHubCredentials = runtime.GitHubCredentialsFetcher(cfg, store)
+			acts.GitHubStateDir = filepath.Join(cfg.DataDir, "github-state")
 			if vss.Supported() && cfg.UseVSS() {
 				acts.VSSDir = filepath.Join(cfg.DataDir, "vss")
 				vss.Sweep(acts.VSSDir)

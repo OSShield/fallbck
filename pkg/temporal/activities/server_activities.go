@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/osshield/fallbck/pkg/dbbackup"
 	"github.com/osshield/fallbck/pkg/dockerbackup"
+	"github.com/osshield/fallbck/pkg/github"
 	"github.com/osshield/fallbck/pkg/k8sbackup"
 	"github.com/osshield/fallbck/pkg/m365"
 	"github.com/osshield/fallbck/pkg/pvebackup"
@@ -107,6 +108,7 @@ func (s *ServerActivities) PrepareBackupSession(ctx context.Context, jobID uuid.
 	var pveSpec *pvebackup.Spec
 	var dockerSpec *dockerbackup.Spec
 	var m365Spec *m365.Spec
+	var githubSpec *github.Spec
 	passwordOnServer := false
 	if jobType == db.JobTypeM365 {
 		if job.M365Config == nil {
@@ -123,6 +125,23 @@ func (s *ServerActivities) PrepareBackupSession(ctx context.Context, jobID uuid.
 		claims.BackupID = m365Spec.BackupID
 		if claims.BackupID == "" {
 			claims.BackupID = m365.DefaultBackupID(tenant.Name)
+		}
+	}
+	if jobType == db.JobTypeGitHub {
+		if job.GitHubConfig == nil {
+			return nil, sdktemporal.NewNonRetryableApplicationError("GitHub job has no configuration", "job_invalid", nil)
+		}
+		githubSpec = job.GitHubConfig
+		account, err := s.DB.GetGitHubAccountByID(ctx, githubSpec.AccountID, db.Unscoped)
+		if err != nil {
+			return nil, sdktemporal.NewNonRetryableApplicationError(
+				fmt.Sprintf("the GitHub account of job %s no longer exists", job.Name), "job_invalid", nil)
+		}
+		// The job's own group holds the run index and is the prefix every repository
+		// group must extend (sub-tickets)
+		claims.BackupID = githubSpec.BackupID
+		if claims.BackupID == "" {
+			claims.BackupID = github.DefaultBackupID(account.Name)
 		}
 	}
 	if jobType == db.JobTypeDocker {
@@ -219,6 +238,7 @@ func (s *ServerActivities) PrepareBackupSession(ctx context.Context, jobID uuid.
 		PVEConfig:          pveSpec,
 		DockerConfig:       dockerSpec,
 		M365Config:         m365Spec,
+		GitHubConfig:       githubSpec,
 		BackupPaths:        job.BackupPaths,
 		ExcludePaths:       job.ExcludePaths,
 		OneFileSystem:      job.OneFileSystem && job.JobType == db.JobTypeFilesystem,

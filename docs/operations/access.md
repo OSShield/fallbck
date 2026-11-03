@@ -40,7 +40,7 @@ Runs don't have permissions of their own. If you can see a job, you can see its 
 
 ## Labels and bindings
 
-Agents, targets, jobs, M365 tenants, key rings and enrollment tokens carry **labels**: `key=value` pairs, Kubernetes syntax, up to 20 per object. Every form has a labels box, one pair per line.
+Agents, targets, jobs, M365 tenants, GitHub accounts, key rings and enrollment tokens carry **labels**: `key=value` pairs, Kubernetes syntax, up to 20 per object. Every form has a labels box, one pair per line.
 
 A **binding** grants a role to a subject on a **selector**. The subject is one of:
 
@@ -79,7 +79,7 @@ Out-of-scope objects simply don't exist for you. Lists leave them out and direct
 A few rules keep scopes honest:
 
 - **Relabelling needs write on both sides.** You can't move an object out of your scope, or someone else's into it.
-- **A job needs its pieces.** Creating or editing one needs `jobs:write` on its labels plus `agents:read` on the agent, `targets:read` on the target and `tenants:read` on the M365 tenant.
+- **A job needs its pieces.** Creating or editing one needs `jobs:write` on its labels plus `agents:read` on the agent, `targets:read` on the target and `tenants:read` on the M365 tenant or GitHub account.
 - **Key rings are shared.** Attaching a target to a ring needs `keyrings:read` on it. Turning on encryption without picking a ring creates one with the target's labels, which needs `keyrings:write` on those. Rotate and export are ring permissions because they hit every target on the ring.
 - **Some permissions are global only.** A role with `rbac:manage`, `apikeys:manage` or `temporal:ui` can only be bound with an empty selector. The first two would let a scoped admin grant themselves more. The Temporal UI shows every workflow regardless of labels. A custom role that still has one of them on a scoped binding from before simply doesn't get that permission.
 - **The last global access admin can't be removed.** Add another binding first.

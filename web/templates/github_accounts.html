@@ -1,0 +1,91 @@
+{{define "content"}}
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+  <p style="color: var(--text-muted); font-size: 14px;">Tokens FallBCK lists and mirrors GitHub repositories with. Backup jobs of type GitHub reference an account.</p>
+</div>
+
+<div class="card">
+  <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+    <h3 class="card-title">GitHub Accounts ({{len .Accounts}})</h3>
+    <button class="btn btn-primary btn-sm" data-perm="tenants:write" onclick="newGitHubAccount()">Add Account</button>
+  </div>
+  <div class="table-container">
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>API</th>
+          <th>Token</th>
+          <th>Token expires</th>
+          <th>Jobs</th>
+          <th style="text-align: right;">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{if .Accounts}}
+          {{range .Accounts}}
+          <tr>
+            <td><strong>{{.Name}}</strong><br>{{template "label-chips" .Labels}}</td>
+            <td><code>{{.APIURL}}</code></td>
+            <td>{{if .HasToken}}<span class="badge badge-success">stored</span>{{else}}<span class="badge badge-danger">missing</span>{{end}}</td>
+            <td>{{if .TokenExpires}}<span class="badge {{if .Expired}}badge-danger{{else if .ExpiringSoon}}badge-warning{{else}}badge-success{{end}}">{{.TokenExpires.Format "2006-01-02"}}</span>{{else}}<span style="color: var(--text-dim);">unknown</span>{{end}}</td>
+            <td>{{.Jobs}}</td>
+            <td style="text-align: right; display: flex; justify-content: flex-end; gap: 8px;">
+              <button class="btn btn-secondary btn-sm" data-perm="tenants:write" onclick="testGitHubAccount('{{.ID}}', this)">Test</button>
+              <button class="btn btn-secondary btn-sm" data-perm="tenants:write" onclick="editGitHubAccount('{{.ID}}')">Edit</button>
+              <button class="btn btn-secondary btn-sm" data-perm="tenants:delete" style="color: var(--danger-text);" {{if .Jobs}}disabled title="Used by {{.Jobs}} job(s)"{{end}} onclick="deleteResource('github/accounts', '{{.ID}}')">Delete</button>
+            </td>
+          </tr>
+          {{end}}
+        {{else}}
+          <tr><td colspan="6"><div class="empty-state"><p>No GitHub accounts registered. An account is a token FallBCK lists and clones repositories with; jobs of type GitHub reference it.</p></div></td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div id="modal-github-account" class="modal-backdrop">
+  <div class="modal-content" style="max-width: 680px;">
+    <div class="modal-header">
+      <h3 id="github-account-modal-title">Add GitHub Account</h3>
+      <button class="close-btn" onclick="closeModal('modal-github-account')">&times;</button>
+    </div>
+    <form id="github-account-form" data-account-id="" onsubmit="submitGitHubAccountForm(event)">
+      <div class="modal-body">
+        <div style="background-color: var(--bg-subtle); padding: 14px; border-radius: var(--radius-sm); margin-bottom: 16px; font-size: 13px;">
+          Create a token under <a href="https://github.com/settings/tokens" target="_blank" rel="noopener">Settings → Developer settings</a>. A <strong>classic</strong> token needs <code>repo</code> (private repositories), <code>read:org</code> (organization repositories) and <code>read:user</code>; a <strong>fine-grained</strong> token needs read access to <em>Contents</em>, <em>Metadata</em>, <em>Issues</em> and <em>Pull requests</em> on the repositories it should see. Starred repositories are those of the token's own user.
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+          <div class="form-group">
+            <label>Display name</label>
+            <input type="text" name="gh_name" class="form-control" placeholder="acme" required>
+            <span class="form-text">Also the default snapshot group prefix: github-&lt;name&gt;.</span>
+          </div>
+          <div class="form-group">
+            <label>API URL</label>
+            <input type="text" name="gh_api_url" class="form-control" placeholder="https://api.github.com">
+            <span class="form-text">GitHub Enterprise Server: https://&lt;host&gt;/api/v3</span>
+          </div>
+        </div>
+        <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 16px;">
+          <div class="form-group">
+            <label>Token</label>
+            <input type="password" name="gh_token" class="form-control" autocomplete="new-password">
+            <span class="form-text">Sealed on the server with its master key; handed to the agent per run, never shown again.</span>
+          </div>
+          <div class="form-group">
+            <label>Token expires</label>
+            <input type="date" name="gh_token_expires" class="form-control">
+            <span class="form-text">Warning 30 days before.</span>
+          </div>
+        </div>
+        {{template "labels-field" "gh_labels"}}
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('modal-github-account')">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save Account</button>
+      </div>
+    </form>
+  </div>
+</div>
+{{end}}

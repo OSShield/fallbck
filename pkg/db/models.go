@@ -10,6 +10,7 @@ import (
 	"github.com/osshield/fallbck/pkg/config"
 	"github.com/osshield/fallbck/pkg/dbbackup"
 	"github.com/osshield/fallbck/pkg/dockerbackup"
+	"github.com/osshield/fallbck/pkg/github"
 	"github.com/osshield/fallbck/pkg/k8sbackup"
 	"github.com/osshield/fallbck/pkg/m365"
 	"github.com/osshield/fallbck/pkg/pbs"
@@ -33,6 +34,9 @@ const (
 	// JobTypeM365 backs up a Microsoft 365 tenant through Graph; it runs on any
 	// filesystem agent with outbound HTTPS (no host capability involved)
 	JobTypeM365 = "m365"
+	// JobTypeGitHub mirrors GitHub repositories (git, wiki, issues); it runs on any
+	// filesystem agent with outbound HTTPS and git installed
+	JobTypeGitHub = "github"
 )
 
 // NormalizeAgentType maps "" to filesystem and reports unknown values
@@ -58,6 +62,8 @@ func NormalizeJobType(t string) (string, bool) {
 		return JobTypeDocker, true
 	case JobTypeM365:
 		return JobTypeM365, true
+	case JobTypeGitHub:
+		return JobTypeGitHub, true
 	}
 	return NormalizeAgentType(t)
 }
@@ -77,7 +83,7 @@ func JobAllowedOnAgent(jobType, agentType string) bool {
 	switch jobType {
 	case JobTypeDatabase:
 		return agentType == AgentTypeKubernetes || agentType == AgentTypeFilesystem
-	case JobTypePVE, JobTypeDocker, JobTypeM365:
+	case JobTypePVE, JobTypeDocker, JobTypeM365, JobTypeGitHub:
 		return agentType == AgentTypeFilesystem
 	}
 	return false
@@ -388,8 +394,11 @@ type BackupJob struct {
 	// M365Config is the Microsoft 365 job specification (its TenantID is also the
 	// m365_tenant_id column, so a tenant cannot be deleted while jobs use it)
 	M365Config *m365.Spec `json:"m365_config,omitempty" db:"m365_config"`
-	CreatedAt  time.Time  `json:"created_at" db:"created_at"`
-	UpdatedAt  time.Time  `json:"updated_at" db:"updated_at"`
+	// GitHubConfig is the GitHub job specification (its AccountID is also the
+	// github_account_id column, so an account cannot be deleted while jobs use it)
+	GitHubConfig *github.Spec `json:"github_config,omitempty" db:"github_config"`
+	CreatedAt    time.Time    `json:"created_at" db:"created_at"`
+	UpdatedAt    time.Time    `json:"updated_at" db:"updated_at"`
 	// Labels place the job and all of its runs in access scopes. On update, an
 	// absent field (nil) keeps the stored labels; {} clears them.
 	Labels Labels `json:"labels"`
@@ -496,6 +505,9 @@ func (j *BackupJob) IsDocker() bool { return j.JobType == JobTypeDocker }
 // IsM365 reports whether the job is a Microsoft 365 backup
 func (j *BackupJob) IsM365() bool { return j.JobType == JobTypeM365 }
 
+// IsGitHub reports whether the job is a GitHub backup
+func (j *BackupJob) IsGitHub() bool { return j.JobType == JobTypeGitHub }
+
 // Sanitize redacts the stored database password (HasPassword tells whether one exists)
 func (j *BackupJob) Sanitize() *BackupJob {
 	if j.JobType == "" {
@@ -523,6 +535,9 @@ func (j *BackupJob) Summary() string {
 	}
 	if j.IsM365() {
 		return j.M365Config.Summary()
+	}
+	if j.IsGitHub() {
+		return j.GitHubConfig.Summary()
 	}
 	return strings.Join(j.BackupPaths, ", ")
 }

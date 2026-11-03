@@ -1,0 +1,70 @@
+{{/* GitHub job fields. */}}
+{{define "job-fields-github"}}
+<fieldset id="job-github-fields" style="border: 0; padding: 0; margin: 0;" hidden disabled>
+  <div style="background-color: var(--bg-subtle); padding: 14px; border-radius: var(--radius-sm); margin-bottom: 16px; font-size: 13px;">
+    Every repository becomes its own snapshot group (<code>&lt;job group&gt;-&lt;owner&gt;-&lt;name&gt;</code>) holding a bare <code>git --mirror</code> clone, the wiki, and issues, pull requests and releases as JSON; the job's own group holds the run index. The agent keeps the mirrors between runs, so later runs only fetch what changed. Needs git 2.31+ on the agent.
+  </div>
+  <div class="form-group">
+    <label>Account</label>
+    <div style="display: flex; gap: 8px; align-items: center;">
+      <select name="gh_account_id" class="form-control" required>
+        <option value="">-- Choose account --</option>
+        {{range .GitHubAccounts}}<option value="{{.ID}}" data-name="{{.Name}}">{{.Name}} ({{.APIURL}})</option>{{end}}
+      </select>
+      <a href="/github" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">Manage accounts</a>
+    </div>
+  </div>
+  <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px;">
+    <div class="form-group">
+      <label>Organizations (one per line, optional <code>:type</code>)</label>
+      <textarea name="gh_orgs" class="form-control" rows="3" placeholder="acme&#10;acme-labs:sources"></textarea>
+      <span class="form-text">Types: all (default), public, private, forks, sources, member.</span>
+    </div>
+    <div class="form-group">
+      <label>Users (their own repositories)</label>
+      <textarea name="gh_users" class="form-control" rows="3" placeholder="octocat"></textarea>
+      <span class="form-text">The token's own login includes private repositories.</span>
+    </div>
+    <div class="form-group">
+      <label>Repositories (owner/name)</label>
+      <textarea name="gh_repos" class="form-control" rows="3" placeholder="acme/website&#10;torvalds/linux"></textarea>
+      <span class="form-text">Always backed up, filters below do not apply.</span>
+    </div>
+  </div>
+  <div style="display: flex; gap: 16px; margin-bottom: 16px; font-size: 13px; flex-wrap: wrap;">
+    <label style="display: flex; align-items: center; gap: 6px;"><input type="checkbox" name="gh_starred"> Every repository the token's user has starred</label>
+    <label style="display: flex; align-items: center; gap: 6px;"><input type="checkbox" name="gh_skip_forks"> Skip forks</label>
+    <label style="display: flex; align-items: center; gap: 6px;"><input type="checkbox" name="gh_skip_archived"> Skip archived</label>
+  </div>
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+    <div class="form-group">
+      <label>Include (owner/name patterns, optional)</label>
+      <textarea name="gh_include" class="form-control" rows="2" placeholder="acme/*"></textarea>
+    </div>
+    <div class="form-group">
+      <label>Exclude (owner/name patterns)</label>
+      <textarea name="gh_exclude" class="form-control" rows="2" placeholder="acme/scratch-*"></textarea>
+    </div>
+  </div>
+  <div class="form-group">
+    <label>Content next to the git mirror</label>
+    <div style="display: flex; flex-wrap: wrap; gap: 16px; font-size: 13px;">
+      <label style="display: flex; align-items: center; gap: 6px;"><input type="checkbox" name="gh_wiki" checked> Wiki</label>
+      <label style="display: flex; align-items: center; gap: 6px;"><input type="checkbox" name="gh_issues" checked> Issues and pull requests (with comments)</label>
+      <label style="display: flex; align-items: center; gap: 6px;"><input type="checkbox" name="gh_releases" checked> Releases (metadata)</label>
+      <label style="display: flex; align-items: center; gap: 6px;"><input type="checkbox" name="gh_lfs"> Git LFS objects (needs git-lfs)</label>
+      <label style="display: flex; align-items: center; gap: 6px;"><input type="checkbox" name="gh_keep_mirrors" checked> Keep mirrors on the agent between runs</label>
+    </div>
+  </div>
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+    <div class="form-group">
+      <label>Repositories in flight</label>
+      <input type="number" name="gh_concurrency" class="form-control" min="1" max="32" placeholder="4">
+    </div>
+    <div class="form-group">
+      <label>Snapshot group prefix (optional, default github-&lt;account name&gt;)</label>
+      <input type="text" name="gh_backup_id" class="form-control" placeholder="github-acme">
+    </div>
+  </div>
+</fieldset>
+{{end}}

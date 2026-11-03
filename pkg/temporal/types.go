@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"github.com/osshield/fallbck/pkg/dbbackup"
 	"github.com/osshield/fallbck/pkg/dockerbackup"
+	"github.com/osshield/fallbck/pkg/github"
 	"github.com/osshield/fallbck/pkg/inventory"
 	"github.com/osshield/fallbck/pkg/k8sbackup"
 	"github.com/osshield/fallbck/pkg/m365"
@@ -64,6 +65,9 @@ type BackupSessionInfo struct {
 	// credentials never travel through Temporal, the agent fetches them with its
 	// ticket (GET /api/v1/agents/m365-credentials)
 	M365Config *m365.Spec `json:"m365_config,omitempty"`
+	// GitHubConfig is the GitHub job spec; the token never travels through Temporal, the
+	// agent fetches it with its ticket (GET /api/v1/agents/github-credentials)
+	GitHubConfig *github.Spec `json:"github_config,omitempty"`
 	// JobName is informational (manifest)
 	JobName string `json:"job_name,omitempty"`
 	// AgentHostname is written as the snapshot comment on PBS (informational)
