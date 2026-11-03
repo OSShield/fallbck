@@ -385,3 +385,73 @@ func MarshalList(items []json.RawMessage) []byte {
 	b.WriteString("]\n")
 	return b.Bytes()
 }
+
+// Gist is the part of a gist object the agent needs; Raw is the whole object
+type Gist struct {
+	ID          string `json:"id"`
+	Description string `json:"description"`
+	Public      bool   `json:"public"`
+	GitPullURL  string `json:"git_pull_url"`
+	HTMLURL     string `json:"html_url"`
+	Comments    int    `json:"comments"`
+	Owner       *struct {
+		Login string `json:"login"`
+	} `json:"owner"`
+	Raw json.RawMessage `json:"-"`
+}
+
+// OwnerLogin is the owner, "anonymous" for the old ownerless gists
+func (g *Gist) OwnerLogin() string {
+	if g.Owner == nil || g.Owner.Login == "" {
+		return "anonymous"
+	}
+	return g.Owner.Login
+}
+
+func decodeGists(raw []json.RawMessage) ([]Gist, error) {
+	out := make([]Gist, 0, len(raw))
+	for _, r := range raw {
+		var g Gist
+		if err := json.Unmarshal(r, &g); err != nil {
+			return nil, fmt.Errorf("decoding gist: %w", err)
+		}
+		g.Raw = r
+		out = append(out, g)
+	}
+	return out, nil
+}
+
+// Gists lists GET /gists (the token user's own, secret ones included), GET
+// /gists/starred (starred=true) or GET /users/{user}/gists (user set)
+func (c *Client) Gists(ctx context.Context, user string, starred bool) ([]Gist, error) {
+	path := "/gists"
+	switch {
+	case user != "":
+		path = "/users/" + url.PathEscape(user) + "/gists"
+	case starred:
+		path = "/gists/starred"
+	}
+	raw, err := c.List(ctx, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	return decodeGists(raw)
+}
+
+// Gist reads GET /gists/{id}
+func (c *Client) Gist(ctx context.Context, id string) (*Gist, error) {
+	var raw json.RawMessage
+	if _, err := c.getJSON(ctx, "/gists/"+url.PathEscape(id), &raw); err != nil {
+		return nil, err
+	}
+	gists, err := decodeGists([]json.RawMessage{raw})
+	if err != nil {
+		return nil, err
+	}
+	return &gists[0], nil
+}
+
+// GistComments lists GET /gists/{id}/comments
+func (c *Client) GistComments(ctx context.Context, id string) ([]json.RawMessage, error) {
+	return c.List(ctx, "/gists/"+url.PathEscape(id)+"/comments", nil)
+}

@@ -172,3 +172,38 @@ func TestClientPaginationAndRateLimit(t *testing.T) {
 		t.Errorf("MarshalList(nil) = %q", got)
 	}
 }
+
+func TestGistSpec(t *testing.T) {
+	id := "0123456789abcdef0123456789ABCDEF"
+	for raw, want := range map[string]string{
+		id:                                       strings.ToLower(id),
+		"https://gist.github.com/octo/" + id:     strings.ToLower(id),
+		"https://gist.github.com/" + id + ".git": strings.ToLower(id),
+		"https://gist.github.com/octo/" + id + "#file-x-go":   strings.ToLower(id),
+		"https://gist.github.com/octo/" + id + "/":            strings.ToLower(id),
+		"https://gist.github.com/octo/" + id + "/revisions?x": "",
+		"not-a-gist": "",
+	} {
+		got, ok := GistID(raw)
+		if got != want || ok != (want != "") {
+			t.Errorf("GistID(%q) = %q %v, want %q", raw, got, ok, want)
+		}
+	}
+	s := &Spec{AccountID: uuid.New(), Sources: Sources{Gists: Gists{Own: true, Users: []string{"octo", "OCTO"}, IDs: []string{id, "https://gist.github.com/octo/" + id}}}}
+	if err := s.Validate(); err != nil {
+		t.Fatalf("gist-only spec: %v", err)
+	}
+	if len(s.Sources.Gists.Users) != 1 || len(s.Sources.Gists.IDs) != 1 {
+		t.Errorf("gists not deduplicated: %+v", s.Sources.Gists)
+	}
+	if got := s.Summary(); got != "own gists, gists of octo, 1 gists" {
+		t.Errorf("Summary = %q", got)
+	}
+	bad := &Spec{AccountID: uuid.New(), Sources: Sources{Gists: Gists{IDs: []string{"nope"}}}}
+	if err := bad.Validate(); !errors.Is(err, ErrInvalidSpec) {
+		t.Errorf("bad gist id: %v", err)
+	}
+	if g := GistGroup("github-x", "Octo", strings.ToLower(id)); g != "github-x-gist-octo-"+strings.ToLower(id) {
+		t.Errorf("GistGroup = %q", g)
+	}
+}

@@ -2,7 +2,7 @@
 {{define "job-fields-github"}}
 <fieldset id="job-github-fields" style="border: 0; padding: 0; margin: 0;" hidden disabled>
   <div style="background-color: var(--bg-subtle); padding: 14px; border-radius: var(--radius-sm); margin-bottom: 16px; font-size: 13px;">
-    Every repository becomes its own snapshot group (<code>&lt;job group&gt;-&lt;owner&gt;-&lt;name&gt;</code>) holding a bare <code>git --mirror</code> clone, the wiki, and issues, pull requests and releases as JSON; the job's own group holds the run index. The agent keeps the mirrors between runs, so later runs only fetch what changed. Needs git 2.31+ on the agent.
+    Every repository becomes its own snapshot group (<code>&lt;job group&gt;-&lt;owner&gt;-&lt;name&gt;</code>, gists <code>&lt;job group&gt;-gist-&lt;owner&gt;-&lt;id&gt;</code>) holding a bare <code>git --mirror</code> clone, the wiki, and issues, pull requests and releases as JSON; the job's own group holds the run index. The agent keeps the mirrors between runs, so later runs only fetch what changed. Needs git 2.31+ on the agent.
   </div>
   <div class="form-group">
     <label>Account</label>
@@ -38,11 +38,26 @@
   </div>
   <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
     <div class="form-group">
-      <label>Include (owner/name patterns, optional)</label>
+      <label>Gists: users (their public gists)</label>
+      <textarea name="gh_gist_users" class="form-control" rows="2" placeholder="octocat"></textarea>
+    </div>
+    <div class="form-group">
+      <label>Gists: ids or URLs</label>
+      <textarea name="gh_gist_ids" class="form-control" rows="2" placeholder="https://gist.github.com/octocat/6cad326836d38bd3a7ae"></textarea>
+      <span class="form-text">Always backed up, like explicit repositories.</span>
+    </div>
+  </div>
+  <div style="display: flex; gap: 16px; margin-bottom: 16px; font-size: 13px; flex-wrap: wrap;">
+    <label style="display: flex; align-items: center; gap: 6px;"><input type="checkbox" name="gh_gists_own"> Every gist of the token's user (secret ones included)</label>
+    <label style="display: flex; align-items: center; gap: 6px;"><input type="checkbox" name="gh_gists_starred"> Starred gists</label>
+  </div>
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+    <div class="form-group">
+      <label>Include (owner/name patterns, optional; repositories only)</label>
       <textarea name="gh_include" class="form-control" rows="2" placeholder="acme/*"></textarea>
     </div>
     <div class="form-group">
-      <label>Exclude (owner/name patterns)</label>
+      <label>Exclude (owner/name patterns; repositories only)</label>
       <textarea name="gh_exclude" class="form-control" rows="2" placeholder="acme/scratch-*"></textarea>
     </div>
   </div>

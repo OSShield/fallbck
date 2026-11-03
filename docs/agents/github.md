@@ -20,8 +20,9 @@ Pick an account and any mix of sources. The job backs up the union:
 | Users | The repositories a user owns. For the token's own login that includes private repositories. |
 | Repositories | Explicit `owner/name` entries. These are always backed up, and the filters below don't apply. |
 | Starred | Every repository the token's user has starred. |
+| Gists | The token user's own gists (secret ones included), starred gists, the public gists of given users, and explicit gist ids or URLs. |
 
-Then narrow it down with include/exclude globs on `owner/name`, *skip forks* and *skip archived*. Choose the content: wiki, issues and pull requests (with comments), and releases (metadata only, not assets). Git LFS objects are fetched when you tick LFS and `git-lfs` is installed on the agent.
+Then narrow repositories down with include/exclude globs on `owner/name`, *skip forks* and *skip archived* (gists aren't filtered). Choose the content: wiki, issues and pull requests (with comments), and releases (metadata only, not assets). Git LFS objects are fetched when you tick LFS and `git-lfs` is installed on the agent.
 
 A typical setup is two jobs: your organizations and own repositories nightly, and starred repositories monthly (they can run to tens of GB) with issues switched off.
 
@@ -32,6 +33,7 @@ Each run writes one snapshot **per repository**, each in its own group. The pref
 | Group | Archive | Contents |
 |---|---|---|
 | `host/<group>-<owner>-<name>` | `repo.pxar` | `repo.git/` (bare mirror: every branch, tag and pull request ref), `wiki.git/`, `metadata/*.json`, `RESTORE.md`, plus `fallbck-github-repo.json.blob` |
+| `host/<group>-gist-<owner>-<id>` | `repo.pxar` | `repo.git/` (the gist's history), `metadata/gist.json`, `metadata/comments.json` |
 | `host/<group>` | `index.pxar` | the run manifest listing every repository group, `account.json`, `RESTORE.md`, plus `fallbck-github.json.blob` |
 
 A repository that gets deleted on GitHub keeps its history on PBS. One failing repository fails only itself: the run ends **Partial** and lists the failed repositories.
@@ -53,7 +55,9 @@ git -C repo.git push --mirror <new remote URL>   # or everything to a new remote
 
 Push `wiki.git` the same way to `<repo URL>.wiki.git` (create the first wiki page in the UI first). GitHub has no bulk import for issues and pull requests, so `metadata/` is for reference or scripted re-creation.
 
+To recreate a gist, create a new one and run `git -C repo.git push --force <gist URL>.git HEAD:main`.
+
 ## Not covered
 
-- release assets, Actions artifacts and logs, discussions, projects, gists
+- release assets, Actions artifacts and logs, discussions, projects
 - repository settings, webhooks, secrets and branch protection (`metadata/repository.json` has the basics)

@@ -64,6 +64,9 @@ func commit(t *testing.T, bare, content string) string {
 
 type fakeAPI struct {
 	mu    sync.Mutex
+	gists map[string]map[string]any // id → gist object
+	own   []string
+	starG []string
 	repos map[string]map[string]any // full name → repo object
 	orgs  map[string][]string
 	user  []string
@@ -101,6 +104,33 @@ func (f *fakeAPI) handler(t *testing.T) http.Handler {
 			list(f.user)
 		case p == "/user/starred":
 			list(f.stars)
+		case p == "/gists" || p == "/gists/starred" || strings.HasPrefix(p, "/users/"):
+			ids := f.own
+			if p == "/gists/starred" {
+				ids = f.starG
+			}
+			if strings.HasPrefix(p, "/users/") {
+				ids = nil
+				for id, g := range f.gists {
+					if g["public"] == true && g["owner"].(map[string]string)["login"] == strings.Split(p, "/")[2] {
+						ids = append(ids, id)
+					}
+				}
+			}
+			out := []map[string]any{}
+			for _, id := range ids {
+				out = append(out, f.gists[id])
+			}
+			_ = json.NewEncoder(w).Encode(out)
+		case strings.HasPrefix(p, "/gists/") && strings.HasSuffix(p, "/comments"):
+			fmt.Fprint(w, `[{"id":1,"body":"nice"}]`)
+		case strings.HasPrefix(p, "/gists/"):
+			g, ok := f.gists[strings.TrimPrefix(p, "/gists/")]
+			if !ok {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(g)
 		case strings.HasPrefix(p, "/orgs/") && strings.HasSuffix(p, "/repos"):
 			names, ok := f.orgs[strings.TrimSuffix(strings.TrimPrefix(p, "/orgs/"), "/repos")]
 			if !ok {
@@ -362,6 +392,8 @@ func TestCheckRemote(t *testing.T) {
 		{"https://github.com/a/b.git", "https://api.github.com", false, true},
 		{"https://ghe.example.com/a/b.git", "https://ghe.example.com/api/v3", false, true},
 		{"https://evil.example/a/b.git", "https://api.github.com", false, false},
+		{"https://gist.github.com/0123.git", "https://api.github.com", false, true},
+		{"https://gist.evil.example/0123.git", "https://api.github.com", false, false},
 		{"file:///tmp/x", "https://api.github.com", false, false},
 		{"file:///tmp/x", "http://127.0.0.1:1234", true, true},
 		{"ssh://git@github.com/a/b", "https://api.github.com", false, false},
@@ -404,5 +436,58 @@ func TestOrgSourceThatIsAUser(t *testing.T) {
 	}
 	if !strings.Contains(string(res.Details), "is a user, not an organization") {
 		t.Error("no warning about the user fallback")
+	}
+}
+
+func TestGists(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	remotes := t.TempDir()
+	const secret, starred, explicit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "cccccccccccccccccccccccccccccccc"
+	gist := func(id, owner string, public bool) map[string]any {
+		return map[string]any{"id": id, "public": public, "description": "d", "owner": map[string]string{"login": owner},
+			"git_pull_url": newRemote(t, remotes, id+".git", "gist "+id), "files": map[string]any{"a.txt": map[string]any{}}}
+	}
+	api := &fakeAPI{calls: map[string]int{}, repos: map[string]map[string]any{}, orgs: map[string][]string{},
+		gists: map[string]map[string]any{secret: gist(secret, "me", false), starred: gist(starred, "other", true), explicit: gist(explicit, "other", true)},
+		own:   []string{secret}, starG: []string{starred}}
+	srv := httptest.NewServer(api.handler(t))
+	defer srv.Close()
+	rec := &recorder{}
+	s := &spec.Spec{AccountID: uuid.New(), Sources: spec.Sources{Gists: spec.Gists{Own: true, Starred: true, Users: []string{"other"},
+		IDs: []string{"https://gist.github.com/other/" + explicit + "#file-a-txt"}}}}
+	res, err := Run(context.Background(), RunOptions{
+		Session: &temporal.BackupSessionInfo{JobID: uuid.New(), BackupRunID: uuid.New(), BackupType: "host", BackupID: "gh"},
+		Spec:    s, Credentials: spec.Credentials{APIURL: srv.URL, Token: "tok"}, StateDir: t.TempDir(), Upload: rec.upload, AllowFileRemotes: true,
+	})
+	if err != nil || res.Status != "completed" {
+		t.Fatalf("Run: %v %+v", err, res)
+	}
+	var w rundetail.Wrapper
+	var m spec.Manifest
+	_ = json.Unmarshal(res.Details, &w)
+	_ = json.Unmarshal(w.Manifest, &m)
+	got := map[string]spec.RepoResult{}
+	for _, r := range m.Repos {
+		got[r.FullName] = r
+	}
+	if len(got) != 3 {
+		t.Fatalf("gists: %+v", m.Repos)
+	}
+	own := got["gist:me/"+secret]
+	if own.Kind != "gist" || !own.Private || own.Group != "gh-gist-me-"+secret || own.Comments != 1 || own.Refs == 0 {
+		t.Errorf("own gist: %+v", own)
+	}
+	// Listed as starred, by user and explicitly: one unit, three sources
+	if src := strings.Join(got["gist:other/"+explicit].Sources, ","); src != "gists:other,gist" {
+		t.Errorf("explicit gist sources: %s", src)
+	}
+	if src := strings.Join(got["gist:other/"+starred].Sources, ","); src != "starred gists,gists:other" {
+		t.Errorf("starred gist sources: %s", src)
+	}
+	up := rec.find("gh-gist-me-" + secret)
+	if up == nil || !up.files["repo.git/HEAD"] || !up.files["metadata/gist.json"] || !up.files["metadata/comments.json"] || up.files["wiki.git"] {
+		t.Errorf("gist snapshot: %+v", up)
 	}
 }

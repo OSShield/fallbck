@@ -56,8 +56,22 @@ type Sources struct {
 	// Repos are explicit owner/name entries
 	Repos []string `json:"repos,omitempty"`
 	// Starred backs up every repository the token's user has starred
-	Starred bool `json:"starred,omitempty"`
+	Starred bool  `json:"starred,omitempty"`
+	Gists   Gists `json:"gists"`
 }
+
+// Gists selects gists; each is a git repository of its own. Repository filters do not apply.
+type Gists struct {
+	// Own is every gist of the token's user, secret ones included
+	Own     bool `json:"own,omitempty"`
+	Starred bool `json:"starred,omitempty"`
+	// Users back up the public gists of these accounts; IDs are explicit gist ids or URLs
+	Users []string `json:"users,omitempty"`
+	IDs   []string `json:"ids,omitempty"`
+}
+
+// Any reports whether a gist source is set
+func (g Gists) Any() bool { return g.Own || g.Starred || len(g.Users) > 0 || len(g.IDs) > 0 }
 
 // Content selects what is archived next to the git mirror. nil means the default.
 type Content struct {
@@ -170,8 +184,29 @@ func (s *Spec) Validate() error {
 		}
 	}
 	s.Sources.Repos = repos
-	if len(s.Sources.Orgs) == 0 && len(s.Sources.Users) == 0 && len(s.Sources.Repos) == 0 && !s.Sources.Starred {
-		return specErr("choose at least one source: organizations, users, repositories or starred")
+	var gistUsers []string
+	for _, u := range cleanStrings(s.Sources.Gists.Users) {
+		if !ownerRe.MatchString(u) {
+			return specErr("gist user %q is not a valid GitHub login", u)
+		}
+		if !containsFold(gistUsers, u) {
+			gistUsers = append(gistUsers, u)
+		}
+	}
+	s.Sources.Gists.Users = gistUsers
+	var gistIDs []string
+	for _, raw := range cleanStrings(s.Sources.Gists.IDs) {
+		id, ok := GistID(raw)
+		if !ok {
+			return specErr("gist %q must be a gist id or URL", raw)
+		}
+		if !contains(gistIDs, id) {
+			gistIDs = append(gistIDs, id)
+		}
+	}
+	s.Sources.Gists.IDs = gistIDs
+	if len(s.Sources.Orgs) == 0 && len(s.Sources.Users) == 0 && len(s.Sources.Repos) == 0 && !s.Sources.Starred && !s.Sources.Gists.Any() {
+		return specErr("choose at least one source: organizations, users, repositories, starred or gists")
 	}
 	var err error
 	if s.Include, err = cleanGlobs("include", s.Include); err != nil {
@@ -197,6 +232,25 @@ func SplitFullName(full string) (owner, name string, ok bool) {
 		return "", "", false
 	}
 	return owner, name, true
+}
+
+var gistIDRe = regexp.MustCompile(`^[0-9a-fA-F]{20,40}$`)
+
+// GistID takes a gist id or URL (https://gist.github.com/<user>/<id>, optionally .git
+// or a #fragment) and returns the lower-cased id
+func GistID(raw string) (string, bool) {
+	s := strings.TrimSpace(raw)
+	if i := strings.IndexAny(s, "#?"); i >= 0 {
+		s = s[:i]
+	}
+	s = strings.TrimSuffix(strings.TrimSuffix(s, "/"), ".git")
+	if i := strings.LastIndexByte(s, '/'); i >= 0 {
+		s = s[i+1:]
+	}
+	if !gistIDRe.MatchString(s) {
+		return "", false
+	}
+	return strings.ToLower(s), true
 }
 
 func cleanGlobs(field string, globs []string) ([]string, error) {
@@ -289,6 +343,7 @@ func (s *Spec) Clone() *Spec {
 		c.Sources.Orgs = append([]OrgSource{}, s.Sources.Orgs...)
 	}
 	c.Sources.Users, c.Sources.Repos = cp(s.Sources.Users), cp(s.Sources.Repos)
+	c.Sources.Gists.Users, c.Sources.Gists.IDs = cp(s.Sources.Gists.Users), cp(s.Sources.Gists.IDs)
 	c.Include, c.Exclude = cp(s.Include), cp(s.Exclude)
 	c.Content.Wiki, c.Content.Issues, c.Content.Releases = cpb(s.Content.Wiki), cpb(s.Content.Issues), cpb(s.Content.Releases)
 	c.KeepMirrors = cpb(s.KeepMirrors)
@@ -320,6 +375,19 @@ func (s *Spec) Summary() string {
 	if s.Sources.Starred {
 		parts = append(parts, "starred")
 	}
+	g := s.Sources.Gists
+	if g.Own {
+		parts = append(parts, "own gists")
+	}
+	if g.Starred {
+		parts = append(parts, "starred gists")
+	}
+	for _, u := range g.Users {
+		parts = append(parts, "gists of "+u)
+	}
+	if n := len(g.IDs); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d gists", n))
+	}
 	return strings.Join(parts, ", ")
 }
 
@@ -337,6 +405,11 @@ func GroupPrefix(jobBackupID string) string { return jobBackupID + "-" }
 // RepoGroup names the PBS group of one repository
 func RepoGroup(jobBackupID, owner, name string) string {
 	return GroupPrefix(jobBackupID) + SafeName(owner) + "-" + SafeName(name)
+}
+
+// GistGroup names the PBS group of one gist
+func GistGroup(jobBackupID, owner, id string) string {
+	return GroupPrefix(jobBackupID) + "gist-" + SafeName(owner) + "-" + SafeName(id)
 }
 
 var unsafeRe = regexp.MustCompile(`[^a-z0-9._-]+`)

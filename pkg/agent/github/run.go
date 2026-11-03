@@ -26,6 +26,8 @@ import (
 
 // Unit is one snapshot of the run: a repository, or the job's own index
 type Unit struct {
+	// Kind is repository or gist (gists carry their git URL and object in Repo)
+	Kind    string
 	Name    string
 	Group   string
 	Archive string
@@ -141,7 +143,7 @@ func Run(ctx context.Context, o RunOptions) (*temporal.BackupExecutionResult, er
 	}
 	live := map[string]rundetail.ProgressItem{}
 	for _, u := range units {
-		live[u.Group] = rundetail.ProgressItem{Name: u.Name, Kind: "repository", Status: "pending"}
+		live[u.Group] = rundetail.ProgressItem{Name: u.Name, Kind: u.Kind, Status: "pending"}
 	}
 	items(live)
 
@@ -339,6 +341,12 @@ func selectRepos(ctx context.Context, c *spec.Client, s *spec.Spec, viewer, jobG
 		listed++
 		add(*r, "repo", true)
 	}
+	gists, gistsComplete, gistsListed, err := selectGists(ctx, c, s.Sources.Gists, warn)
+	if err != nil {
+		return nil, false, err
+	}
+	complete = complete && gistsComplete
+	listed += gistsListed
 	if listed == 0 {
 		return nil, false, errors.New("no source could be listed (see the warnings)")
 	}
@@ -357,13 +365,17 @@ func selectRepos(ctx context.Context, c *spec.Client, s *spec.Spec, viewer, jobG
 			continue
 		}
 		rr := r
-		units = append(units, Unit{Name: r.FullName, Archive: spec.ArchiveRepo, Repo: &rr, Sources: e.sources})
+		units = append(units, Unit{Kind: kindRepo, Name: r.FullName, Archive: spec.ArchiveRepo, Repo: &rr, Sources: e.sources})
 	}
+	units = append(units, gists...)
 	// Group names: <job group>-<owner>-<name>, a short tag of the full name on collision
 	seen := map[string]bool{}
 	sort.SliceStable(units, func(i, j int) bool { return strings.ToLower(units[i].Name) < strings.ToLower(units[j].Name) })
 	for i := range units {
 		g := spec.RepoGroup(jobGroup, units[i].Repo.Owner.Login, units[i].Repo.Name)
+		if units[i].Kind == kindGist {
+			g = spec.GistGroup(jobGroup, units[i].Repo.Owner.Login, units[i].Repo.Name)
+		}
 		if seen[g] {
 			g += "-" + shortTag(units[i].Name)
 		}
@@ -371,6 +383,78 @@ func selectRepos(ctx context.Context, c *spec.Client, s *spec.Spec, viewer, jobG
 		units[i].Group = g
 	}
 	return units, complete, nil
+}
+
+const (
+	kindRepo = "repository"
+	kindGist = "gist"
+)
+
+// selectGists resolves the gist sources into units (groups are assigned by the caller)
+func selectGists(ctx context.Context, c *spec.Client, g spec.Gists, warn func(string, ...any)) (units []Unit, complete bool, listed int, err error) {
+	complete = true
+	byID := map[string]*Unit{}
+	var order []string
+	add := func(gist spec.Gist, source string) {
+		id := strings.ToLower(gist.ID)
+		if u := byID[id]; u != nil {
+			u.Sources = append(u.Sources, source)
+			return
+		}
+		owner := gist.OwnerLogin()
+		r := spec.Repo{FullName: "gist:" + owner + "/" + id, Name: id, Private: !gist.Public, CloneURL: gist.GitPullURL, Raw: gist.Raw}
+		r.Owner.Login = owner
+		byID[id] = &Unit{Kind: kindGist, Name: r.FullName, Archive: spec.ArchiveRepo, Repo: &r, Sources: []string{source}}
+		order = append(order, id)
+	}
+	list := func(what, user string, starred bool, source string) error {
+		gists, err := c.Gists(ctx, user, starred)
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			warn("%s: %v", what, err)
+			complete = false
+			return nil
+		}
+		listed++
+		for _, gist := range gists {
+			add(gist, source)
+		}
+		return nil
+	}
+	if g.Own {
+		if err := list("own gists", "", false, "gists"); err != nil {
+			return nil, false, 0, err
+		}
+	}
+	if g.Starred {
+		if err := list("starred gists", "", true, "starred gists"); err != nil {
+			return nil, false, 0, err
+		}
+	}
+	for _, u := range g.Users {
+		if err := list("gists of "+u, u, false, "gists:"+u); err != nil {
+			return nil, false, 0, err
+		}
+	}
+	for _, id := range g.IDs {
+		gist, err := c.Gist(ctx, id)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, false, 0, ctx.Err()
+			}
+			warn("gist %s: %v", id, err)
+			complete = false
+			continue
+		}
+		listed++
+		add(*gist, "gist")
+	}
+	for _, id := range order {
+		units = append(units, *byID[id])
+	}
+	return units, complete, listed, nil
 }
 
 // repoState survives between runs (and between attempts of one run)
@@ -406,7 +490,7 @@ func saveState(stateDir, group string, st repoState) error {
 // outcome is the RepoResult (one failing repository must not fail the job)
 func backupRepo(ctx context.Context, c *spec.Client, git *Git, s *spec.Spec, o RunOptions, u *Unit, now func() time.Time) spec.RepoResult {
 	r := u.Repo
-	res := spec.RepoResult{FullName: r.FullName, Sources: u.Sources, Group: u.Group, Private: r.Private, Fork: r.Fork, Archived: r.Archived,
+	res := spec.RepoResult{Kind: u.Kind, FullName: r.FullName, Sources: u.Sources, Group: u.Group, Private: r.Private, Fork: r.Fork, Archived: r.Archived,
 		DefaultBranch: r.DefaultBranch, Status: "completed"}
 	fail := func(err error) spec.RepoResult {
 		if ctx.Err() != nil {
@@ -484,7 +568,11 @@ func backupRepo(ctx context.Context, c *spec.Client, git *Git, s *spec.Spec, o R
 	if err := os.MkdirAll(meta, 0o700); err != nil {
 		return fail(err)
 	}
-	if err := collectMetadata(ctx, c, s, r, meta, &res, warn); err != nil {
+	collect := collectMetadata
+	if u.Kind == kindGist {
+		collect = collectGistMetadata
+	}
+	if err := collect(ctx, c, s, r, meta, &res, warn); err != nil {
 		return fail(err)
 	}
 
@@ -492,7 +580,7 @@ func backupRepo(ctx context.Context, c *spec.Client, git *Git, s *spec.Spec, o R
 	if err := writeIfChanged(filepath.Join(work, spec.RepoManifestName), repoManifest); err != nil {
 		return fail(err)
 	}
-	if err := writeIfChanged(filepath.Join(work, "RESTORE.md"), []byte(repoReadme(r.FullName, res.Wiki))); err != nil {
+	if err := writeIfChanged(filepath.Join(work, "RESTORE.md"), []byte(repoReadme(r.FullName, res.Wiki, u.Kind == kindGist))); err != nil {
 		return fail(err)
 	}
 	result, err := o.Upload(ctx, u, work, []gopbs.Blob{{Name: spec.RepoManifestName, Data: repoManifest}})
@@ -528,7 +616,7 @@ func checkRemote(cloneURL, apiURL string, allowFile bool) error {
 		return fmt.Errorf("clone URL %q is not HTTP(S)", cloneURL)
 	}
 	host := strings.TrimPrefix(au.Hostname(), "api.")
-	if !strings.EqualFold(cu.Hostname(), host) && !strings.EqualFold(cu.Hostname(), au.Hostname()) {
+	if !strings.EqualFold(cu.Hostname(), host) && !strings.EqualFold(cu.Hostname(), au.Hostname()) && !strings.EqualFold(cu.Hostname(), "gist."+host) {
 		return fmt.Errorf("clone URL host %s does not belong to the API host %s", cu.Hostname(), au.Hostname())
 	}
 	return nil
@@ -618,6 +706,27 @@ func writeIfChanged(path string, data []byte) error {
 	return os.Rename(tmp, path)
 }
 
+// collectGistMetadata stores the gist object and its comments
+func collectGistMetadata(ctx context.Context, c *spec.Client, s *spec.Spec, r *spec.Repo, dir string, res *spec.RepoResult, warn func(string)) error {
+	gistJSON, err := json.MarshalIndent(r.Raw, "", "  ")
+	if err != nil {
+		gistJSON = r.Raw
+	}
+	if err := writeIfChanged(filepath.Join(dir, "gist.json"), gistJSON); err != nil {
+		return err
+	}
+	comments, err := c.GistComments(ctx, r.Name)
+	if err != nil {
+		if ctx.Err() != nil {
+			return err
+		}
+		warn("comments: " + err.Error()) // keep the last copy
+		return nil
+	}
+	res.Comments = len(comments)
+	return writeIfChanged(filepath.Join(dir, "comments.json"), spec.MarshalList(comments))
+}
+
 // pruneState removes the mirrors and state of repositories no longer selected
 func pruneState(stateDir string, units []Unit, warn func(string, ...any)) {
 	keep := map[string]bool{dirIndex: true, dirState: true}
@@ -700,10 +809,14 @@ func restoreReadme(m *spec.Manifest) string {
 	return b.String()
 }
 
-func repoReadme(fullName string, wiki bool) string {
+func repoReadme(fullName string, wiki, gist bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# %s\n\n", fullName)
 	b.WriteString("repo.git is a bare mirror of the repository.\n\n    git clone repo.git ./" + filepath.Base(fullName) + "\n    git -C repo.git push --mirror <new remote URL>\n\n")
+	if gist {
+		b.WriteString("To recreate the gist, create a new gist and push: git -C repo.git push --force <new gist URL>.git HEAD:main\n\nmetadata/gist.json is the gist object (files, description, visibility); metadata/comments.json its comments.\n")
+		return b.String()
+	}
 	if wiki {
 		b.WriteString("wiki.git is the wiki mirror; push it with git -C wiki.git push --mirror <remote>.wiki.git\n\n")
 	}

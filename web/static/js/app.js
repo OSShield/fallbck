@@ -795,6 +795,11 @@ function loadJobIntoForm(form, job) {
     form.elements['gh_users'].value = (src.users || []).join('\n');
     form.elements['gh_repos'].value = (src.repos || []).join('\n');
     form.elements['gh_starred'].checked = !!src.starred;
+    const gists = src.gists || {};
+    form.elements['gh_gists_own'].checked = !!gists.own;
+    form.elements['gh_gists_starred'].checked = !!gists.starred;
+    form.elements['gh_gist_users'].value = (gists.users || []).join('\n');
+    form.elements['gh_gist_ids'].value = (gists.ids || []).join('\n');
     form.elements['gh_skip_forks'].checked = !!gc.skip_forks;
     form.elements['gh_skip_archived'].checked = !!gc.skip_archived;
     form.elements['gh_include'].value = (gc.include || []).join('\n');
@@ -953,7 +958,8 @@ function buildJobPayload(form) {
         orgs: formLines(fd, 'gh_orgs').map(l => { const [name, type] = l.split(':').map(x => x.trim()); return { name, type: type || 'all' }; }),
         users: formLines(fd, 'gh_users'),
         repos: formLines(fd, 'gh_repos'),
-        starred: on('gh_starred')
+        starred: on('gh_starred'),
+        gists: { own: on('gh_gists_own'), starred: on('gh_gists_starred'), users: formLines(fd, 'gh_gist_users'), ids: formLines(fd, 'gh_gist_ids') }
       },
       include: formLines(fd, 'gh_include'),
       exclude: formLines(fd, 'gh_exclude'),
@@ -1735,13 +1741,14 @@ function renderGitHubDetail(m) {
   html += rdCard('GitHub', rdKV([
     ['Account', rdEsc(a.login || '-') + (a.api_url ? ` <span style="color:var(--text-muted);font-size:12px;">${rdEsc(a.api_url)}</span>` : '')],
     ['Agent', rdEsc((m.generator || {}).hostname || '-') + ((m.generator || {}).git ? ` (git ${rdEsc(m.generator.git)})` : '')],
-    ['Repositories', `${repos.length} (${counts.completed} completed, ${counts.failed} failed)`],
+    ['Repositories and gists', `${repos.length} (${counts.completed} completed, ${counts.failed} failed)`],
     ['Index group', rdMono((m.job || {}).group || '-')],
   ]));
   if (repos.length) {
     const rows = repos.map(r => {
       const flags = [r.private ? 'private' : '', r.fork ? 'fork' : '', r.archived ? 'archived' : '', r.wiki ? 'wiki' : ''].filter(Boolean).join(', ');
-      const meta = `${r.refs || 0} refs, ${r.issues || 0} issues, ${r.pulls || 0} PRs, ${r.releases || 0} releases`;
+      const meta = r.kind === 'gist' ? `${r.refs || 0} refs, ${r.comments || 0} comments`
+        : `${r.refs || 0} refs, ${r.issues || 0} issues, ${r.pulls || 0} PRs, ${r.releases || 0} releases`;
       let snap = '-';
       if (r.snapshot_time) snap = rdMono(new Date(r.snapshot_time * 1000).toISOString().replace(/\.\d+Z$/, 'Z'));
       const note = [r.error, ...(r.warnings || [])].filter(Boolean).map(rdEsc).join('<br>');

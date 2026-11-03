@@ -46,6 +46,8 @@ type AccountInfo struct {
 
 // RepoResult is one repository of the run
 type RepoResult struct {
+	// Kind is repository or gist
+	Kind string `json:"kind,omitempty"`
 	// FullName is owner/name; Sources says why it was selected (org:x, user:x, repo, starred)
 	FullName string   `json:"full_name"`
 	Sources  []string `json:"sources,omitempty"`
