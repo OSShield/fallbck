@@ -89,6 +89,11 @@ type Spec struct {
 	Concurrency int `json:"concurrency,omitempty"`
 	// BackupID overrides the job's PBS group (default vcs-<connection name>)
 	BackupID string `json:"backup_id,omitempty"`
+	// Profile names agent credential profile holding the token (created with
+	// fallbck-agent vcs profile create). The agent only uses a profile whose URL maqtches
+	// the connection URL, the server never hands out their own token for a
+	// job that names a pårofile. Empty: the connection token.
+	Profile string `json:"profile,omitempty"`
 }
 
 // ErrInvalidSpec wraps every validation failure
@@ -97,6 +102,9 @@ var ErrInvalidSpec = errors.New("invalid VCS job configuration")
 func specErr(format string, args ...any) error {
 	return fmt.Errorf("%w: %s", ErrInvalidSpec, fmt.Sprintf(format, args...))
 }
+
+// An agent credential profile
+var profileNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 
 // fullPathRe is a GitLab namespace or project full path: segments of letters,
 // digits, '_', '-' and '.', not starting with '-'
@@ -159,13 +167,18 @@ func (s *Spec) Validate() error {
 	if s.BackupID != "" && !naming.ValidGroupID(s.BackupID) {
 		return specErr("backup_id may contain letters, digits, '.', '_' and '-' only")
 	}
+	s.Profile = strings.TrimSpace(s.Profile)
+	if s.Profile != "" && !profileNameRe.MatchString(s.Profile) {
+		return specErr("profile may contain letters, digits, '.', '_' and '-' (at most 64)")
+	}
 	return nil
 }
 
 // ValidateFor checks the spec against its connection: the provider decides between
-// groups and repositories, gitlab.com cannot be enumerated as a whole, and a git
+// groups and repositories, gitlab.com cannot be enumerated as a whole, a git
 // connection's token is only ever sent to its own URL, so every repository must be
-// below it. Call after Validate.
+// below it, a GitLab job needs a token from the connection or an agent profile.
+// Call after Validate with the connection token loaded.
 func (s *Spec) ValidateFor(c *Connection) error {
 	if c == nil {
 		return specErr("the connection does not exist")
@@ -177,6 +190,9 @@ func (s *Spec) ValidateFor(c *Connection) error {
 		}
 		if len(s.Groups) == 0 && IsGitLabCom(c.BaseURL) {
 			return specErr("gitlab.com cannot be backed up as a whole; list the groups to back up")
+		}
+		if s.Profile == "" && c.Token == "" {
+			return specErr("the connection stores no token; name the agent credential profile that holds it")
 		}
 	case ProviderGit:
 		if len(s.Groups) > 0 {

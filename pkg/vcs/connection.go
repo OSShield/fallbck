@@ -25,7 +25,9 @@ type Connection struct {
 	// or with a relative URL root) or, for the git provider, the URL every
 	// repository of its jobs must be below. Git sends the token to this URL only.
 	BaseURL string `json:"base_url"`
-	Token   string `json:"-"`
+	// Token is optional: without it, every job of the connection names an agent
+	// credential profile (Spec.Profile)
+	Token string `json:"-"`
 	// TokenExpires is when the token stops working (the health page warns 30 days
 	// before). Read from GitLab by the connection test, or entered by the
 	// administrator.
@@ -37,7 +39,7 @@ type Connection struct {
 
 	// To check for token presence without including the token in the API response
 	HasToken bool `json:"has_token"`
-	Jobs int `json:"jobs"`
+	Jobs     int  `json:"jobs"`
 	// Labels place the connection in access scopes (db.Labels; a plain map here
 	// because pkg/db imports this package)
 	Labels map[string]string `json:"labels"`
@@ -50,9 +52,9 @@ func connErr(format string, args ...any) error {
 	return fmt.Errorf("%w: %s", ErrInvalidConnection, fmt.Sprintf(format, args...))
 }
 
-// Validate normalises the provider and URL and checks the token and CA bundle. A
-// GitLab connection needs a token; a git connection may go without one (public
-// repositories).
+// Validate normalises the provider and URL and checks the token and CA bundle. The
+// token is optional for both providers: jobs will try to use a agent credential profile
+// (or for git connections & public repositories)
 func (c *Connection) Validate() error {
 	c.Name = strings.TrimSpace(c.Name)
 	c.Provider = strings.ToLower(strings.TrimSpace(c.Provider))
@@ -71,9 +73,6 @@ func (c *Connection) Validate() error {
 		return connErr("base_url: %v", err)
 	}
 	c.BaseURL = base
-	if c.Provider == ProviderGitLab && c.Token == "" {
-		return connErr("a GitLab connection needs an access token (read_api and read_repository)")
-	}
 	// The token travels in an HTTP header; anything but printable ASCII would let it
 	// smuggle in another header
 	for _, r := range c.Token {

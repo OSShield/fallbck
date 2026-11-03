@@ -19,11 +19,13 @@ import (
 
 // VCS connections: a GitLab instance or git host with the token FallBCK reads it
 // with. The token is sealed at rest, never returned by the API, and handed to the
-// agent per run with its backup ticket (HandleVCSCredentials).
+// agent per run with its backup ticket (HandleVCSCredentials). It is now optional: a job
+// can name an agent credential profile instead, and then the token never reaches the
+// server at all.
 
 // ConnectionRequest creates or updates a connection (POST /vcs/connections, PUT
 // /vcs/connections/{id}). On update a blank token keeps the stored one; ClearToken
-// removes it (git connections to public repositories).
+// removes it (agent-side profiles only, or public git repositories).
 type ConnectionRequest struct {
 	vcs.Connection
 	Token      string `json:"token"`
@@ -114,8 +116,9 @@ func (s *ServerAPI) HandleCreateConnection(w http.ResponseWriter, r *http.Reques
 }
 
 // HandleUpdateConnection replaces a connection's settings; a blank token keeps the
-// stored one. The provider cannot change while jobs use the connection, and a git
-// connection's URL must stay a prefix of its jobs' repositories.
+// stored one. The provider cannot change while jobs use the connection, a git
+// connection's URL must stay a prefix of its jobs' repositories, and the token of a
+// GitLab connection cannot be removed while a job relies on it.
 func (s *ServerAPI) HandleUpdateConnection(w http.ResponseWriter, r *http.Request) {
 	existing, ok := s.connectionFromPath(w, r, auth.PermConnectionsWrite)
 	if !ok {
@@ -167,7 +170,9 @@ func (s *ServerAPI) connectionChangeConflict(ctx context.Context, old, updated *
 	if updated.Provider != old.Provider {
 		return "The connection is used by backup jobs; its provider cannot change"
 	}
-	if updated.Provider != vcs.ProviderGit || updated.BaseURL == old.BaseURL {
+	urlChanged := updated.Provider == vcs.ProviderGit && updated.BaseURL != old.BaseURL
+	tokenRemoved := updated.Provider == vcs.ProviderGitLab && old.Token != "" && updated.Token == ""
+	if !urlChanged && !tokenRemoved {
 		return ""
 	}
 	jobs, err := s.DB.ListJobs(ctx, db.Unscoped)
@@ -176,6 +181,12 @@ func (s *ServerAPI) connectionChangeConflict(ctx context.Context, old, updated *
 	}
 	for _, j := range jobs {
 		if !j.IsVCS() || j.VCSConfig == nil || j.VCSConfig.ConnectionID != old.ID {
+			continue
+		}
+		if tokenRemoved && j.VCSConfig.Profile == "" {
+			return "Job " + j.Name + " uses the connection's token; name an agent credential profile on the job first"
+		}
+		if !urlChanged {
 			continue
 		}
 		for _, repo := range j.VCSConfig.Repositories {
@@ -209,15 +220,20 @@ func (s *ServerAPI) HandleDeleteConnection(w http.ResponseWriter, r *http.Reques
 // HandleTestConnection checks a GitLab connection's token, user and scopes (POST
 // /vcs/connections/{id}/test) and stores the token expiry GitLab reports. The server
 // itself talks to GitLab here, so a failure can also mean the server has no route to
-// it; the error says so. Git connections have no API to test: the agent finds out
-// when a job runs.
+// it; the error says so. Git connections have no API to test, and a connection
+// without a token relies on agent profiles the server can't see: in both cases the
+// agent finds out when a job runs, and the answer says the test did not run.
 func (s *ServerAPI) HandleTestConnection(w http.ResponseWriter, r *http.Request) {
 	c, ok := s.connectionFromPath(w, r, auth.PermConnectionsWrite)
 	if !ok {
 		return
 	}
 	if c.Provider != vcs.ProviderGitLab {
-		s.writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "Git connections have no API to test; the agent checks access when a job runs"})
+		s.writeJSON(w, http.StatusOK, map[string]any{"ok": true, "tested": false, "message": "Git connections have no API to test; the agent checks access when a job runs"})
+		return
+	}
+	if c.Token == "" {
+		s.writeJSON(w, http.StatusOK, map[string]any{"ok": true, "tested": false, "message": "The connection stores no token; the agent checks its credential profile when a job runs"})
 		return
 	}
 	creds := c.Credentials()
@@ -236,14 +252,16 @@ func (s *ServerAPI) HandleTestConnection(w http.ResponseWriter, r *http.Request)
 	}
 	if err != nil {
 		slog.Warn("VCS connection test failed", "connection", c.Name, "error", err)
-		s.writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error(), "instance": inst})
+		s.writeJSON(w, http.StatusOK, map[string]any{"ok": false, "tested": true, "error": err.Error(), "instance": inst})
 		return
 	}
-	s.writeJSON(w, http.StatusOK, map[string]any{"ok": true, "instance": inst})
+	s.writeJSON(w, http.StatusOK, map[string]any{"ok": true, "tested": true, "instance": inst})
 }
 
 // HandleVCSCredentials hands an agent the connection credentials of the VCS job
-// named by its backup ticket (agent token + ticket, like m365-credentials)
+// named by its backup ticket (agent token + ticket, like m365-credentials). A job
+// that names an agent credential profile gets the conf without the stored token:
+// the agent's own profile is the only secret that run may use.
 func (s *ServerAPI) HandleVCSCredentials(w http.ResponseWriter, r *http.Request) {
 	agent, claims, _, ok := s.ticketContext(w, r)
 	if !ok {
@@ -263,8 +281,12 @@ func (s *ServerAPI) HandleVCSCredentials(w http.ResponseWriter, r *http.Request)
 		s.writeError(w, http.StatusNotFound, "the job's connection no longer exists")
 		return
 	}
-	slog.Info("Handing VCS credentials to agent", "agent_id", agent.AgentID, "job_id", job.ID, "connection", c.Name)
-	s.writeJSON(w, http.StatusOK, c.Credentials())
+	creds := c.Credentials()
+	if job.VCSConfig.Profile != "" {
+		creds.Token = ""
+	}
+	slog.Info("Handing VCS credentials to agent", "agent_id", agent.AgentID, "job_id", job.ID, "connection", c.Name, "agent_profile", job.VCSConfig.Profile)
+	s.writeJSON(w, http.StatusOK, creds)
 }
 
 // cleanGitVersion keeps the version an agent reports short and printable ("2.43.0",
