@@ -1,6 +1,6 @@
 # Agents and file backups
 
-An agent is a small daemon on the box you're backing up. `fallbck-agent` covers files, databases, Proxmox VE nodes, Docker hosts and Microsoft 365. Kubernetes gets its own agent, [`fallbck-k8s-agent`](kubernetes.md).
+An agent is a small daemon on the box you're backing up. `fallbck-agent` covers files, databases, Proxmox VE nodes, Docker hosts, Microsoft 365 and [GitHub](github.md). Kubernetes gets its own agent, [`fallbck-k8s-agent`](kubernetes.md).
 
 ## How an agent talks to the world
 
