@@ -84,6 +84,8 @@ func BackupJobWorkflow(ctx workflow.Context, jobID uuid.UUID) (*fbtemporal.Backu
 		m365Opts.ScheduleToCloseTimeout = 72 * time.Hour
 		m365Ctx := workflow.WithActivityOptions(ctx, m365Opts)
 		execErr = workflow.ExecuteActivity(m365Ctx, agentActs.ExecuteM365Backup, &session).Get(m365Ctx, &execResult)
+	case db.JobTypeVCS:
+		execErr = sdktemporal.NewNonRetryableApplicationError("VCS backups are not supported by this version of the agent activities yet", "job_invalid", nil)
 	case db.JobTypeDatabase:
 		if session.AgentType == db.AgentTypeKubernetes {
 			// A kubernetes agent dumps the database from a pod inside the cluster

@@ -14,6 +14,7 @@ import (
 	"github.com/osshield/fallbck/pkg/m365"
 	"github.com/osshield/fallbck/pkg/pbs"
 	"github.com/osshield/fallbck/pkg/pvebackup"
+	"github.com/osshield/fallbck/pkg/vcs"
 )
 
 // Agent / job types: each agent binary handles one kind of job
@@ -33,6 +34,9 @@ const (
 	// JobTypeM365 backs up a Microsoft 365 tenant through Graph; it runs on any
 	// filesystem agent with outbound HTTPS (no host capability involved)
 	JobTypeM365 = "m365"
+	// JobTypeVCS mirrors git repositories (GitLab projects or a list of URLs); it
+	// runs on any filesystem agent that reported a recent enough git
+	JobTypeVCS = "vcs"
 )
 
 // NormalizeAgentType maps "" to filesystem and reports unknown values
@@ -48,8 +52,8 @@ func NormalizeAgentType(t string) (string, bool) {
 	return t, false
 }
 
-// NormalizeJobType maps "" to filesystem and accepts the job-only types pve, docker
-// and m365
+// NormalizeJobType maps "" to filesystem and accepts the job-only types pve, docker,
+// m365 and vcs
 func NormalizeJobType(t string) (string, bool) {
 	switch t {
 	case JobTypePVE:
@@ -58,6 +62,8 @@ func NormalizeJobType(t string) (string, bool) {
 		return JobTypeDocker, true
 	case JobTypeM365:
 		return JobTypeM365, true
+	case JobTypeVCS:
+		return JobTypeVCS, true
 	}
 	return NormalizeAgentType(t)
 }
@@ -67,7 +73,7 @@ func NormalizeJobType(t string) (string, bool) {
 // kubernetes agent (dumped from a pod inside the cluster) or on a filesystem agent
 // (the combined agent, when it reports database client tools), Proxmox VE / Docker
 // host jobs, which run on the filesystem agent installed on the host, and Microsoft
-// 365 jobs, which any filesystem agent runs.
+// 365 and VCS jobs, which any filesystem agent runs.
 func JobAllowedOnAgent(jobType, agentType string) bool {
 	jobType, _ = NormalizeJobType(jobType)
 	agentType, _ = NormalizeAgentType(agentType)
@@ -77,7 +83,7 @@ func JobAllowedOnAgent(jobType, agentType string) bool {
 	switch jobType {
 	case JobTypeDatabase:
 		return agentType == AgentTypeKubernetes || agentType == AgentTypeFilesystem
-	case JobTypePVE, JobTypeDocker, JobTypeM365:
+	case JobTypePVE, JobTypeDocker, JobTypeM365, JobTypeVCS:
 		return agentType == AgentTypeFilesystem
 	}
 	return false
@@ -89,6 +95,10 @@ type AgentCapabilities struct {
 	DockerHost bool
 	DBTools    bool
 	DBEngines  []string
+	// GitVersion / GitLFS: the git the agent found (empty: none) and whether git-lfs
+	// is installed
+	GitVersion string
+	GitLFS     bool
 	// Version is the running binary's version (empty keeps the stored one)
 	Version string
 	// SelfUpdate / UpdateError: see Agent
@@ -135,7 +145,7 @@ func (a *Agent) CanRunDBEngine(engine string) bool {
 
 // CanRunJob reports whether this agent may run a job of jobType, including the
 // capability flags a filesystem agent reports (Proxmox VE node, Docker daemon,
-// database client tools)
+// database client tools, git)
 func (a *Agent) CanRunJob(jobType string) bool {
 	jobType, _ = NormalizeJobType(jobType)
 	agentType, _ := NormalizeAgentType(a.AgentType)
@@ -152,6 +162,8 @@ func (a *Agent) CanRunJob(jobType string) bool {
 		return a.DockerHost
 	case JobTypeDatabase:
 		return a.DBTools
+	case JobTypeVCS:
+		return vcs.GitVersionOK(a.GitVersion)
 	}
 	return true
 }
@@ -197,6 +209,10 @@ type Agent struct {
 	DBTools bool `json:"db_tools" db:"db_tools"`
 	// DBEngines are the database engines the agent reported (see CanRunDBEngine)
 	DBEngines []string `json:"db_engines" db:"db_engines"`
+	// GitVersion is the git the agent found ("" = none; VCS jobs need
+	// vcs.MinGitMajor.MinGitMinor); GitLFS whether git-lfs is installed
+	GitVersion string `json:"git_version" db:"git_version"`
+	GitLFS     bool   `json:"git_lfs" db:"git_lfs"`
 	// Inventory is the compact summary the agent attaches to a heartbeat every few
 	// minutes (inventory.Summary); InventoryDetail the on-demand full inventory
 	Inventory         json.RawMessage `json:"inventory,omitempty" db:"inventory"`
@@ -371,7 +387,8 @@ type BackupJob struct {
 	// other mounts below it are left out (filesystem jobs only)
 	OneFileSystem bool `json:"one_file_system" db:"one_file_system"`
 	// BackupID is the PBS backup group of filesystem, Docker, Proxmox VE and
-	// kubernetes jobs (database and Microsoft 365 jobs carry theirs in their config).
+	// kubernetes jobs (database, Microsoft 365 and VCS jobs carry theirs in their
+	// config).
 	// Empty means the agent ID, see EffectiveBackupID.
 	BackupID string `json:"backup_id" db:"backup_id"`
 	// JobType is filesystem (BackupPaths) or database (DBConfig)
@@ -388,8 +405,11 @@ type BackupJob struct {
 	// M365Config is the Microsoft 365 job specification (its TenantID is also the
 	// m365_tenant_id column, so a tenant cannot be deleted while jobs use it)
 	M365Config *m365.Spec `json:"m365_config,omitempty" db:"m365_config"`
-	CreatedAt  time.Time  `json:"created_at" db:"created_at"`
-	UpdatedAt  time.Time  `json:"updated_at" db:"updated_at"`
+	// VCSConfig is the VCS job specification (its ConnectionID is also the
+	// vcs_connection_id column, so a connection cannot be deleted while jobs use it)
+	VCSConfig *vcs.Spec `json:"vcs_config,omitempty" db:"vcs_config"`
+	CreatedAt time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
 	// Labels place the job and all of its runs in access scopes. On update, an
 	// absent field (nil) keeps the stored labels; {} clears them.
 	Labels Labels `json:"labels"`
@@ -496,6 +516,9 @@ func (j *BackupJob) IsDocker() bool { return j.JobType == JobTypeDocker }
 // IsM365 reports whether the job is a Microsoft 365 backup
 func (j *BackupJob) IsM365() bool { return j.JobType == JobTypeM365 }
 
+// IsVCS reports whether the job is a VCS (git repositories) backup
+func (j *BackupJob) IsVCS() bool { return j.JobType == JobTypeVCS }
+
 // Sanitize redacts the stored database password (HasPassword tells whether one exists)
 func (j *BackupJob) Sanitize() *BackupJob {
 	if j.JobType == "" {
@@ -523,6 +546,9 @@ func (j *BackupJob) Summary() string {
 	}
 	if j.IsM365() {
 		return j.M365Config.Summary()
+	}
+	if j.IsVCS() {
+		return j.VCSConfig.Summary()
 	}
 	return strings.Join(j.BackupPaths, ", ")
 }

@@ -7,11 +7,10 @@ package m365
 import (
 	"errors"
 	"fmt"
-	"path"
-	"regexp"
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/osshield/fallbck/pkg/naming"
 	"github.com/osshield/gopbs/scan"
 )
 
@@ -125,9 +124,6 @@ func specErr(format string, args ...any) error {
 	return fmt.Errorf("%w: %s", ErrInvalidSpec, fmt.Sprintf(format, args...))
 }
 
-// groupIDRe is the PBS backup-id character set
-var groupIDRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]*$`)
-
 // Validate normalises globs and patterns and checks the ranges
 func (s *Spec) Validate() error {
 	if s == nil {
@@ -150,10 +146,10 @@ func (s *Spec) Validate() error {
 		}
 	}
 	if s.MailFolderExcludes != nil {
-		s.MailFolderExcludes = cleanStrings(s.MailFolderExcludes)
+		s.MailFolderExcludes = naming.CleanStrings(s.MailFolderExcludes)
 	}
-	s.ExcludeTypes = cleanStrings(s.ExcludeTypes)
-	s.ExcludePaths = cleanStrings(s.ExcludePaths)
+	s.ExcludeTypes = naming.CleanStrings(s.ExcludeTypes)
+	s.ExcludePaths = naming.CleanStrings(s.ExcludePaths)
 	if _, err := scan.ParsePatterns(s.ExcludePaths); err != nil {
 		return specErr("invalid exclude pattern: %v", err)
 	}
@@ -161,7 +157,7 @@ func (s *Spec) Validate() error {
 		return specErr("concurrency must be between 1 and %d", MaxConcurrency)
 	}
 	s.BackupID = strings.TrimSpace(s.BackupID)
-	if s.BackupID != "" && !groupIDRe.MatchString(s.BackupID) {
+	if s.BackupID != "" && !naming.ValidGroupID(s.BackupID) {
 		return specErr("backup_id may contain letters, digits, '.', '_' and '-' only")
 	}
 	return nil
@@ -169,48 +165,20 @@ func (s *Spec) Validate() error {
 
 // cleanGlobs trims, drops empty entries and checks the glob syntax
 func cleanGlobs(field string, globs []string) ([]string, error) {
-	var out []string
-	for _, g := range globs {
-		g = strings.TrimSpace(g)
-		if g == "" {
-			continue
-		}
-		if _, err := path.Match(g, ""); err != nil {
-			return nil, specErr("%s: invalid pattern %q", field, g)
-		}
-		out = append(out, g)
+	out, err := naming.CleanGlobs(field, globs)
+	if err != nil {
+		return nil, specErr("%v", err)
 	}
 	return out, nil
 }
 
-func cleanStrings(in []string) []string {
-	out := make([]string, 0, len(in))
-	for _, s := range in {
-		if s = strings.TrimSpace(s); s != "" {
-			out = append(out, s)
-		}
-	}
-	return out
-}
-
 // MatchesAny reports whether name matches one of the globs (case-insensitive)
-func MatchesAny(name string, globs []string) bool {
-	name = strings.ToLower(name)
-	for _, g := range globs {
-		if ok, _ := path.Match(strings.ToLower(g), name); ok {
-			return true
-		}
-	}
-	return false
-}
+func MatchesAny(name string, globs []string) bool { return naming.MatchesAny(name, globs) }
 
-// Selected applies include/exclude globs: included when Include is empty or matches,
+// Selected applies include/exclude globs: included when include is empty or matches,
 // and not excluded
 func Selected(name string, include, exclude []string) bool {
-	if len(include) > 0 && !MatchesAny(name, include) {
-		return false
-	}
-	return !MatchesAny(name, exclude)
+	return naming.Selected(name, include, exclude)
 }
 
 // EffConcurrency / EffMailFolderExcludes apply the defaults
@@ -297,23 +265,7 @@ func UnitGroup(jobBackupID, kind, name string) string {
 	return GroupPrefix(jobBackupID) + kind + "-" + SafeName(name)
 }
 
-var unsafeRe = regexp.MustCompile(`[^a-z0-9._-]+`)
-
-// SafeName maps a UPN, site or team name into the PBS backup-id character set:
-// lower-cased, '@' becomes '_', every other run of foreign characters becomes '-'.
-// alice@contoso.com → alice_contoso.com. Collisions are the caller's problem
-// (see the plan: append part of the object id).
-func SafeName(s string) string {
-	s = strings.ToLower(strings.TrimSpace(s))
-	s = strings.ReplaceAll(s, "@", "_")
-	s = unsafeRe.ReplaceAllString(s, "-")
-	s = strings.Trim(s, ".-")
-	if s == "" {
-		return "unnamed"
-	}
-	if !groupIDRe.MatchString(s) {
-		// Only a leading '.' or '-' can fail after the trim above
-		s = "x" + s
-	}
-	return s
-}
+// SafeName maps a UPN, site or team name into the PBS backup-id character set
+// (naming.SafeName): alice@contoso.com → alice_contoso.com. Collisions are the
+// caller's problem (see the plan: append part of the object id).
+func SafeName(s string) string { return naming.SafeName(s) }

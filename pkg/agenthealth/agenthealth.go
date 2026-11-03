@@ -15,6 +15,7 @@ import (
 	"github.com/osshield/fallbck/pkg/db"
 	"github.com/osshield/fallbck/pkg/dbbackup"
 	"github.com/osshield/fallbck/pkg/inventory"
+	"github.com/osshield/fallbck/pkg/vcs"
 )
 
 // StaleAfter is how long without a heartbeat (sent every 30 s) an agent counts as
@@ -181,6 +182,11 @@ func cannotRun(a *db.Agent, summary *inventory.Summary, j *db.BackupJob) string 
 			return "The agent did not find a Docker daemon on its host."
 		case db.JobTypeDatabase:
 			return "The agent found no database client tools."
+		case db.JobTypeVCS:
+			if a.GitVersion == "" {
+				return fmt.Sprintf("The agent found no git; VCS jobs need git %d.%d or newer.", vcs.MinGitMajor, vcs.MinGitMinor)
+			}
+			return fmt.Sprintf("The agent has git %s; VCS jobs need %d.%d or newer.", a.GitVersion, vcs.MinGitMajor, vcs.MinGitMinor)
 		}
 		return fmt.Sprintf("A %s agent cannot run %s jobs.", a.AgentType, jobType)
 	}

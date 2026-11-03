@@ -41,7 +41,7 @@ func (s *ServerAPI) validateJob(ctx context.Context, job *db.BackupJob, existing
 		job.OneFileSystem = false // only filesystem jobs walk host paths
 	}
 	switch jobType {
-	case db.JobTypeDatabase, db.JobTypeM365:
+	case db.JobTypeDatabase, db.JobTypeM365, db.JobTypeVCS:
 		job.BackupID = "" // these carry the group inside their own config
 	default:
 		if job.BackupID == "" {
@@ -72,7 +72,7 @@ func (s *ServerAPI) validateJob(ctx context.Context, job *db.BackupJob, existing
 		if len(job.BackupPaths) > 0 {
 			return "Microsoft 365 jobs do not take backup paths", errors.New("paths on m365 job")
 		}
-		if job.DBConfig != nil || job.K8sConfig != nil || job.PVEConfig != nil || job.DockerConfig != nil {
+		if job.DBConfig != nil || job.K8sConfig != nil || job.PVEConfig != nil || job.DockerConfig != nil || job.VCSConfig != nil {
 			return "Microsoft 365 jobs take m365_config only", errors.New("foreign config on m365 job")
 		}
 		if job.M365Config == nil {
@@ -85,6 +85,31 @@ func (s *ServerAPI) validateJob(ctx context.Context, job *db.BackupJob, existing
 			if _, err := s.DB.GetTenantByID(ctx, job.M365Config.TenantID, p.Scope(auth.PermTenantsRead)); err != nil {
 				return "Microsoft 365 tenant not found", err
 			}
+		}
+	case db.JobTypeVCS:
+		if len(job.BackupPaths) > 0 {
+			return "VCS jobs do not take backup paths", errors.New("paths on vcs job")
+		}
+		if job.DBConfig != nil || job.K8sConfig != nil || job.PVEConfig != nil || job.DockerConfig != nil || job.M365Config != nil {
+			return "VCS jobs take vcs_config only", errors.New("foreign config on vcs job")
+		}
+		if job.VCSConfig == nil {
+			return "VCS jobs require vcs_config", errors.New("missing vcs_config")
+		}
+		if err := job.VCSConfig.Validate(); err != nil {
+			return err.Error(), err
+		}
+		if s.DB != nil {
+			conn, err := s.DB.GetConnectionByID(ctx, job.VCSConfig.ConnectionID, p.Scope(auth.PermConnectionsRead))
+			if err != nil {
+				return "VCS connection not found", err
+			}
+			if err := job.VCSConfig.ValidateFor(conn); err != nil {
+				return err.Error(), err
+			}
+		}
+		if agent != nil && !agent.CanRunJob(db.JobTypeVCS) {
+			return "Agent " + agent.Hostname + " has not reported git " + vcsMinGit + " or newer (install git, and git-lfs for LFS repositories, and wait for its next heartbeat)", errors.New("agent without git")
 		}
 	case db.JobTypeDocker:
 		if len(job.BackupPaths) > 0 {
@@ -177,6 +202,9 @@ func (s *ServerAPI) validateJob(ctx context.Context, job *db.BackupJob, existing
 		}
 		if job.M365Config != nil {
 			return "Filesystem jobs do not take m365_config", errors.New("m365_config on filesystem job")
+		}
+		if job.VCSConfig != nil {
+			return "Filesystem jobs do not take vcs_config", errors.New("vcs_config on filesystem job")
 		}
 		agentOS := ""
 		if agent != nil {
