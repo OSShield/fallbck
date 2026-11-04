@@ -35,6 +35,8 @@ func TestSpecValidate(t *testing.T) {
 		{ConnectionID: conn, MaxRepoSize: -1},
 		{ConnectionID: conn, Concurrency: MaxConcurrency + 1},
 		{ConnectionID: conn, BackupID: "no spaces"},
+		{ConnectionID: conn, Profile: "no spaces"},
+		{ConnectionID: conn, Profile: "-leading"},
 	}
 	for i, b := range bad {
 		if err := b.Validate(); !errors.Is(err, ErrInvalidSpec) {
@@ -50,8 +52,9 @@ func TestSpecValidate(t *testing.T) {
 
 func TestValidateFor(t *testing.T) {
 	conn := uuid.New()
-	gl := &Connection{Provider: ProviderGitLab, BaseURL: "https://gitlab.example.com"}
-	glcom := &Connection{Provider: ProviderGitLab, BaseURL: "https://gitlab.com"}
+	gl := &Connection{Provider: ProviderGitLab, BaseURL: "https://gitlab.example.com", Token: "glpat-x"}
+	glcom := &Connection{Provider: ProviderGitLab, BaseURL: "https://gitlab.com", Token: "glpat-x"}
+	tokenless := &Connection{Provider: ProviderGitLab, BaseURL: "https://gitlab.example.com"}
 	git := &Connection{Provider: ProviderGit, BaseURL: "https://git.example.com/team"}
 
 	whole := &Spec{ConnectionID: conn}
@@ -87,6 +90,18 @@ func TestValidateFor(t *testing.T) {
 	}
 	if err := whole.ValidateFor(nil); err == nil {
 		t.Error("nil connection")
+	}
+
+	// Without a stored token, a GitLab job must name the agent profile holding it
+	if err := whole.ValidateFor(tokenless); err == nil {
+		t.Error("GitLab job without token or profile must be refused")
+	}
+	withProfile := &Spec{ConnectionID: conn, Profile: " gitlab-internal "}
+	if err := withProfile.Validate(); err != nil || withProfile.Profile != "gitlab-internal" {
+		t.Fatalf("profile: %q %v", withProfile.Profile, err)
+	}
+	if err := withProfile.ValidateFor(tokenless); err != nil {
+		t.Errorf("GitLab job with an agent profile: %v", err)
 	}
 }
 

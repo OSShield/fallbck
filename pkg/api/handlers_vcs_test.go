@@ -95,8 +95,15 @@ func TestLiveVCSConnections(t *testing.T) {
 	if err := d.Pool.QueryRow(ctx, `SELECT token_sealed FROM vcs_connections WHERE id = $1`, gl.ID).Scan(&stored); err != nil || !secrets.IsSealed(stored) {
 		t.Fatalf("token not sealed at rest: %q %v", stored, err)
 	}
-	if code, body := call(t, h, http.MethodPost, "/api/v1/vcs/connections", map[string]any{"name": "nameless-token", "provider": "gitlab", "base_url": "https://gitlab.example.com"}); code != http.StatusBadRequest {
-		t.Errorf("GitLab connection without token: %d %s", code, body)
+	// Without a token the secret stays on the agents (credential profiles)
+	code, body = call(t, h, http.MethodPost, "/api/v1/vcs/connections", map[string]any{"name": "agent-side", "provider": "gitlab", "base_url": "https://gitlab.example.com"})
+	if code != http.StatusCreated {
+		t.Fatalf("GitLab connection without token: %d %s", code, body)
+	}
+	var agentSide vcs.Connection
+	_ = json.Unmarshal(body, &agentSide)
+	if agentSide.HasToken {
+		t.Error("agent-side connection reports a token")
 	}
 
 	code, body = call(t, h, http.MethodPost, "/api/v1/vcs/connections", map[string]any{
@@ -134,6 +141,25 @@ func TestLiveVCSConnections(t *testing.T) {
 		t.Errorf("backup_id %q, summary %q", loaded.BackupID, loaded.Summary())
 	}
 
+	// A tokenless connection needs a job that names the agent profile
+	profileJob := map[string]any{"name": "repos-agent-side", "agent_id": f.agentA.ID, "target_id": f.targetA.ID, "job_type": "vcs",
+		"vcs_config": map[string]any{"connection_id": agentSide.ID, "groups": []string{"platform"}}}
+	if code, body := call(t, h, http.MethodPost, "/api/v1/jobs", profileJob); code != http.StatusBadRequest || !strings.Contains(string(body), "profile") {
+		t.Errorf("job on a tokenless connection without a profile: %d %s", code, body)
+	}
+	profileJob["vcs_config"] = map[string]any{"connection_id": agentSide.ID, "groups": []string{"platform"}, "profile": "gitlab-internal"}
+	if code, body := call(t, h, http.MethodPost, "/api/v1/jobs", profileJob); code != http.StatusCreated {
+		t.Fatalf("job with an agent profile: %d %s", code, body)
+	}
+	// A job naming a profile never gets the server-held token, even when there is one
+	profileJob["name"], profileJob["vcs_config"] = "repos-own-profile", map[string]any{"connection_id": gl.ID, "groups": []string{"platform"}, "profile": "gitlab-internal"}
+	code, body = call(t, h, http.MethodPost, "/api/v1/jobs", profileJob)
+	if code != http.StatusCreated {
+		t.Fatalf("profile job on a connection with a token: %d %s", code, body)
+	}
+	var ownProfile db.BackupJob
+	_ = json.Unmarshal(body, &ownProfile)
+
 	// Provider rules: a git connection takes repositories below its URL only
 	gitJob := map[string]any{"name": "git-repos", "agent_id": f.agentA.ID, "target_id": f.targetA.ID, "job_type": "vcs",
 		"vcs_config": map[string]any{"connection_id": git.ID, "repositories": []string{"https://git.example.com/other/app.git"}}}
@@ -155,6 +181,9 @@ func TestLiveVCSConnections(t *testing.T) {
 	if code, body := call(t, h, http.MethodPut, "/api/v1/vcs/connections/"+git.ID.String(), map[string]any{"name": "githost", "provider": "git", "base_url": "https://git.example.com/elsewhere"}); code != http.StatusConflict {
 		t.Errorf("base URL that excludes a job's repository: %d %s", code, body)
 	}
+	if code, body := call(t, h, http.MethodPut, "/api/v1/vcs/connections/"+gl.ID.String(), map[string]any{"name": "internal", "provider": "gitlab", "base_url": "https://gitlab.example.com", "clear_token": true}); code != http.StatusConflict || !strings.Contains(string(body), "repos") {
+		t.Errorf("removing the token a job relies on: %d %s", code, body)
+	}
 
 	// Update with a blank token keeps the stored one (and its expiry)
 	expires := time.Date(2099, 1, 31, 0, 0, 0, 0, time.UTC)
@@ -165,7 +194,7 @@ func TestLiveVCSConnections(t *testing.T) {
 		t.Fatalf("rename: %d %s", code, body)
 	}
 	again, err := d.GetConnectionByID(ctx, gl.ID, db.Unscoped)
-	if err != nil || again.Token != "glpat-secret" || again.Name != "internal-renamed" || again.TokenExpires == nil || !again.TokenExpires.Equal(expires) || again.Jobs != 1 {
+	if err != nil || again.Token != "glpat-secret" || again.Name != "internal-renamed" || again.TokenExpires == nil || !again.TokenExpires.Equal(expires) || again.Jobs != 2 {
 		t.Fatalf("after rename: %+v %v", again, err)
 	}
 
@@ -189,6 +218,11 @@ func TestLiveVCSConnections(t *testing.T) {
 	if rr.Code != http.StatusOK || json.Unmarshal(rr.Body.Bytes(), &creds) != nil || creds.Token != "glpat-secret" || creds.Provider != vcs.ProviderGitLab {
 		t.Fatalf("credentials: %d %s", rr.Code, rr.Body.String())
 	}
+	profileTicket, _ := tm.CreateBackupTicket(auth.BackupTicketClaims{JobID: ownProfile.ID, AgentID: f.agentA.ID, TargetID: f.targetA.ID, BackupType: "host", BackupID: "vcs-internal", BackupTime: time.Now().Unix()}, time.Hour)
+	creds = vcs.Credentials{}
+	if rr = fetch(profileTicket); rr.Code != http.StatusOK || json.Unmarshal(rr.Body.Bytes(), &creds) != nil || creds.Token != "" || creds.BaseURL != "https://gitlab.example.com" {
+		t.Errorf("credentials for a profile job must carry no token: %d %s", rr.Code, rr.Body.String())
+	}
 	fsTicket, _ := tm.CreateBackupTicket(auth.BackupTicketClaims{JobID: f.jobA.ID, AgentID: f.agentA.ID, TargetID: f.targetA.ID, BackupType: "host", BackupID: "x", BackupTime: time.Now().Unix()}, time.Hour)
 	if rr = fetch(fsTicket); rr.Code != http.StatusForbidden {
 		t.Errorf("credentials for a filesystem job's ticket: %d %s", rr.Code, rr.Body.String())
@@ -196,8 +230,12 @@ func TestLiveVCSConnections(t *testing.T) {
 
 	// A git connection test needs no network
 	code, body = call(t, h, http.MethodPost, "/api/v1/vcs/connections/"+git.ID.String()+"/test", nil)
-	if code != http.StatusOK || !strings.Contains(string(body), `"ok":true`) {
+	if code != http.StatusOK || !strings.Contains(string(body), `"tested":false`) {
 		t.Errorf("git connection test: %d %s", code, body)
+	}
+	code, body = call(t, h, http.MethodPost, "/api/v1/vcs/connections/"+agentSide.ID.String()+"/test", nil)
+	if code != http.StatusOK || !strings.Contains(string(body), `"tested":false`) {
+		t.Errorf("tokenless connection test: %d %s", code, body)
 	}
 
 	// Scoped operator: a connection outside the scope is invisible

@@ -29,7 +29,6 @@ func TestConnectionValidate(t *testing.T) {
 		{Name: "n", Provider: ProviderGitLab, BaseURL: "http://x", Token: "t"},
 		{Name: "n", Provider: ProviderGitLab, BaseURL: "https://u:p@x", Token: "t"},
 		{Name: "n", Provider: ProviderGitLab, BaseURL: "https://x/?a=b", Token: "t"},
-		{Name: "n", Provider: ProviderGitLab, BaseURL: "https://x"},
 		{Name: "n", Provider: ProviderGitLab, BaseURL: "https://x", Token: "a\r\nX-Evil: 1"},
 		{Name: "n", Provider: ProviderGit, BaseURL: "https://x", CAPEM: "not a pem"},
 	}
@@ -41,6 +40,10 @@ func TestConnectionValidate(t *testing.T) {
 	public := &Connection{Name: "public", Provider: ProviderGit, BaseURL: "https://git.example.com"}
 	if err := public.Validate(); err != nil {
 		t.Errorf("a git connection may go without a token: %v", err)
+	}
+	agentSide := &Connection{Name: "agent-side", Provider: ProviderGitLab, BaseURL: "https://gitlab.example.com"}
+	if err := agentSide.Validate(); err != nil || agentSide.Sanitize().HasToken {
+		t.Errorf("a GitLab connection may leave the token to agent profiles: %v", err)
 	}
 }
 
