@@ -242,11 +242,23 @@ type AgentConfig struct {
 	// DockerBackup configures Docker host jobs on fallbck-agent (socket, volume
 	// access mode, helper image)
 	DockerBackup dockerbackup.Config `yaml:"docker_backup,omitempty" json:"docker_backup"`
+	// holds the git mirrors of VCS jobs between runs (default
+	// <data_dir>/vcs-state). It needs room for every repository the agent backs up;
+	// point it at a larger disk when the data directory is small.
+	VCSStateDir string `yaml:"vcs_state_dir,omitempty" json:"vcs_state_dir,omitempty"`
 	// MaxConcurrentActivities caps how many server-scheduled activities (backup runs,
 	// volume uploads, log and inventory requests) the agent runs at once. Default 16:
 	// room for a kubernetes job's 8 parallel volumes plus a few runs, while a burst
 	// of work (or a misbehaving server) cannot start hundreds of dumps on one host.
 	MaxConcurrentActivities int `yaml:"max_concurrent_activities,omitempty" json:"max_concurrent_activities,omitempty"`
+}
+
+// applies the default VCS state directory
+func (c *AgentConfig) EffVCSStateDir() string {
+	if c.VCSStateDir != "" {
+		return c.VCSStateDir
+	}
+	return filepath.Join(c.DataDir, "vcs-state")
 }
 
 // DefaultMaxConcurrentActivities is the agent's activity cap when none is configured

@@ -85,6 +85,8 @@ type RepoResult struct {
 	Wiki     bool  `json:"wiki,omitempty"`
 	Archived bool  `json:"archived,omitempty"`
 	Fork     bool  `json:"fork,omitempty"`
+	// Warnings that did not fail the repository (wiki fetch, repack)
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // ManifestTotals counts the repositories by outcome

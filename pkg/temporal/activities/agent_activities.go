@@ -13,6 +13,7 @@ import (
 	dockerrun "github.com/osshield/fallbck/pkg/agent/dockerbackup"
 	m365run "github.com/osshield/fallbck/pkg/agent/m365"
 	pverun "github.com/osshield/fallbck/pkg/agent/pvebackup"
+	vcsrun "github.com/osshield/fallbck/pkg/agent/vcs"
 	"github.com/osshield/fallbck/pkg/agent/vss"
 	"github.com/osshield/fallbck/pkg/db"
 	dockerspec "github.com/osshield/fallbck/pkg/dockerbackup"
@@ -20,6 +21,7 @@ import (
 	pvespec "github.com/osshield/fallbck/pkg/pvebackup"
 	"github.com/osshield/fallbck/pkg/rundetail"
 	"github.com/osshield/fallbck/pkg/temporal"
+	"github.com/osshield/fallbck/pkg/vcs"
 	"github.com/osshield/gopbs"
 	"github.com/osshield/gopbs/scan"
 	"go.temporal.io/sdk/activity"
@@ -59,6 +61,11 @@ type AgentActivities struct {
 	SubTicket func(ctx context.Context, sessionTicket, group string) (ticket string, backupTime int64, err error)
 	// M365StateDir holds the per-job unit indexes of Microsoft 365 jobs (<data dir>/m365-state)
 	M365StateDir string
+	// VCSCredentials fetches the connection credentials of a VCS job
+	// (GET /api/v1/agents/vcs-credentials with the run's ticket)
+	VCSCredentials func(ctx context.Context, ticket string) (*vcs.Credentials, error)
+	// VCSStateDir holds the per-job git mirrors of VCS jobs (vcs_state_dir)
+	VCSStateDir string
 	// CacheDir holds the per-group metadata caches for change detection
 	// (<data dir>/pxar-cache); empty disables change detection
 	CacheDir string
@@ -324,6 +331,79 @@ func (a *AgentActivities) ExecuteM365Backup(ctx context.Context, session *tempor
 	if err != nil {
 		if dbrun.IsPrecheck(err) {
 			return precheckFailed("Microsoft 365 backup", err, pt, a.LogTail)
+		}
+		if isTransportConfigErr(err) {
+			return nil, err
+		}
+		return failed(result, err)
+	}
+	return result, nil
+}
+
+// backs up the git repositories of a VCS job: every mirror in the
+// job's state directory is brought up to date, all of them go into one snapshot
+// in the job's group together with the run manifest.
+func (a *AgentActivities) ExecuteVCSBackup(ctx context.Context, session *temporal.BackupSessionInfo) (*temporal.BackupExecutionResult, error) {
+	info := activity.GetInfo(ctx)
+	if session.JobType != db.JobTypeVCS || session.VCSConfig == nil {
+		return nil, sdktemporal.NewNonRetryableApplicationError("session is not a VCS backup", ErrTypeDBPrecheckFailed, nil)
+	}
+	session = sessionForAttempt(ctx, session, a.RefreshTicket)
+	slog.Info("Agent activity started: ExecuteVCSBackup", "activity_id", info.ActivityID, "attempt", info.Attempt,
+		"job_id", session.JobID, "group", session.BackupID, "datastore", session.Datastore, "direct_pbs", session.DirectPBS)
+	if a.VCSCredentials == nil || a.VCSStateDir == "" {
+		return nil, errors.New("this agent has no VCS credential fetcher or state directory (agent too old?)")
+	}
+
+	rt := startRunTracking(ctx, session.Ticket, session.BackupRunID, a.ReportProgress)
+	defer rt.stop()
+	pt, reportPh := rt.pt, rt.report
+
+	failed := func(result *temporal.BackupExecutionResult, err error) (*temporal.BackupExecutionResult, error) {
+		slog.Error("VCS backup failed", "error", err, "phase", pt.Current())
+		if result == nil {
+			result = &temporal.BackupExecutionResult{}
+		}
+		result.Status, result.ErrorMessage = db.RunStatusFailed, err.Error()
+		return result, backupFailure(ctx, err, pt, a.LogTail)
+	}
+
+	pt.Set("fetching connection credentials")
+	reportPh()
+	creds, err := a.VCSCredentials(ctx, session.Ticket)
+	if err != nil {
+		return failed(nil, fmt.Errorf("fetching connection credentials: %w", err))
+	}
+
+	upload := func(ctx context.Context, tree *scan.Node, blobs []gopbs.Blob) (*temporal.BackupExecutionResult, error) {
+		us := *session
+		us.BackupPaths, us.ExcludePaths = nil, nil
+		tr, err := openTransport(ctx, &us, a.Tunnel, a.Credentials, a.EncryptionKey, pt)
+		if err != nil {
+			return nil, err
+		}
+		defer tr.close()
+		return backup.Run(ctx, tr.options(backup.Options{
+			Session: &us, Workers: a.Workers, Tree: tree, ArchiveName: vcs.ArchiveName, Blobs: blobs,
+			CacheDir: a.groupCacheDir(&us),
+			OnPhase:  func(p string) { pt.Set(p); reportPh() },
+		}))
+	}
+	result, err := vcsrun.Run(ctx, vcsrun.RunOptions{
+		Session: session, Spec: session.VCSConfig, Credentials: *creds,
+		StateDir: filepath.Join(a.VCSStateDir, session.JobID.String()), TempDir: a.SpoolDir,
+		Upload:   upload,
+		Progress: func(p string) { pt.Set(p); reportPh() },
+		// git's own progress lines only update the phase; the 5 s reporter sends it
+		Activity: pt.Set,
+		Items: func(items map[string]rundetail.ProgressItem) {
+			reportItems(a.ReportProgress, ctx, session.Ticket, session.BackupRunID, items)
+		},
+		Hostname: a.Hostname, Version: a.Version,
+	})
+	if err != nil {
+		if dbrun.IsPrecheck(err) {
+			return precheckFailed("VCS backup", err, pt, a.LogTail)
 		}
 		if isTransportConfigErr(err) {
 			return nil, err

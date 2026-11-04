@@ -34,6 +34,7 @@ import (
 	"github.com/osshield/fallbck/pkg/m365"
 	"github.com/osshield/fallbck/pkg/pvebackup"
 	"github.com/osshield/fallbck/pkg/rundetail"
+	"github.com/osshield/fallbck/pkg/vcs"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/worker"
@@ -64,12 +65,23 @@ type Agent struct {
 	// DBEngines reports the database engines this agent can back up (the combined
 	// filesystem agent probes them); nil means the agent never runs database jobs
 	DBEngines func() []string
+	// reports the git version ("" = none) and git-lfs availability for jobs
+	// (the filesystem agent probes them); nil means no VCS jobs can be done
+	Git func() (version string, lfs bool)
 	// Inventory builds the periodic summary attached to heartbeats (nil: none)
 	Inventory *Inventory
 
 	// update is set by RunUntil; the heartbeat loop reports the capability and
 	// applies update instructions through it
 	update *selfUpdater
+}
+
+// git evaluates the Git probe when set
+func (a Agent) git() (string, bool) {
+	if a.Git == nil {
+		return "", false
+	}
+	return a.Git()
 }
 
 // dbEngines evaluates the DBEngines probe when set
@@ -116,6 +128,7 @@ func LoadConfig(a Agent, configPath string) (*config.AgentConfig, string, error)
 			ServerURL: cfg.ServerURL, Token: cfg.EnrollmentKey, DataDir: cfg.DataDir, AgentType: a.Type, Version: a.Version,
 			CACertPath: cfg.ServerCACertPath, InsecureSkipVerify: cfg.InsecureSkipVerify,
 			DockerSocket: cfg.DockerBackup.EffSocket(), DBEngines: a.dbEngines(),
+			Git: a.Git,
 		})
 		cancel()
 		if err != nil {
@@ -417,6 +430,20 @@ func M365CredentialsFetcher(cfg *config.AgentConfig, store *TokenStore) func(ctx
 	}
 }
 
+// retrieves the connection credentials of a VCS job (GET
+// /api/v1/agents/vcs-credentials with the run's ticket); a job that uses an agent
+// credential profile gets them without a token
+func VCSCredentialsFetcher(cfg *config.AgentConfig, store *TokenStore) func(ctx context.Context, ticket string) (*vcs.Credentials, error) {
+	httpClient := ServerHTTPClient(cfg)
+	return func(ctx context.Context, ticket string) (*vcs.Credentials, error) {
+		var creds vcs.Credentials
+		if err := TicketGet(ctx, httpClient, cfg, store, "/api/v1/agents/vcs-credentials", ticket, &creds); err != nil {
+			return nil, err
+		}
+		return &creds, nil
+	}
+}
+
 // SubTicketFetcher mints the ticket of one unit snapshot of a run (POST
 // /api/v1/agents/sub-ticket); the group must extend the run's own group
 func SubTicketFetcher(cfg *config.AgentConfig, store *TokenStore) func(ctx context.Context, sessionTicket, group string) (string, int64, error) {
@@ -505,6 +532,7 @@ func StartHeartbeat(ctx context.Context, cfg *config.AgentConfig, store *TokenSt
 	selfUpdate := a.update != nil && a.Type == config.AgentTypeFilesystem && a.update.canSelfUpdate()
 	sendHeartbeat := func() {
 		req := api.HeartbeatRequest{AgentID: agentUUID, Status: "online", Version: version, PVEHost: pvebackup.IsPVEHost(), DockerHost: dockerHost(), DBEngines: a.dbEngines(), DBTools: len(a.dbEngines()) > 0, SelfUpdate: selfUpdate}
+		req.GitVersion, req.GitLFS = a.git()
 		if selfUpdate {
 			req.UpdateError = a.update.lastErr
 		}

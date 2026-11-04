@@ -128,6 +128,7 @@ func main() {
 			slog.Warn("Could not clean the spool directory", "dir", dbCfg.SpoolDir, "error", err)
 		}
 		agent.DBEngines = runtime.DBEnginesProbe(dbCfg, 10*time.Minute)
+		agent.Git = runtime.GitProbe(10 * time.Minute)
 		agent.Inventory = runtime.NewInventory(cfg, configPath, AgentVersion)
 		register := func(w worker.Worker, conns *runtime.Conns, store *runtime.TokenStore) error {
 			acts := activities.NewAgentActivities()
@@ -145,6 +146,8 @@ func main() {
 			acts.M365Credentials = runtime.M365CredentialsFetcher(cfg, store)
 			acts.SubTicket = runtime.SubTicketFetcher(cfg, store)
 			acts.M365StateDir = filepath.Join(cfg.DataDir, "m365-state")
+			acts.VCSCredentials = runtime.VCSCredentialsFetcher(cfg, store)
+			acts.VCSStateDir = cfg.EffVCSStateDir()
 			if vss.Supported() && cfg.UseVSS() {
 				acts.VSSDir = filepath.Join(cfg.DataDir, "vss")
 				vss.Sweep(acts.VSSDir)

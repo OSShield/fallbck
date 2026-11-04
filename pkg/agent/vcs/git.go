@@ -21,7 +21,7 @@ import (
 	"time"
 )
 
-// Auth for the connection. The token is sent as a HTTP header scoped to 
+// Auth for the connection. The token is sent as a HTTP header scoped to
 // BaseURL (http.<BaseURL>/.extraHeader), passed through the GIT_CONFIG_COUNT environment:
 // never on the command line, never sent to another host
 // LFS downloads redirected to object storage go without it
@@ -86,7 +86,7 @@ func NewGit(gitPath string, auth Auth, tempDir string) (*Git, error) {
 	return g, nil
 }
 
-//Close removes the run's temporary files
+// Close removes the run's temporary files
 func (g *Git) Close() error {
 	if g.caFile == "" {
 		return nil
@@ -341,4 +341,18 @@ func dirSize(dir string) int64 {
 		return nil
 	})
 	return n
+}
+
+// reports the git on PATH ("" if none) and if git-lfs is installed
+// the capability a filesystem agent sends with enrollment and heartbeats
+func Probe(ctx context.Context) (version string, lfs bool) {
+	g, err := NewGit("", Auth{}, "")
+	if err != nil {
+		return "", false
+	}
+	if version, err = g.Version(ctx); err != nil {
+		return "", false
+	}
+	_, err = g.LFSVersion(ctx)
+	return version, err == nil
 }

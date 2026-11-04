@@ -26,6 +26,8 @@ type Summary struct {
 	Spool *Disk `json:"spool,omitempty"`
 	// Data is the data directory (state, caches) and its free space
 	Data *Disk `json:"data,omitempty"`
+	// the directory holding the git mirrors of VCS jobs and its free space (if exists)
+	VCSState *Disk `json:"vcs_state,omitempty"`
 	// Counts are type-specific resource counts (containers, volumes, namespaces, pvcs)
 	Counts map[string]int `json:"counts,omitempty"`
 	// Warnings the agent noticed itself (tools missing for a profile's engine, ...)
