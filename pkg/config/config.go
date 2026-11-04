@@ -553,6 +553,7 @@ func LoadAgentConfig(filePath string) (*AgentConfig, error) {
 	envString("FALLBCK_AGENT_DOCKER_VOLUME_ACCESS", &cfg.DockerBackup.VolumeAccess)
 	envString("FALLBCK_AGENT_DOCKER_HELPER_IMAGE", &cfg.DockerBackup.HelperImage)
 	envString("FALLBCK_AGENT_DOCKER_SOCKET", &cfg.DockerBackup.Socket)
+	envString("FALLBCK_AGENT_VCS_STATE_DIR", &cfg.VCSStateDir)
 	if err := cfg.DockerBackup.Validate(); err != nil {
 		return nil, err
 	}

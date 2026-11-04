@@ -148,6 +148,29 @@ See [Encryption](../operations/encryption.md) for what all of this means.
 
 For certificate auth, use `"auth_method": "certificate"` with `certificate_pem` and `key_pem`. Secrets are write-only.
 
+## VCS connections
+
+| Method | Path | Notes |
+|---|---|---|
+| `POST` | `/vcs/connections` | Create. |
+| `GET` | `/vcs/connections` | |
+| `GET` | `/vcs/connections/{id}` | |
+| `PUT` | `/vcs/connections/{id}` | A blank `token` keeps the stored one; `"clear_token": true` removes it. The provider can't change while jobs use the connection. |
+| `DELETE` | `/vcs/connections/{id}` | Refused while jobs still use it. |
+| `POST` | `/vcs/connections/{id}/test` | GitLab: checks the token, its scopes and expiry. Answers `"tested": false` for git connections and connections without a token. |
+
+```json
+{
+  "name": "git-internal",
+  "provider": "git",
+  "base_url": "https://git.example.com",
+  "token": "...",
+  "ca_pem": "-----BEGIN CERTIFICATE-----..."
+}
+```
+
+`provider` is `git` (a list of repository URLs below `base_url`) or `gitlab`. GitLab jobs are refused until GitLab project listing ships. The token is optional and write-only: leave it out when the jobs use an agent credential profile. Needs the `connections:*` permissions. See [Git repositories](../agents/vcs.md).
+
 ## Jobs
 
 | Method | Path | Notes |
@@ -176,7 +199,7 @@ Common fields:
 }
 ```
 
-`job_type` is one of `filesystem`, `database`, `kubernetes`, `pve`, `docker` or `m365`. Every type besides `filesystem` takes its settings in a matching object: `db_config`, `k8s_config`, `pve_config`, `docker_config` or `m365_config`. A database job, for example:
+`job_type` is one of `filesystem`, `database`, `kubernetes`, `pve`, `docker`, `m365` or `vcs`. Every type besides `filesystem` takes its settings in a matching object: `db_config`, `k8s_config`, `pve_config`, `docker_config`, `m365_config` or `vcs_config`. A database job, for example:
 
 ```json
 {
@@ -232,6 +255,6 @@ Selectors are strings in [Kubernetes label selector syntax](../operations/access
 
 These are what agents call, authenticated with their own bearer token. You won't need them unless you're writing an agent, but they're listed here so nothing's a mystery:
 
-`POST /agents/enroll` (enrollment token), `POST /agents/heartbeat`, `POST /agents/token/rotate`, `POST /agents/token/worker`, `POST /agents/ticket/refresh`, `POST /agents/sub-ticket`, `POST /agents/volume-ticket`, `POST /agents/run-progress`, `GET /agents/pbs-credentials`, `GET /agents/encryption-key`, `GET /agents/db-credentials`, `GET /agents/m365-credentials`, `GET /agents/update/{os}/{arch}`.
+`POST /agents/enroll` (enrollment token), `POST /agents/heartbeat`, `POST /agents/token/rotate`, `POST /agents/token/worker`, `POST /agents/ticket/refresh`, `POST /agents/sub-ticket`, `POST /agents/volume-ticket`, `POST /agents/run-progress`, `GET /agents/pbs-credentials`, `GET /agents/encryption-key`, `GET /agents/db-credentials`, `GET /agents/m365-credentials`, `GET /agents/vcs-credentials`, `GET /agents/update/{os}/{arch}`.
 
 The credential endpoints also need a valid backup ticket in `X-Fallbck-Backup-Ticket`. The [Architecture](../architecture.md) page explains the flow.

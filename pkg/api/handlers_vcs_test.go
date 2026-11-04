@@ -116,9 +116,9 @@ func TestLiveVCSConnections(t *testing.T) {
 	_ = json.Unmarshal(body, &git)
 
 	// A VCS job needs an agent that reported git 2.31+
-	job := map[string]any{"name": "repos", "agent_id": f.agentA.ID, "target_id": f.targetA.ID, "job_type": "vcs",
-		"vcs_config": map[string]any{"connection_id": gl.ID, "groups": []string{"platform"}}}
-	if code, body := call(t, h, http.MethodPost, "/api/v1/jobs", job); code != http.StatusBadRequest || !strings.Contains(string(body), "git") {
+	gitJob := map[string]any{"name": "git-repos", "agent_id": f.agentA.ID, "target_id": f.targetA.ID, "job_type": "vcs",
+		"vcs_config": map[string]any{"connection_id": git.ID, "repositories": []string{"https://git.example.com/team/app.git"}}}
+	if code, body := call(t, h, http.MethodPost, "/api/v1/jobs", gitJob); code != http.StatusBadRequest || !strings.Contains(string(body), "git") {
 		t.Fatalf("job on an agent without git: %d %s", code, body)
 	}
 	if _, err := d.UpdateAgentHeartbeat(ctx, f.agentA.ID, db.AgentStatusOnline, db.AgentCapabilities{GitVersion: "2.43.0", GitLFS: true}); err != nil {
@@ -128,49 +128,54 @@ func TestLiveVCSConnections(t *testing.T) {
 	if agent.GitVersion != "2.43.0" || !agent.GitLFS {
 		t.Fatalf("git capability not stored: %+v", agent)
 	}
-	code, body = call(t, h, http.MethodPost, "/api/v1/jobs", job)
+	code, body = call(t, h, http.MethodPost, "/api/v1/jobs", gitJob)
 	if code != http.StatusCreated {
 		t.Fatalf("create vcs job: %d %s", code, body)
 	}
-	var created db.BackupJob
-	_ = json.Unmarshal(body, &created)
-	loaded, err := d.GetJobByID(ctx, created.ID, db.Unscoped)
-	if err != nil || !loaded.IsVCS() || loaded.VCSConfig == nil || loaded.VCSConfig.ConnectionID != gl.ID || loaded.VCSConfig.Groups[0] != "platform" {
+	var createdGit db.BackupJob
+	_ = json.Unmarshal(body, &createdGit)
+	loaded, err := d.GetJobByID(ctx, createdGit.ID, db.Unscoped)
+	if err != nil || !loaded.IsVCS() || loaded.VCSConfig == nil || loaded.VCSConfig.ConnectionID != git.ID || len(loaded.VCSConfig.Repositories) != 1 {
 		t.Fatalf("stored job: %+v %v", loaded, err)
 	}
-	if loaded.BackupID != "" || loaded.Summary() != "groups platform" {
+	if loaded.BackupID != "" || loaded.Summary() != "1 repository" {
 		t.Errorf("backup_id %q, summary %q", loaded.BackupID, loaded.Summary())
 	}
 
-	// A tokenless connection needs a job that names the agent profile
-	profileJob := map[string]any{"name": "repos-agent-side", "agent_id": f.agentA.ID, "target_id": f.targetA.ID, "job_type": "vcs",
-		"vcs_config": map[string]any{"connection_id": agentSide.ID, "groups": []string{"platform"}}}
-	if code, body := call(t, h, http.MethodPost, "/api/v1/jobs", profileJob); code != http.StatusBadRequest || !strings.Contains(string(body), "profile") {
-		t.Errorf("job on a tokenless connection without a profile: %d %s", code, body)
-	}
-	profileJob["vcs_config"] = map[string]any{"connection_id": agentSide.ID, "groups": []string{"platform"}, "profile": "gitlab-internal"}
-	if code, body := call(t, h, http.MethodPost, "/api/v1/jobs", profileJob); code != http.StatusCreated {
-		t.Fatalf("job with an agent profile: %d %s", code, body)
-	}
-	// A job naming a profile never gets the server-held token, even when there is one
-	profileJob["name"], profileJob["vcs_config"] = "repos-own-profile", map[string]any{"connection_id": gl.ID, "groups": []string{"platform"}, "profile": "gitlab-internal"}
-	code, body = call(t, h, http.MethodPost, "/api/v1/jobs", profileJob)
-	if code != http.StatusCreated {
-		t.Fatalf("profile job on a connection with a token: %d %s", code, body)
-	}
-	var ownProfile db.BackupJob
-	_ = json.Unmarshal(body, &ownProfile)
-
 	// Provider rules: a git connection takes repositories below its URL only
-	gitJob := map[string]any{"name": "git-repos", "agent_id": f.agentA.ID, "target_id": f.targetA.ID, "job_type": "vcs",
+	outside := map[string]any{"name": "git-outside", "agent_id": f.agentA.ID, "target_id": f.targetA.ID, "job_type": "vcs",
 		"vcs_config": map[string]any{"connection_id": git.ID, "repositories": []string{"https://git.example.com/other/app.git"}}}
-	if code, body := call(t, h, http.MethodPost, "/api/v1/jobs", gitJob); code != http.StatusBadRequest {
+	if code, body := call(t, h, http.MethodPost, "/api/v1/jobs", outside); code != http.StatusBadRequest {
 		t.Errorf("repository outside the connection URL: %d %s", code, body)
 	}
-	gitJob["vcs_config"] = map[string]any{"connection_id": git.ID, "repositories": []string{"https://git.example.com/team/app.git"}}
-	if code, body := call(t, h, http.MethodPost, "/api/v1/jobs", gitJob); code != http.StatusCreated {
-		t.Fatalf("git job: %d %s", code, body)
+
+	// GitLab jobs are refused until agents can list GitLab projects; the connection
+	// and profile rules still answer first
+	glJob := map[string]any{"name": "repos", "agent_id": f.agentA.ID, "target_id": f.targetA.ID, "job_type": "vcs",
+		"vcs_config": map[string]any{"connection_id": gl.ID, "groups": []string{"platform"}}}
+	if code, body := call(t, h, http.MethodPost, "/api/v1/jobs", glJob); code != http.StatusBadRequest || !strings.Contains(string(body), "not supported yet") {
+		t.Errorf("GitLab job: %d %s", code, body)
 	}
+	glJob["vcs_config"] = map[string]any{"connection_id": agentSide.ID, "groups": []string{"platform"}}
+	if code, body := call(t, h, http.MethodPost, "/api/v1/jobs", glJob); code != http.StatusBadRequest || !strings.Contains(string(body), "profile") {
+		t.Errorf("job on a tokenless connection without a profile: %d %s", code, body)
+	}
+
+	// The rest of the GitLab behaviour runs on jobs stored directly, as they will be
+	// once the GitLab provider exists
+	storeJob := func(name string, conn uuid.UUID, profile string) *db.BackupJob {
+		t.Helper()
+		j := &db.BackupJob{Name: name, AgentID: f.agentA.ID, TargetID: f.targetA.ID, JobType: db.JobTypeVCS,
+			VCSConfig: &vcs.Spec{ConnectionID: conn, Groups: []string{"platform"}, Profile: profile}}
+		if err := d.CreateJob(ctx, j); err != nil {
+			t.Fatal(err)
+		}
+		return j
+	}
+	created := storeJob("repos", gl.ID, "")
+	storeJob("repos-agent-side", agentSide.ID, "gitlab-internal")
+	// A job naming a profile never gets the server-held token, even when there is one
+	ownProfile := storeJob("repos-own-profile", gl.ID, "gitlab-internal")
 
 	// In use: no delete, no provider change, no base URL that drops a job's repository
 	if code, _ := call(t, h, http.MethodDelete, "/api/v1/vcs/connections/"+gl.ID.String(), nil); code != http.StatusConflict {
