@@ -8,6 +8,7 @@ import (
 	"time"
 
 	dbspec "github.com/osshield/fallbck/pkg/dbbackup"
+	"github.com/osshield/fallbck/pkg/vcs"
 )
 
 // SummaryInterval is how often an agent attaches the summary to a heartbeat
@@ -20,6 +21,8 @@ type Summary struct {
 	UptimeSeconds int64 `json:"uptime_seconds,omitempty"`
 	// Profiles are the credential profiles the agent holds (names only)
 	Profiles []dbspec.ProfileSummary `json:"profiles,omitempty"`
+	// VCSProfiles are the VCS token profiles the agent holds (names, URLs, expiry)
+	VCSProfiles []vcs.ProfileSummary `json:"vcs_profiles,omitempty"`
 	// Tools are the database client tools by engine ("" when not found)
 	Tools map[string][]Tool `json:"tools,omitempty"`
 	// Spool is the spool directory and its free space

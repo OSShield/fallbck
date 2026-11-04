@@ -37,6 +37,9 @@ type RunOptions struct {
 	TempDir string
 	// GitPath is the git binary ("" looks it up in PATH)
 	GitPath string
+	// looks up an agent credential profile by name (the job's Spec.Profile); nil
+	// means the agent has no credential store
+	Profile func(name string) (*spec.Profile, error)
 	Upload  UploadFunc
 	// Progress names the current step (reported to the server right away); Activity
 	// is frequent detail such as git's progress lines (shown with the next report)
@@ -90,11 +93,13 @@ func Run(ctx context.Context, o RunOptions) (*temporal.BackupExecutionResult, er
 	if err := s.Validate(); err != nil {
 		return nil, &dbrun.PrecheckError{Msg: "invalid job configuration", Err: err}
 	}
-	conn := &spec.Connection{Provider: o.Credentials.Provider, BaseURL: o.Credentials.BaseURL, Token: o.Credentials.Token}
+	auth := Auth{BaseURL: o.Credentials.BaseURL, Token: o.Credentials.Token, CAPEM: o.Credentials.CAPEM}
 	if s.Profile != "" {
-		return nil, &dbrun.PrecheckError{Msg: "the job names the agent credential profile " + s.Profile,
-			Hint: "this agent version does not support VCS credential profiles yet; update the agent or store the token on the connection"}
+		if err := applyProfile(&auth, s.Profile, o.Profile); err != nil {
+			return nil, err
+		}
 	}
+	conn := &spec.Connection{Provider: o.Credentials.Provider, BaseURL: o.Credentials.BaseURL, Token: auth.Token}
 	if err := s.ValidateFor(conn); err != nil {
 		return nil, &dbrun.PrecheckError{Msg: "the job does not match its connection", Err: err}
 	}
@@ -111,7 +116,7 @@ func Run(ctx context.Context, o RunOptions) (*temporal.BackupExecutionResult, er
 	if tempDir == "" {
 		tempDir = os.TempDir()
 	}
-	g, err := NewGit(o.GitPath, Auth{BaseURL: o.Credentials.BaseURL, Token: o.Credentials.Token, CAPEM: o.Credentials.CAPEM}, tempDir)
+	g, err := NewGit(o.GitPath, auth, tempDir)
 	if err != nil {
 		return nil, &dbrun.PrecheckError{Msg: "git", Err: err, Hint: "install git on the agent host"}
 	}
@@ -257,6 +262,30 @@ func Run(ctx context.Context, o RunOptions) (*temporal.BackupExecutionResult, er
 		slog.Warn("VCS backup completed with failed repositories", "failed", len(failures), "repositories", len(projects))
 	}
 	return res, nil
+}
+
+// puts the token of the job's agent credential profile into auth. The profile is
+// only used for the URL it was created for: the server decides the connection URL,
+// and must not be able to send an agent-held token anywhere else.
+func applyProfile(auth *Auth, name string, lookup func(string) (*spec.Profile, error)) error {
+	if lookup == nil {
+		return &dbrun.PrecheckError{Msg: "the job names the agent credential profile " + name, Hint: "this agent has no credential store"}
+	}
+	p, err := lookup(name)
+	if err != nil {
+		return &dbrun.PrecheckError{Msg: "agent credential profile " + name, Err: err,
+			Hint: "create it on the agent: fallbck-agent vcs profile create --name " + name + " --url " + auth.BaseURL + " --ask-token"}
+	}
+	if p.URL != auth.BaseURL {
+		return &dbrun.PrecheckError{Msg: fmt.Sprintf("agent credential profile %s is for %s, but the job's connection is %s", name, p.URL, auth.BaseURL),
+			Hint: "the agent only sends a profile's token to the URL it was created for; recreate the profile or fix the connection"}
+	}
+	token, err := p.ResolveToken()
+	if err != nil {
+		return &dbrun.PrecheckError{Msg: "agent credential profile " + name, Err: err}
+	}
+	auth.Token, auth.Username = token, p.Username
+	return nil
 }
 
 // brings one project's mirrors up to date; never returns an error,

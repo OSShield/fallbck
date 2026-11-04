@@ -75,10 +75,8 @@ func (c *Connection) Validate() error {
 	c.BaseURL = base
 	// The token travels in an HTTP header; anything but printable ASCII would let it
 	// smuggle in another header
-	for _, r := range c.Token {
-		if r <= ' ' || r > '~' {
-			return connErr("the token contains spaces or non-printable characters")
-		}
+	if err := checkToken(c.Token); err != nil {
+		return connErr("%v", err)
 	}
 	if c.CAPEM != "" {
 		if _, err := CertPool(c.CAPEM); err != nil {

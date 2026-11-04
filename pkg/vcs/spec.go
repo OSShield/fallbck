@@ -167,7 +167,7 @@ func (s *Spec) Validate() error {
 	if s.BackupID != "" && !naming.ValidGroupID(s.BackupID) {
 		return specErr("backup_id may contain letters, digits, '.', '_' and '-' only")
 	}
-	s.Profile = strings.TrimSpace(s.Profile)
+	s.Profile = NormalizeProfileName(s.Profile)
 	if s.Profile != "" && !profileNameRe.MatchString(s.Profile) {
 		return specErr("profile may contain letters, digits, '.', '_' and '-' (at most 64)")
 	}

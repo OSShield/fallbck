@@ -66,6 +66,9 @@ type AgentActivities struct {
 	VCSCredentials func(ctx context.Context, ticket string) (*vcs.Credentials, error)
 	// VCSStateDir holds the per-job git mirrors of VCS jobs (vcs_state_dir)
 	VCSStateDir string
+	// VCSProfile looks up an agent credential profile 
+	// of a VCS job in the encrypted store (nil: no store)
+	VCSProfile func(name string) (*vcs.Profile, error)
 	// CacheDir holds the per-group metadata caches for change detection
 	// (<data dir>/pxar-cache); empty disables change detection
 	CacheDir string
@@ -392,6 +395,7 @@ func (a *AgentActivities) ExecuteVCSBackup(ctx context.Context, session *tempora
 	result, err := vcsrun.Run(ctx, vcsrun.RunOptions{
 		Session: session, Spec: session.VCSConfig, Credentials: *creds,
 		StateDir: filepath.Join(a.VCSStateDir, session.JobID.String()), TempDir: a.SpoolDir,
+		Profile:  a.VCSProfile,
 		Upload:   upload,
 		Progress: func(p string) { pt.Set(p); reportPh() },
 		// git's own progress lines only update the phase; the 5 s reporter sends it

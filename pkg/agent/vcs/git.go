@@ -51,7 +51,7 @@ type Git struct {
 }
 
 // NewGit prepares git for a run. tempDir receives the CA bundle (removed by Close).
-//  gitPath "" looks git up in PATH.
+// gitPath "" looks git up in PATH.
 func NewGit(gitPath string, auth Auth, tempDir string) (*Git, error) {
 	if gitPath == "" {
 		p, err := exec.LookPath("git")

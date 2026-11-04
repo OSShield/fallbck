@@ -55,6 +55,7 @@ func (inv *Inventory) Summary(ctx context.Context) *inventory.Summary {
 		return s
 	}
 	s.Profiles = ProfileSummaries(inv.cfg)
+	s.VCSProfiles = VCSProfileSummaries(inv.cfg)
 	s.Tools, s.Warnings = inv.detectTools(ctx)
 	dbCfg := inv.cfg.DBBackup
 	dbCfg.ApplyDefaults(inv.cfg.DataDir)

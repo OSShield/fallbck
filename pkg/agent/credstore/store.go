@@ -1,4 +1,5 @@
-// Package credstore is the agent's encrypted store for database credential profiles.
+// Package credstore is the agent's encrypted store for credential profiles (database
+// passwords and VCS tokens).
 // Profiles live in <data dir>/credentials.json, encrypted with AES-256-GCM under a
 // random key kept in <data dir>/credentials.key (0600, so only the agent's user can
 // read it; on Windows the key is additionally wrapped with DPAPI for the service
@@ -20,6 +21,7 @@ import (
 	"time"
 
 	dbspec "github.com/osshield/fallbck/pkg/dbbackup"
+	"github.com/osshield/fallbck/pkg/vcs"
 )
 
 // File names inside the data directory
@@ -55,6 +57,14 @@ type contents struct {
 	Version  int                      `json:"version"`
 	Updated  time.Time                `json:"updated"`
 	Profiles map[string]storedProfile `json:"profiles"`
+	// the VCS token profiles (stored the same way: the shared Profile hides
+	// its token from JSON)
+	VCS map[string]storedVCSProfile `json:"vcs,omitempty"`
+}
+
+type storedVCSProfile struct {
+	vcs.Profile
+	Token string `json:"token,omitempty"`
 }
 
 type storedProfile struct {
@@ -80,6 +90,80 @@ func (c *contents) profiles() map[string]dbspec.CredentialProfile {
 		out[name] = sp.profile()
 	}
 	return out
+}
+
+// returns the VCS profiles (an empty map when there are none)
+func (s *Store) LoadVCS() (map[string]vcs.Profile, error) {
+	c, err := s.read()
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]vcs.Profile, len(c.VCS))
+	for name, sp := range c.VCS {
+		p := sp.Profile
+		p.Token = sp.Token
+		out[name] = p
+	}
+	return out, nil
+}
+
+// returns one VCS profile (ErrNotFound when there is none of that name)
+func (s *Store) VCSProfile(name string) (*vcs.Profile, error) {
+	profiles, err := s.LoadVCS()
+	if err != nil {
+		return nil, err
+	}
+	p, ok := profiles[vcs.NormalizeProfileName(name)]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return &p, nil
+}
+
+// lists names, URLs and token expiry of a VCS profile set (never tokens)
+func VCSSummaries(profiles map[string]vcs.Profile) []vcs.ProfileSummary {
+	out := make([]vcs.ProfileSummary, 0, len(profiles))
+	for name, p := range profiles {
+		out = append(out, vcs.ProfileSummary{Name: name, URL: p.URL, TokenFile: p.TokenFile != "", TokenExpires: p.TokenExpires})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// creates or replaces a VCS profile
+func (s *Store) PutVCS(name string, p vcs.Profile) error {
+	name = vcs.NormalizeProfileName(name)
+	if !vcs.ValidProfileName(name) {
+		return errors.New("profile names may contain letters, digits, '.', '_' and '-' (at most 64)")
+	}
+	if err := p.Validate(); err != nil {
+		return err
+	}
+	c, err := s.read()
+	if err != nil {
+		return err
+	}
+	if c.VCS == nil {
+		c.VCS = map[string]storedVCSProfile{}
+	}
+	sp := storedVCSProfile{Profile: p, Token: p.Token}
+	sp.Profile.Token = ""
+	c.VCS[name] = sp
+	return s.write(c)
+}
+
+// removes a VCS profile
+func (s *Store) DeleteVCS(name string) error {
+	c, err := s.read()
+	if err != nil {
+		return err
+	}
+	name = vcs.NormalizeProfileName(name)
+	if _, ok := c.VCS[name]; !ok {
+		return ErrNotFound
+	}
+	delete(c.VCS, name)
+	return s.write(c)
 }
 
 // envelope is what is written to disk
