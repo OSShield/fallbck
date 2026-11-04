@@ -12,6 +12,7 @@ import (
 	dbrun "github.com/osshield/fallbck/pkg/agent/dbbackup"
 	"github.com/osshield/fallbck/pkg/agent/enrollment"
 	"github.com/osshield/fallbck/pkg/agent/runtime"
+	vcsrun "github.com/osshield/fallbck/pkg/agent/vcs"
 	"github.com/osshield/fallbck/pkg/agent/vss"
 	"github.com/osshield/fallbck/pkg/config"
 	"github.com/osshield/fallbck/pkg/temporal/activities"
@@ -129,6 +130,7 @@ func main() {
 		}
 		agent.DBEngines = runtime.DBEnginesProbe(dbCfg, 10*time.Minute)
 		agent.Git = runtime.GitProbe(10 * time.Minute)
+		agent.VCSJobs = runtime.VCSStateSweeper(cfg.EffVCSStateDir(), vcsrun.DefaultOrphanGrace)
 		agent.Inventory = runtime.NewInventory(cfg, configPath, AgentVersion)
 		register := func(w worker.Worker, conns *runtime.Conns, store *runtime.TokenStore) error {
 			acts := activities.NewAgentActivities()

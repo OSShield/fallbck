@@ -127,3 +127,22 @@ func (d *DB) DeleteConnection(ctx context.Context, id uuid.UUID) error {
 	}
 	return nil
 }
+
+// VCSJobIDsForAgent lists the VCS jobs assigned to an agent (never nil): the agent
+// keeps their mirrors and deletes those of any other job
+func (d *DB) VCSJobIDsForAgent(ctx context.Context, agentID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := d.Pool.Query(ctx, `SELECT id FROM backup_jobs WHERE agent_id = $1 AND job_type = $2 ORDER BY id`, agentID, JobTypeVCS)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	ids := []uuid.UUID{}
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}

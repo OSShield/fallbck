@@ -137,6 +137,10 @@ type HeartbeatResponse struct {
 	DebugLogging bool `json:"debug_logging"`
 	// Update is set when the agent should update itself to the server's version
 	Update *AgentUpdate `json:"update,omitempty"`
+	// VCSJobs are the VCS jobs assigned to the agent; it deletes the mirrors of any
+	// other job after a grace period. Absent (an older server, or the lookup failed)
+	// means unknown: the agent then deletes nothing.
+	VCSJobs *[]uuid.UUID `json:"vcs_jobs,omitempty"`
 }
 
 // SetAgentDebugRequest toggles an agent's remote debug logging; the same shape

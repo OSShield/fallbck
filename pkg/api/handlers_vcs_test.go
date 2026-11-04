@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/osshield/fallbck/pkg/auth"
 	"github.com/osshield/fallbck/pkg/config"
 	"github.com/osshield/fallbck/pkg/db"
@@ -244,5 +245,41 @@ func TestLiveVCSConnections(t *testing.T) {
 	hs := liveRouter(d, scoped)
 	if code, _ := call(t, hs, http.MethodGet, "/api/v1/vcs/connections/"+gl.ID.String(), nil); code != http.StatusNotFound {
 		t.Errorf("unlabelled connection visible to a scoped operator: %d", code)
+	}
+}
+
+// TestLiveHeartbeatListsVCSJobs: the heartbeat answer carries exactly the agent's
+// VCS jobs, and an empty list (not an absent field) for an agent without any
+func TestLiveHeartbeatListsVCSJobs(t *testing.T) {
+	d := liveDB(t)
+	f := seed(t, d)
+	ctx := context.Background()
+	conn := &vcs.Connection{Name: "githost", Provider: vcs.ProviderGit, BaseURL: "https://git.example.com"}
+	if err := d.CreateConnection(ctx, conn); err != nil {
+		t.Fatal(err)
+	}
+	job := &db.BackupJob{Name: "repos", AgentID: f.agentA.ID, TargetID: f.targetA.ID, JobType: db.JobTypeVCS,
+		VCSConfig: &vcs.Spec{ConnectionID: conn.ID, Repositories: []string{"https://git.example.com/a.git"}}}
+	if err := d.CreateJob(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	api := NewServerAPI(d, nil, config.DefaultServerConfig(), auth.NewTokenManager("test-secret-key-must-be-very-long-123456"), nil)
+	beat := func(agent uuid.UUID) *[]uuid.UUID {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/agents/heartbeat", strings.NewReader(`{"status":"online"}`))
+		req = req.WithContext(auth.WithAgent(req.Context(), &auth.AgentClaims{AgentID: agent}))
+		rr := httptest.NewRecorder()
+		api.HandleAgentHeartbeat(rr, req)
+		var resp HeartbeatResponse
+		if rr.Code != http.StatusOK || json.Unmarshal(rr.Body.Bytes(), &resp) != nil {
+			t.Fatalf("heartbeat: %d %s", rr.Code, rr.Body.String())
+		}
+		return resp.VCSJobs
+	}
+	if got := beat(f.agentA.ID); got == nil || len(*got) != 1 || (*got)[0] != job.ID {
+		t.Errorf("agent A: %v", got)
+	}
+	if got := beat(f.agentB.ID); got == nil || len(*got) != 0 {
+		t.Errorf("agent B must get an empty list, got %v", got)
 	}
 }

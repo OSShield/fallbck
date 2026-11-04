@@ -356,6 +356,11 @@ func (s *ServerAPI) HandleAgentHeartbeat(w http.ResponseWriter, r *http.Request)
 	}
 
 	resp := HeartbeatResponse{Status: "ok", DebugLogging: st.DebugLogging}
+	if ids, err := s.DB.VCSJobIDsForAgent(r.Context(), claims.AgentID); err == nil {
+		resp.VCSJobs = &ids
+	} else {
+		slog.Warn("Failed to list the agent's VCS jobs for its heartbeat", "agent_id", claims.AgentID, "error", err)
+	}
 	if req.SelfUpdate {
 		resp.Update = s.agentUpdate(r.Context(), claims.AgentID, req.Version, st)
 	}

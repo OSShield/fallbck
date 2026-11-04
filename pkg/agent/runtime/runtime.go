@@ -70,6 +70,9 @@ type Agent struct {
 	Git func() (version string, lfs bool)
 	// Inventory builds the periodic summary attached to heartbeats (nil: none)
 	Inventory *Inventory
+	// VCSJobs receives the VCS jobs the server assigns to this agent, from heartbeat
+	// answers that carry the list (nil: not interested)
+	VCSJobs func(jobs []uuid.UUID)
 
 	// update is set by RunUntil; the heartbeat loop reports the capability and
 	// applies update instructions through it
@@ -569,6 +572,9 @@ func StartHeartbeat(ctx context.Context, cfg *config.AgentConfig, store *TokenSt
 		}
 		if ack.Update != nil && selfUpdate && ack.Update.Version != version {
 			a.update.handle(ctx, ack.Update)
+		}
+		if ack.VCSJobs != nil && a.VCSJobs != nil {
+			a.VCSJobs(*ack.VCSJobs)
 		}
 	}
 
