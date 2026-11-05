@@ -9,6 +9,7 @@ import (
 	"github.com/osshield/fallbck/pkg/agent/credstore"
 	"github.com/osshield/fallbck/pkg/config"
 	dbspec "github.com/osshield/fallbck/pkg/dbbackup"
+	"github.com/osshield/fallbck/pkg/vcs"
 )
 
 // MergeStoredProfiles overlays the encrypted credential store onto the profiles the
@@ -46,4 +47,27 @@ func ProfileSummaries(cfg *config.AgentConfig) []dbspec.ProfileSummary {
 		return nil
 	}
 	return credstore.Summaries(cfg.DBBackup.Profiles)
+}
+
+// VCSProfileLookup returns a VCS credential profile from the encrypted store. The
+// store is read on every call, so a profile created while the agent runs is used by
+// the next run without a restart.
+func VCSProfileLookup(cfg *config.AgentConfig) func(name string) (*vcs.Profile, error) {
+	return func(name string) (*vcs.Profile, error) {
+		return credstore.Open(cfg.DataDir).VCSProfile(name)
+	}
+}
+
+// VCSProfileSummaries lists the VCS profiles an agent reports to the server: names,
+// URLs and token expiry, never tokens
+func VCSProfileSummaries(cfg *config.AgentConfig) []vcs.ProfileSummary {
+	if cfg == nil {
+		return nil
+	}
+	profiles, err := credstore.Open(cfg.DataDir).LoadVCS()
+	if err != nil {
+		slog.Warn("Could not read the VCS credential profiles", "error", err)
+		return nil
+	}
+	return credstore.VCSSummaries(profiles)
 }

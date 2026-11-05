@@ -79,6 +79,7 @@ func (s *ServerAPI) RegisterRoutes(r chi.Router, admin, agent Middleware) {
 			r.Get("/agents/encryption-key", s.HandleAgentEncryptionKey)
 			r.Get("/agents/db-credentials", s.HandleDBCredentials)
 			r.Get("/agents/m365-credentials", s.HandleM365Credentials)
+			r.Get("/agents/vcs-credentials", s.HandleVCSCredentials)
 			r.Post("/agents/ticket/refresh", s.HandleRefreshTicket)
 			r.Post("/agents/sub-ticket", s.HandleSubTicket)
 			// older kubernetes agents post here
@@ -153,6 +154,14 @@ func (s *ServerAPI) RegisterRoutes(r chi.Router, admin, agent Middleware) {
 			r.With(need(auth.PermTenantsWrite)).Put("/m365/tenants/{id}", s.HandleUpdateTenant)
 			r.With(need(auth.PermTenantsDelete)).Delete("/m365/tenants/{id}", s.HandleDeleteTenant)
 			r.With(need(auth.PermTenantsWrite)).Post("/m365/tenants/{id}/test", s.HandleTestTenant)
+
+			// VCS connections
+			r.With(need(auth.PermConnectionsWrite)).Post("/vcs/connections", s.HandleCreateConnection)
+			r.With(need(auth.PermConnectionsRead)).Get("/vcs/connections", s.HandleListConnections)
+			r.With(need(auth.PermConnectionsRead)).Get("/vcs/connections/{id}", s.HandleGetConnection)
+			r.With(need(auth.PermConnectionsWrite)).Put("/vcs/connections/{id}", s.HandleUpdateConnection)
+			r.With(need(auth.PermConnectionsDelete)).Delete("/vcs/connections/{id}", s.HandleDeleteConnection)
+			r.With(need(auth.PermConnectionsWrite)).Post("/vcs/connections/{id}/test", s.HandleTestConnection)
 
 			// Jobs
 			r.With(need(auth.PermJobsWrite)).Post("/jobs", s.HandleCreateJob)
@@ -259,6 +268,8 @@ func (s *ServerAPI) HandleAgentEnroll(w http.ResponseWriter, r *http.Request) {
 		DockerHost: req.DockerHost,
 		DBEngines:  db.CleanDBEngines(req.DBEngines),
 		DBTools:    req.DBTools || len(req.DBEngines) > 0,
+		GitVersion: cleanGitVersion(req.GitVersion),
+		GitLFS:     req.GitLFS,
 		// Scope comes from the token, never from the agent: an enrolling host must
 		// not be able to choose who administers it
 		Labels: token.Labels.OrEmpty(),
@@ -334,7 +345,7 @@ func (s *ServerAPI) HandleAgentHeartbeat(w http.ResponseWriter, r *http.Request)
 	}
 
 	st, err := s.DB.UpdateAgentHeartbeat(r.Context(), claims.AgentID, status, db.AgentCapabilities{PVEHost: req.PVEHost, DockerHost: req.DockerHost, DBTools: req.DBTools || len(req.DBEngines) > 0, DBEngines: db.CleanDBEngines(req.DBEngines), Inventory: req.Inventory,
-		Version: req.Version, SelfUpdate: req.SelfUpdate, UpdateError: req.UpdateError})
+		Version: req.Version, SelfUpdate: req.SelfUpdate, UpdateError: req.UpdateError, GitVersion: cleanGitVersion(req.GitVersion), GitLFS: req.GitLFS})
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			s.writeError(w, http.StatusUnauthorized, "agent no longer exists")
@@ -345,6 +356,11 @@ func (s *ServerAPI) HandleAgentHeartbeat(w http.ResponseWriter, r *http.Request)
 	}
 
 	resp := HeartbeatResponse{Status: "ok", DebugLogging: st.DebugLogging}
+	if ids, err := s.DB.VCSJobIDsForAgent(r.Context(), claims.AgentID); err == nil {
+		resp.VCSJobs = &ids
+	} else {
+		slog.Warn("Failed to list the agent's VCS jobs for its heartbeat", "agent_id", claims.AgentID, "error", err)
+	}
 	if req.SelfUpdate {
 		resp.Update = s.agentUpdate(r.Context(), claims.AgentID, req.Version, st)
 	}

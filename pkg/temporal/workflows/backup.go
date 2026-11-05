@@ -84,6 +84,14 @@ func BackupJobWorkflow(ctx workflow.Context, jobID uuid.UUID) (*fbtemporal.Backu
 		m365Opts.ScheduleToCloseTimeout = 72 * time.Hour
 		m365Ctx := workflow.WithActivityOptions(ctx, m365Opts)
 		execErr = workflow.ExecuteActivity(m365Ctx, agentActs.ExecuteM365Backup, &session).Get(m365Ctx, &execResult)
+	case db.JobTypeVCS:
+		// A job's first run clones every repository; give it the same room as a
+		// Microsoft 365 tenant (liveness is the heartbeat)
+		vcsOpts := agentActivityOpts
+		vcsOpts.StartToCloseTimeout = 48 * time.Hour
+		vcsOpts.ScheduleToCloseTimeout = 72 * time.Hour
+		vcsCtx := workflow.WithActivityOptions(ctx, vcsOpts)
+		execErr = workflow.ExecuteActivity(vcsCtx, agentActs.ExecuteVCSBackup, &session).Get(vcsCtx, &execResult)
 	case db.JobTypeDatabase:
 		if session.AgentType == db.AgentTypeKubernetes {
 			// A kubernetes agent dumps the database from a pod inside the cluster

@@ -27,6 +27,7 @@ Snapshots are plain pxar, so restores use PBS's own tools (the GUI or `proxmox-b
 | Proxmox VE node config | `fallbck-agent` on the node | [Proxmox VE hosts](agents/proxmox.md) |
 | Docker hosts (containers, volumes, compose) | `fallbck-agent` | [Docker hosts](agents/docker.md) |
 | Exchange Online, OneDrive, SharePoint, Teams, Entra ID | `fallbck-agent` (anywhere with outbound HTTPS) | [Microsoft 365](agents/m365.md) |
+| Git repositories (beta) | `fallbck-agent` with git (anywhere with outbound HTTPS) | [Git repositories](agents/vcs.md) |
 
 !!! note "FallBCK never deletes anything on PBS"
     Retention is a PBS datastore prune job, so set one up. FallBCK writes snapshots and that's it. It doesn't prune, forget or delete, and its API token doesn't need the rights to.

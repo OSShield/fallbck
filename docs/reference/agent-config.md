@@ -25,6 +25,14 @@ Mostly written at enrollment.
 | `vss` | `FALLBCK_AGENT_VSS` | Windows only. Shadow copies, default `true`. |
 | `max_concurrent_activities` | `FALLBCK_AGENT_MAX_CONCURRENT_ACTIVITIES` | How many jobs, volume uploads and log or inventory requests run at once. Default `16`. More wait their turn (backups for up to 12 hours; *View logs* and *Refresh inventory* give up after 20 seconds, so keep some headroom). |
 
+## VCS jobs
+
+| Key | Env | What it does |
+|---|---|---|
+| `vcs_state_dir` | `FALLBCK_AGENT_VCS_STATE_DIR` | Where the git mirrors of [VCS jobs](../agents/vcs.md) live between runs. Default `<data_dir>/vcs-state`. Needs room for every repository the agent backs up. |
+
+VCS tokens kept on the agent are managed with `fallbck-agent vcs profile`; they live in the same encrypted store as the database profiles.
+
 ## `db_backup`
 
 See [Databases](../agents/databases.md).

@@ -50,6 +50,8 @@ type Options struct {
 	// DBEngines are the database engines this agent can back up (the combined
 	// filesystem agent: by detected client tools, mssql always)
 	DBEngines []string
+	// Reports the git version and git-lfs availability for VCS jobs (filesystem agents do nil: not reported)
+	Git func() (version string, lfs bool)
 }
 
 // EnrollAgent enrolls a filesystem agent (see Enroll)
@@ -99,6 +101,9 @@ func Enroll(ctx context.Context, o Options) (*config.AgentConfig, error) {
 		reqBody.DockerHost = dockerbackup.IsDockerHost(o.DockerSocket)
 		reqBody.DBEngines = o.DBEngines
 		reqBody.DBTools = len(o.DBEngines) > 0 // understood by servers older than db_engines
+		if o.Git != nil {
+			reqBody.GitVersion, reqBody.GitLFS = o.Git()
+		}
 	}
 
 	jsonBytes, err := json.Marshal(reqBody)

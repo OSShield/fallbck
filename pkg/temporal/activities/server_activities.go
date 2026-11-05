@@ -8,6 +8,7 @@ import (
 	"github.com/osshield/fallbck/pkg/k8sbackup"
 	"github.com/osshield/fallbck/pkg/m365"
 	"github.com/osshield/fallbck/pkg/pvebackup"
+	"github.com/osshield/fallbck/pkg/vcs"
 	sdktemporal "go.temporal.io/sdk/temporal"
 	"log/slog"
 	"strings"
@@ -107,6 +108,7 @@ func (s *ServerActivities) PrepareBackupSession(ctx context.Context, jobID uuid.
 	var pveSpec *pvebackup.Spec
 	var dockerSpec *dockerbackup.Spec
 	var m365Spec *m365.Spec
+	var vcsSpec *vcs.Spec
 	passwordOnServer := false
 	if jobType == db.JobTypeM365 {
 		if job.M365Config == nil {
@@ -123,6 +125,22 @@ func (s *ServerActivities) PrepareBackupSession(ctx context.Context, jobID uuid.
 		claims.BackupID = m365Spec.BackupID
 		if claims.BackupID == "" {
 			claims.BackupID = m365.DefaultBackupID(tenant.Name)
+		}
+	}
+	if jobType == db.JobTypeVCS {
+		if job.VCSConfig == nil {
+			return nil, sdktemporal.NewNonRetryableApplicationError("VCS job has no configuration", "job_invalid", nil)
+		}
+		vcsSpec = job.VCSConfig
+		conn, err := s.DB.GetConnectionByID(ctx, vcsSpec.ConnectionID, db.Unscoped)
+		if err != nil {
+			return nil, sdktemporal.NewNonRetryableApplicationError(
+				fmt.Sprintf("the VCS connection of job %s no longer exists", job.Name), "job_invalid", nil)
+		}
+		// One snapshot per run holds every repository of the job
+		claims.BackupID = vcsSpec.BackupID
+		if claims.BackupID == "" {
+			claims.BackupID = vcs.DefaultBackupID(conn.Name)
 		}
 	}
 	if jobType == db.JobTypeDocker {
@@ -219,6 +237,7 @@ func (s *ServerActivities) PrepareBackupSession(ctx context.Context, jobID uuid.
 		PVEConfig:          pveSpec,
 		DockerConfig:       dockerSpec,
 		M365Config:         m365Spec,
+		VCSConfig:          vcsSpec,
 		BackupPaths:        job.BackupPaths,
 		ExcludePaths:       job.ExcludePaths,
 		OneFileSystem:      job.OneFileSystem && job.JobType == db.JobTypeFilesystem,

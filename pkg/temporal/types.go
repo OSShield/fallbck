@@ -8,6 +8,7 @@ import (
 	"github.com/osshield/fallbck/pkg/k8sbackup"
 	"github.com/osshield/fallbck/pkg/m365"
 	"github.com/osshield/fallbck/pkg/pvebackup"
+	"github.com/osshield/fallbck/pkg/vcs"
 	"time"
 
 	"github.com/google/uuid"
@@ -64,6 +65,10 @@ type BackupSessionInfo struct {
 	// credentials never travel through Temporal, the agent fetches them with its
 	// ticket (GET /api/v1/agents/m365-credentials)
 	M365Config *m365.Spec `json:"m365_config,omitempty"`
+	// VCSConfig is the VCS job specification (job_type vcs); the connection token
+	// never travels through Temporal, the agent fetches it with its ticket
+	// (GET /api/v1/agents/vcs-credentials)
+	VCSConfig *vcs.Spec `json:"vcs_config,omitempty"`
 	// JobName is informational (manifest)
 	JobName string `json:"job_name,omitempty"`
 	// AgentHostname is written as the snapshot comment on PBS (informational)

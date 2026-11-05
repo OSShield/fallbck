@@ -55,6 +55,7 @@ func (inv *Inventory) Summary(ctx context.Context) *inventory.Summary {
 		return s
 	}
 	s.Profiles = ProfileSummaries(inv.cfg)
+	s.VCSProfiles = VCSProfileSummaries(inv.cfg)
 	s.Tools, s.Warnings = inv.detectTools(ctx)
 	dbCfg := inv.cfg.DBBackup
 	dbCfg.ApplyDefaults(inv.cfg.DataDir)
@@ -63,6 +64,11 @@ func (inv *Inventory) Summary(ctx context.Context) *inventory.Summary {
 	}
 	if inv.cfg.DataDir != "" {
 		s.Data = &inventory.Disk{Path: inv.cfg.DataDir, FreeBytes: dbrun.FreeBytes(inv.cfg.DataDir)}
+	}
+	if dir := inv.cfg.EffVCSStateDir(); inv.cfg.DataDir != "" || inv.cfg.VCSStateDir != "" {
+		if _, err := os.Stat(dir); err == nil {
+			s.VCSState = &inventory.Disk{Path: dir, FreeBytes: dbrun.FreeBytes(dir)}
+		}
 	}
 	// Profiles whose engine has no tools cannot run
 	for _, p := range s.Profiles {

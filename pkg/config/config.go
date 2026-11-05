@@ -168,8 +168,6 @@ type ServerConfig struct {
 	Audit       AuditConfig          `yaml:"audit" json:"audit"`
 }
 
-// SecurityConfig holds the server master key that seals stored secrets (PBS API
-// tokens, backup encryption keys) at rest
 // AuditConfig controls how long audit log entries are kept and where they go before
 // they are pruned
 type AuditConfig struct {
@@ -185,6 +183,8 @@ type AuditConfig struct {
 	ExportHeaders map[string]string `yaml:"export_headers" json:"-"`
 }
 
+// SecurityConfig holds the server master key that seals stored secrets (PBS API
+// tokens, backup encryption keys) at rest
 type SecurityConfig struct {
 	// MasterKeyFile holds 64 hex characters; generated on first start when missing
 	// (default <data_dir>/master.key). Back it up together with the database: the
@@ -242,11 +242,23 @@ type AgentConfig struct {
 	// DockerBackup configures Docker host jobs on fallbck-agent (socket, volume
 	// access mode, helper image)
 	DockerBackup dockerbackup.Config `yaml:"docker_backup,omitempty" json:"docker_backup"`
+	// holds the git mirrors of VCS jobs between runs (default
+	// <data_dir>/vcs-state). It needs room for every repository the agent backs up;
+	// point it at a larger disk when the data directory is small.
+	VCSStateDir string `yaml:"vcs_state_dir,omitempty" json:"vcs_state_dir,omitempty"`
 	// MaxConcurrentActivities caps how many server-scheduled activities (backup runs,
 	// volume uploads, log and inventory requests) the agent runs at once. Default 16:
 	// room for a kubernetes job's 8 parallel volumes plus a few runs, while a burst
 	// of work (or a misbehaving server) cannot start hundreds of dumps on one host.
 	MaxConcurrentActivities int `yaml:"max_concurrent_activities,omitempty" json:"max_concurrent_activities,omitempty"`
+}
+
+// EffVCSStateDir applies the default VCS state directory
+func (c *AgentConfig) EffVCSStateDir() string {
+	if c.VCSStateDir != "" {
+		return c.VCSStateDir
+	}
+	return filepath.Join(c.DataDir, "vcs-state")
 }
 
 // DefaultMaxConcurrentActivities is the agent's activity cap when none is configured
@@ -541,6 +553,7 @@ func LoadAgentConfig(filePath string) (*AgentConfig, error) {
 	envString("FALLBCK_AGENT_DOCKER_VOLUME_ACCESS", &cfg.DockerBackup.VolumeAccess)
 	envString("FALLBCK_AGENT_DOCKER_HELPER_IMAGE", &cfg.DockerBackup.HelperImage)
 	envString("FALLBCK_AGENT_DOCKER_SOCKET", &cfg.DockerBackup.Socket)
+	envString("FALLBCK_AGENT_VCS_STATE_DIR", &cfg.VCSStateDir)
 	if err := cfg.DockerBackup.Validate(); err != nil {
 		return nil, err
 	}

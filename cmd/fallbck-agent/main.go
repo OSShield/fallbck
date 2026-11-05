@@ -12,6 +12,7 @@ import (
 	dbrun "github.com/osshield/fallbck/pkg/agent/dbbackup"
 	"github.com/osshield/fallbck/pkg/agent/enrollment"
 	"github.com/osshield/fallbck/pkg/agent/runtime"
+	vcsrun "github.com/osshield/fallbck/pkg/agent/vcs"
 	"github.com/osshield/fallbck/pkg/agent/vss"
 	"github.com/osshield/fallbck/pkg/config"
 	"github.com/osshield/fallbck/pkg/temporal/activities"
@@ -128,6 +129,8 @@ func main() {
 			slog.Warn("Could not clean the spool directory", "dir", dbCfg.SpoolDir, "error", err)
 		}
 		agent.DBEngines = runtime.DBEnginesProbe(dbCfg, 10*time.Minute)
+		agent.Git = runtime.GitProbe(10 * time.Minute)
+		agent.VCSJobs = runtime.VCSStateSweeper(cfg.EffVCSStateDir(), vcsrun.DefaultOrphanGrace)
 		agent.Inventory = runtime.NewInventory(cfg, configPath, AgentVersion)
 		register := func(w worker.Worker, conns *runtime.Conns, store *runtime.TokenStore) error {
 			acts := activities.NewAgentActivities()
@@ -145,6 +148,9 @@ func main() {
 			acts.M365Credentials = runtime.M365CredentialsFetcher(cfg, store)
 			acts.SubTicket = runtime.SubTicketFetcher(cfg, store)
 			acts.M365StateDir = filepath.Join(cfg.DataDir, "m365-state")
+			acts.VCSCredentials = runtime.VCSCredentialsFetcher(cfg, store)
+			acts.VCSStateDir = cfg.EffVCSStateDir()
+			acts.VCSProfile = runtime.VCSProfileLookup(cfg)
 			if vss.Supported() && cfg.UseVSS() {
 				acts.VSSDir = filepath.Join(cfg.DataDir, "vss")
 				vss.Sweep(acts.VSSDir)
@@ -215,6 +221,12 @@ func main() {
 			os.Exit(1)
 		}
 
+	case "vcs":
+		if err := vcsCommand(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "Error:", err)
+			os.Exit(1)
+		}
+
 	case "version":
 		fmt.Printf("fallbck-agent v%s\n", AgentVersion)
 
@@ -237,6 +249,7 @@ Commands:
   tools             Show the detected database client tools (pg_dump, mariadb-dump, mongodump, ...)
   database          Credential profiles in the encrypted store (profile create|list|delete|import)
                     and the db_backup settings (config <key> [<value>]); see database --help
+  vcs               VCS token profiles kept on this host (profile create|list|delete|test)
   migrate-db-agent  Take over a fallbck-db-agent installation on this host (state and
                     credential profiles), then retire it with fallbck-ctl agents merge
   service           Windows: install|uninstall|start|stop|status the Windows service

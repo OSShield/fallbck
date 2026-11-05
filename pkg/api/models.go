@@ -28,6 +28,10 @@ type EnrollRequest struct {
 	// form, still sent for servers and agents that predate the list.
 	DBEngines []string `json:"db_engines,omitempty"`
 	DBTools   bool     `json:"db_tools,omitempty"`
+	// GitVersion is the git a filesystem agent found ("2.43.0"; VCS jobs need 2.31 or
+	// newer) and GitLFS whether git-lfs is installed
+	GitVersion string `json:"git_version,omitempty"`
+	GitLFS     bool   `json:"git_lfs,omitempty"`
 }
 
 // EnrollResponse contains the credentials and configuration needed for the agent to start.
@@ -81,6 +85,9 @@ type HeartbeatRequest struct {
 	// DBEngines / DBTools: see EnrollRequest
 	DBEngines []string `json:"db_engines,omitempty"`
 	DBTools   bool     `json:"db_tools,omitempty"`
+	// GitVersion / GitLFS: see EnrollRequest
+	GitVersion string `json:"git_version,omitempty"`
+	GitLFS     bool   `json:"git_lfs,omitempty"`
 	// Inventory is the compact inventory summary (inventory.Summary), attached every
 	// few minutes rather than with every heartbeat
 	Inventory json.RawMessage `json:"inventory,omitempty"`
@@ -130,6 +137,10 @@ type HeartbeatResponse struct {
 	DebugLogging bool `json:"debug_logging"`
 	// Update is set when the agent should update itself to the server's version
 	Update *AgentUpdate `json:"update,omitempty"`
+	// VCSJobs are the VCS jobs assigned to the agent; it deletes the mirrors of any
+	// other job after a grace period. Absent (an older server, or the lookup failed)
+	// means unknown: the agent then deletes nothing.
+	VCSJobs *[]uuid.UUID `json:"vcs_jobs,omitempty"`
 }
 
 // SetAgentDebugRequest toggles an agent's remote debug logging; the same shape

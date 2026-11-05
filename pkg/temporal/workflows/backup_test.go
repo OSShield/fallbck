@@ -15,6 +15,7 @@ import (
 	"github.com/osshield/fallbck/pkg/m365"
 	"github.com/osshield/fallbck/pkg/temporal"
 	"github.com/osshield/fallbck/pkg/temporal/activities"
+	"github.com/osshield/fallbck/pkg/vcs"
 	"github.com/stretchr/testify/mock"
 	enumspb "go.temporal.io/api/enums/v1"
 	sdktemporal "go.temporal.io/sdk/temporal"
@@ -182,6 +183,40 @@ func TestBackupJobWorkflowM365(t *testing.T) {
 	}
 	if result.SnapshotID != execResult.SnapshotID {
 		t.Errorf("result %+v", result)
+	}
+	env.AssertNotCalled(t, "ExecuteFilesystemBackup", mock.Anything, mock.Anything)
+}
+
+func TestBackupJobWorkflowVCS(t *testing.T) {
+	testSuite := &testsuite.WorkflowTestSuite{}
+	env := testSuite.NewTestWorkflowEnvironment()
+
+	jobID := uuid.New()
+	session := &temporal.BackupSessionInfo{
+		JobID: jobID, AgentTaskQueue: "fallbck-agent-vcs", BackupRunID: uuid.New(),
+		JobType: db.JobTypeVCS, BackupID: "vcs-gitlab",
+		VCSConfig: &vcs.Spec{ConnectionID: uuid.New(), Groups: []string{"platform"}},
+	}
+	execResult := &temporal.BackupExecutionResult{Status: db.RunStatusPartial, SnapshotID: "host/vcs-gitlab/2026-11-04T01:00:00Z", ErrorMessage: "1 of 3 repositories failed"}
+
+	var serverActs *activities.ServerActivities
+	var agentActs *activities.AgentActivities
+	env.OnActivity(serverActs.PrepareBackupSession, mock.Anything, jobID).Return(session, nil)
+	env.OnActivity(agentActs.ExecuteVCSBackup, mock.Anything, session).Return(execResult, nil)
+	env.OnActivity(agentActs.ExecuteFilesystemBackup, mock.Anything, mock.Anything).Return(nil, nil)
+	var finalized *temporal.BackupExecutionResult
+	env.OnActivity(serverActs.FinalizeBackupRun, mock.Anything, session, mock.Anything).
+		Run(func(args mock.Arguments) { finalized = args.Get(2).(*temporal.BackupExecutionResult) }).Return(nil)
+
+	env.ExecuteWorkflow(BackupJobWorkflow, jobID)
+	if !env.IsWorkflowCompleted() {
+		t.Fatal("Workflow did not complete")
+	}
+	if err := env.GetWorkflowError(); err != nil {
+		t.Fatalf("Workflow failed: %v", err)
+	}
+	if finalized == nil || finalized.Status != db.RunStatusPartial || finalized.SnapshotID != execResult.SnapshotID {
+		t.Errorf("finalized %+v", finalized)
 	}
 	env.AssertNotCalled(t, "ExecuteFilesystemBackup", mock.Anything, mock.Anything)
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/osshield/fallbck/pkg/db"
 	"github.com/osshield/fallbck/pkg/dbbackup"
 	"github.com/osshield/fallbck/pkg/inventory"
+	"github.com/osshield/fallbck/pkg/vcs"
 )
 
 // StaleAfter is how long without a heartbeat (sent every 30 s) an agent counts as
@@ -46,6 +47,9 @@ type Input struct {
 	Jobs []*db.BackupJob
 	// LastRuns maps job id → newest run (from DB.LatestRunByJob); nil = unknown
 	LastRuns map[uuid.UUID]*db.JobLastRun
+	// ConnectionURLs maps VCS connection id → base URL, to check that a job's agent
+	// credential profile is for its connection (nil skips that check)
+	ConnectionURLs map[uuid.UUID]string
 	// ServerVersion is compared with the agent's version ("dev" disables the check)
 	ServerVersion string
 	Now           time.Time
@@ -143,8 +147,11 @@ func Evaluate(in Input) []Alert {
 		if !j.Enabled {
 			continue
 		}
-		if reason := cannotRun(a, summary, j); reason != "" {
+		if reason := cannotRun(a, summary, j, in.ConnectionURLs); reason != "" {
 			add(LevelDanger, fmt.Sprintf("Job %q cannot run on this agent", j.Name), reason, j)
+		} else if p := vcsProfileOf(summary, j); p != nil && p.TokenExpires != nil && p.TokenExpires.Sub(in.Now) < vcs.ExpiryWarning {
+			add(LevelWarning, fmt.Sprintf("The token of VCS profile %q expires soon", p.Name),
+				fmt.Sprintf("It expires %s. Replace it on the agent with fallbck-agent vcs profile create, then run vcs profile test.", p.TokenExpires.Format("2006-01-02")), j)
 		}
 		if lr := in.LastRuns[j.ID]; lr != nil {
 			switch lr.Status {
@@ -171,7 +178,7 @@ func rank(l Level) int {
 }
 
 // cannotRun explains why the agent cannot execute the job, or "" when it can
-func cannotRun(a *db.Agent, summary *inventory.Summary, j *db.BackupJob) string {
+func cannotRun(a *db.Agent, summary *inventory.Summary, j *db.BackupJob, connectionURLs map[uuid.UUID]string) string {
 	jobType, _ := db.NormalizeJobType(j.JobType)
 	if !a.CanRunJob(jobType) {
 		switch jobType {
@@ -181,8 +188,28 @@ func cannotRun(a *db.Agent, summary *inventory.Summary, j *db.BackupJob) string 
 			return "The agent did not find a Docker daemon on its host."
 		case db.JobTypeDatabase:
 			return "The agent found no database client tools."
+		case db.JobTypeVCS:
+			if a.GitVersion == "" {
+				return fmt.Sprintf("The agent found no git; VCS jobs need git %d.%d or newer.", vcs.MinGitMajor, vcs.MinGitMinor)
+			}
+			return fmt.Sprintf("The agent has git %s; VCS jobs need %d.%d or newer.", a.GitVersion, vcs.MinGitMajor, vcs.MinGitMinor)
 		}
 		return fmt.Sprintf("A %s agent cannot run %s jobs.", a.AgentType, jobType)
+	}
+	if jobType == db.JobTypeVCS && j.VCSConfig != nil && j.VCSConfig.Profile != "" && summary != nil {
+		name := j.VCSConfig.Profile
+		p := vcsProfileOf(summary, j)
+		url, known := connectionURLs[j.VCSConfig.ConnectionID]
+		switch {
+		case p == nil:
+			if !known {
+				url = "<connection URL>"
+			}
+			return fmt.Sprintf("VCS credential profile %q is not configured on the agent (fallbck-agent vcs profile create --name %s --url %s --ask-token).", name, name, url)
+		case known && p.URL != url:
+			return fmt.Sprintf("VCS credential profile %q is for %s, but the job's connection is %s; the agent will not send the profile's token there.", name, p.URL, url)
+		}
+		return ""
 	}
 	if jobType != db.JobTypeDatabase || j.DBConfig == nil {
 		return ""
@@ -214,6 +241,20 @@ func cannotRun(a *db.Agent, summary *inventory.Summary, j *db.BackupJob) string 
 		}
 	}
 	return ""
+}
+
+// finds the agent credential profile a VCS job names in the agent's
+// inventory (nil when the job names none or the agent does not report it)
+func vcsProfileOf(summary *inventory.Summary, j *db.BackupJob) *vcs.ProfileSummary {
+	if summary == nil || j.VCSConfig == nil || j.VCSConfig.Profile == "" {
+		return nil
+	}
+	for i := range summary.VCSProfiles {
+		if summary.VCSProfiles[i].Name == j.VCSConfig.Profile {
+			return &summary.VCSProfiles[i]
+		}
+	}
+	return nil
 }
 
 // VersionBehind compares two "v1.2.3"-style versions; ok is false when either is

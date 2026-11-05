@@ -10,6 +10,7 @@ import (
 	"github.com/osshield/fallbck/pkg/db"
 	"github.com/osshield/fallbck/pkg/dbbackup"
 	"github.com/osshield/fallbck/pkg/inventory"
+	"github.com/osshield/fallbck/pkg/vcs"
 )
 
 func agentWith(t *testing.T, s *inventory.Summary) *db.Agent {
@@ -129,5 +130,50 @@ func TestVersionCompare(t *testing.T) {
 		if b != c.behind || ok != c.ok {
 			t.Errorf("%s vs %s: behind=%v ok=%v", c.agent, c.server, b, ok)
 		}
+	}
+}
+
+func TestVCSProfileAlerts(t *testing.T) {
+	soon := time.Now().Add(10 * 24 * time.Hour)
+	later := time.Now().Add(200 * 24 * time.Hour)
+	a := agentWith(t, &inventory.Summary{VCSProfiles: []vcs.ProfileSummary{
+		{Name: "gitlab", URL: "https://gitlab.example.com", TokenExpires: &later},
+		{Name: "expiring", URL: "https://gitlab.example.com", TokenExpires: &soon},
+	}})
+	a.GitVersion = "2.43.0"
+	conn := uuid.New()
+	urls := map[uuid.UUID]string{conn: "https://gitlab.example.com"}
+	job := func(name, profile string) *db.BackupJob {
+		return &db.BackupJob{ID: uuid.New(), AgentID: a.ID, Name: name, Enabled: true, JobType: db.JobTypeVCS,
+			VCSConfig: &vcs.Spec{ConnectionID: conn, Groups: []string{"g"}, Profile: profile}}
+	}
+	got := Evaluate(Input{Agent: a, Jobs: []*db.BackupJob{
+		job("ok", "gitlab"), job("missing", "nope"), job("expiring", "expiring"), job("server-token", ""),
+	}, ConnectionURLs: urls, ServerVersion: a.Version, Now: time.Now()})
+	s := titles(got)
+	for _, want := range []string{`danger:Job "missing" cannot run on this agent`, `warning:The token of VCS profile "expiring" expires soon`} {
+		if !strings.Contains(s, want) {
+			t.Errorf("missing %q in:\n%s", want, s)
+		}
+	}
+	for _, unwanted := range []string{`"ok"`, `"server-token"`} {
+		if strings.Contains(s, unwanted) {
+			t.Errorf("unexpected alert for %s in:\n%s", unwanted, s)
+		}
+	}
+
+	// The same profile against a connection with another URL cannot run: the agent
+	// will not send the token there
+	urls[conn] = "https://elsewhere.example.com"
+	got = Evaluate(Input{Agent: a, Jobs: []*db.BackupJob{job("moved", "gitlab")}, ConnectionURLs: urls, ServerVersion: a.Version, Now: time.Now()})
+	if len(got) != 1 || !strings.Contains(got[0].Detail, "will not send") {
+		t.Errorf("URL mismatch: %s", titles(got))
+	}
+
+	// No git: the job cannot run whatever the profile
+	a.GitVersion = ""
+	got = Evaluate(Input{Agent: a, Jobs: []*db.BackupJob{job("ok", "gitlab")}, ServerVersion: a.Version, Now: time.Now()})
+	if len(got) != 1 || !strings.Contains(got[0].Detail, "no git") {
+		t.Errorf("missing git: %s", titles(got))
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/osshield/fallbck/pkg/naming"
 )
 
 func TestSpecValidate(t *testing.T) {
@@ -85,7 +86,7 @@ func TestSafeNameAndGroups(t *testing.T) {
 		if got := SafeName(in); got != want {
 			t.Errorf("SafeName(%q) = %q, want %q", in, got, want)
 		}
-		if !groupIDRe.MatchString(SafeName(in)) {
+		if !naming.ValidGroupID(SafeName(in)) {
 			t.Errorf("SafeName(%q) is not a valid group id", in)
 		}
 	}

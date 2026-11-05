@@ -32,6 +32,10 @@ const (
 	PermTenantsWrite  = "tenants:write"
 	PermTenantsDelete = "tenants:delete"
 
+	PermConnectionsRead   = "connections:read" // VCS connections (GitLab, git hosts)
+	PermConnectionsWrite  = "connections:write"
+	PermConnectionsDelete = "connections:delete"
+
 	PermAPIKeysManage = "apikeys:manage"
 	PermRBACManage    = "rbac:manage"
 	PermAuditRead     = "audit:read"
@@ -51,6 +55,7 @@ var Catalog = []PermissionGroup{
 	{"targets", []string{PermTargetsRead, PermTargetsWrite, PermTargetsDelete, PermTargetsCredentials}},
 	{"keyrings", []string{PermKeyringsRead, PermKeyringsWrite, PermKeyringsExport, PermKeyringsDelete}},
 	{"tenants", []string{PermTenantsRead, PermTenantsWrite, PermTenantsDelete}},
+	{"connections", []string{PermConnectionsRead, PermConnectionsWrite, PermConnectionsDelete}},
 	{"apikeys", []string{PermAPIKeysManage}},
 	{"rbac", []string{PermRBACManage}},
 	{"audit", []string{PermAuditRead}},
@@ -109,7 +114,7 @@ func BuiltinRoles() map[string][]string {
 	operator := append(slices.Clone(viewer),
 		PermJobsWrite, PermJobsRun, PermJobsDelete,
 		PermAgentsWrite, PermAgentsEnroll,
-		PermTargetsWrite, PermTenantsWrite)
+		PermTargetsWrite, PermTenantsWrite, PermConnectionsWrite)
 	return map[string][]string{
 		RoleAdmin:    AllPermissions(),
 		RoleOperator: operator,
@@ -120,6 +125,6 @@ func BuiltinRoles() map[string][]string {
 // BuiltinDescriptions are shown in the Access page
 var BuiltinDescriptions = map[string]string{
 	RoleAdmin:    "Everything, including access management and API keys",
-	RoleOperator: "Read everything; create, run and delete jobs; manage agents, targets and tenants (no deletes of those, no credentials or key export)",
+	RoleOperator: "Read everything; create, run and delete jobs; manage agents, targets, tenants and connections (no deletes of those, no credentials or key export)",
 	RoleViewer:   "Read everything",
 }

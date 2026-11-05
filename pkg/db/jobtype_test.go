@@ -20,6 +20,9 @@ func TestJobAllowedOnAgent(t *testing.T) {
 		{"m365", "filesystem", true},
 		{"m365", "kubernetes", false},
 		{"m365", "database", false},
+		{"vcs", "filesystem", true}, // gated by Agent.GitVersion
+		{"vcs", "kubernetes", false},
+		{"vcs", "database", false},
 	}
 	for _, c := range cases {
 		if got := JobAllowedOnAgent(c.job, c.agent); got != c.want {
@@ -50,6 +53,17 @@ func TestAgentCanRunJob(t *testing.T) {
 	}
 	if !fs.CanRunJob("m365") {
 		t.Error("m365 jobs need no host capability")
+	}
+	if fs.CanRunJob("vcs") {
+		t.Error("vcs jobs need git")
+	}
+	fs.GitVersion = "2.30.2"
+	if fs.CanRunJob("vcs") {
+		t.Error("vcs jobs need git 2.31 or newer")
+	}
+	fs.GitVersion = "2.43.0"
+	if !fs.CanRunJob("vcs") {
+		t.Error("vcs job with a recent git")
 	}
 	fs.DBTools, fs.PVEHost, fs.DockerHost = true, true, true
 	if !fs.CanRunJob("database") || !fs.CanRunJob("pve") || !fs.CanRunJob("docker") || fs.CanRunJob("kubernetes") {

@@ -62,8 +62,10 @@ All below features are free and open source. There is no enterprise plan, there 
 | Virtualization | PVE | Backup of Proxmox Virtual Environment (PVE) hosts for easier restore during DR (not VM/CT backup or storage backup, PVE handles that by itself just fine) | Restore the archive to a freshly installed PVE server and run the included script or copy files manually as needed |
 | Containers | Docker | Backup of Docker images, containers, volumes, networks and compose definitions | Restore archive from PBS UI or CLI and run the script included in the backup for automatic restore, or copy/restore files manually as needed |
 | Containers | Kubernetes | Backup of Kubernetes API resources, volumes/volume snapshots, cluster state | Restore archive from PBS UI or CLI and run the script included in the backup for automatic restore, or copy/restore files manually as needed |
+| Containers | Databases | Supports application-aware backups of databases inside containers, same databases as above | Restore files or archives from PBS UI or CLI and run the script included in the backup for automatic restore, or copy/restore files manually as needed |
 | Containers | Databases | Supports backups of databases inside containers, same databases as above, with the credentials fetched from a kubernetes secret | Restore files or archives from PBS UI or CLI and run the script included in the backup for automatic restore, or copy/restore files manually as needed |
 | Cloud | Microsoft 365 [Beta] | Backup of Microsoft 365 data including Outlook, OneDrive, Sharepoint, Teams and Entra data | Saved as much as possible as the native format, automatic restore functionality and documentation is still under active development |
+| Code | Git repositories [Beta] | Mirrors of git repositories over HTTPS: all branches, tags, merge request heads and Git LFS objects, one snapshot per run | Restore the archive from PBS UI or CLI and run the included script to push a repository into an empty one |
 
 
 ## LLM Usage
