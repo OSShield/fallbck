@@ -356,3 +356,13 @@ func Probe(ctx context.Context) (version string, lfs bool) {
 	_, err = g.LFSVersion(ctx)
 	return version, err == nil
 }
+
+// repoNotFound reports whether a git error says the remote repository does not exist
+func repoNotFound(err error) bool {
+	var ge *GitError
+	if !errors.As(err, &ge) {
+		return false
+	}
+	s := strings.ToLower(ge.Stderr)
+	return strings.Contains(s, "returned error: 404") || strings.Contains(s, "not found")
+}

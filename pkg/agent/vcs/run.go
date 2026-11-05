@@ -28,8 +28,8 @@ type RunOptions struct {
 	Session     *temporal.BackupSessionInfo
 	Spec        *spec.Spec
 	Credentials spec.Credentials
-	// Provider lists the projects; nil derives it from the credentials (the git
-	// provider; GitLab arrives with the provider PR)
+	// Provider lists the projects; nil derives it from the credentials
+	// (GitProvider or GitLabProvider)
 	Provider Provider
 	// StateDir holds the job's mirrors and index (<vcs_state_dir>/<job id>)
 	StateDir string
@@ -108,6 +108,13 @@ func Run(ctx context.Context, o RunOptions) (*temporal.BackupExecutionResult, er
 		switch o.Credentials.Provider {
 		case spec.ProviderGit:
 			provider = GitProvider{Spec: s}
+		case spec.ProviderGitLab:
+			creds := spec.Credentials{Provider: spec.ProviderGitLab, BaseURL: o.Credentials.BaseURL, Token: auth.Token, CAPEM: o.Credentials.CAPEM}
+			client, err := creds.HTTPClient(gitlabAPITimeout)
+			if err != nil {
+				return nil, &dbrun.PrecheckError{Msg: "the connection's CA bundle", Err: err}
+			}
+			provider = &GitLabProvider{Spec: s, Credentials: creds, Client: client}
 		default:
 			return nil, &dbrun.PrecheckError{Msg: "this agent version cannot list " + o.Credentials.Provider + " projects yet", Hint: "update the agent"}
 		}
@@ -155,6 +162,9 @@ func Run(ctx context.Context, o RunOptions) (*temporal.BackupExecutionResult, er
 		return nil, &dbrun.PrecheckError{Msg: "listing repositories", Err: err}
 	}
 	manifest.Warnings = append(manifest.Warnings, warnings...)
+	if d, ok := provider.(interface{ Describe(*spec.SourceInfo) }); ok {
+		d.Describe(&manifest.Source)
+	}
 	sort.Slice(projects, func(i, j int) bool { return projects[i].Path < projects[j].Path })
 
 	state := State{Dir: o.StateDir}
@@ -348,7 +358,10 @@ func backupProject(ctx context.Context, g *Git, state State, s *spec.Spec, o Run
 	}
 	if p.WikiURL != "" && s.Workloads.EffWiki() {
 		wm := g.NewMirror(state.WikiDir(p.Key), p.WikiURL)
-		if _, err := syncMirror(ctx, g, wm, gitProgress); err != nil {
+		hadWiki := wm.Exists()
+		if _, err := syncMirror(ctx, g, wm, gitProgress); err != nil && (hadWiki || !repoNotFound(err)) {
+			// An enabled wiki without pages has no repository: only worth a warning
+			// once it had one
 			r.Warnings = append(r.Warnings, "wiki: "+err.Error())
 		}
 		out.hasWiki = wm.Exists()
