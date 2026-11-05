@@ -59,7 +59,7 @@ type Workloads struct {
 
 func on(b *bool) bool { return b == nil || *b }
 
-// Enabled workloads, defaults applied
+// EffMailboxes and the other Eff methods report the enabled workloads, defaults applied
 func (w Workloads) EffMailboxes() bool { return on(w.Mailboxes) }
 func (w Workloads) EffOneDrive() bool  { return on(w.OneDrive) }
 func (w Workloads) EffSites() bool     { return on(w.Sites) }
@@ -85,7 +85,7 @@ type UserSelection struct {
 	Shared *bool `json:"shared,omitempty"`
 }
 
-// Shared_ applies the default
+// EffShared applies the default
 func (u UserSelection) EffShared() bool { return on(u.Shared) }
 
 // Selection picks sites (by URL glob) or teams (by display name glob); empty = all

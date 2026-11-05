@@ -433,7 +433,7 @@ func M365CredentialsFetcher(cfg *config.AgentConfig, store *TokenStore) func(ctx
 	}
 }
 
-// retrieves the connection credentials of a VCS job (GET
+// VCSCredentialsFetcher retrieves the connection credentials of a VCS job (GET
 // /api/v1/agents/vcs-credentials with the run's ticket); a job that uses an agent
 // credential profile gets them without a token
 func VCSCredentialsFetcher(cfg *config.AgentConfig, store *TokenStore) func(ctx context.Context, ticket string) (*vcs.Credentials, error) {

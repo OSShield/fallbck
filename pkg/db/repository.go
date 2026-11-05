@@ -21,7 +21,7 @@ import (
 
 var (
 	ErrNotFound = errors.New("record not found")
-	// ErrInUse: the row is referenced by others and cannot be deleted
+	// ErrInUse is returned when the row is referenced by others and cannot be deleted
 	ErrInUse = errors.New("record is in use")
 )
 

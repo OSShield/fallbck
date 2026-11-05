@@ -168,8 +168,6 @@ type ServerConfig struct {
 	Audit       AuditConfig          `yaml:"audit" json:"audit"`
 }
 
-// SecurityConfig holds the server master key that seals stored secrets (PBS API
-// tokens, backup encryption keys) at rest
 // AuditConfig controls how long audit log entries are kept and where they go before
 // they are pruned
 type AuditConfig struct {
@@ -185,6 +183,8 @@ type AuditConfig struct {
 	ExportHeaders map[string]string `yaml:"export_headers" json:"-"`
 }
 
+// SecurityConfig holds the server master key that seals stored secrets (PBS API
+// tokens, backup encryption keys) at rest
 type SecurityConfig struct {
 	// MasterKeyFile holds 64 hex characters; generated on first start when missing
 	// (default <data_dir>/master.key). Back it up together with the database: the
@@ -253,7 +253,7 @@ type AgentConfig struct {
 	MaxConcurrentActivities int `yaml:"max_concurrent_activities,omitempty" json:"max_concurrent_activities,omitempty"`
 }
 
-// applies the default VCS state directory
+// EffVCSStateDir applies the default VCS state directory
 func (c *AgentConfig) EffVCSStateDir() string {
 	if c.VCSStateDir != "" {
 		return c.VCSStateDir

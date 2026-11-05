@@ -214,7 +214,7 @@ func (g *Git) output(ctx context.Context, dir string, args ...string) (string, e
 	return out.String(), err
 }
 
-// "git --version" without the "git version" prefix ("2.43.0")
+// Version returns "git --version" without the "git version" prefix ("2.43.0")
 func (g *Git) Version(ctx context.Context) (string, error) {
 	out, err := g.output(ctx, "", "--version")
 	if err != nil {
@@ -343,7 +343,7 @@ func dirSize(dir string) int64 {
 	return n
 }
 
-// reports the git on PATH ("" if none) and if git-lfs is installed
+// Probe reports the git on PATH ("" if none) and if git-lfs is installed:
 // the capability a filesystem agent sends with enrollment and heartbeats
 func Probe(ctx context.Context) (version string, lfs bool) {
 	g, err := NewGit("", Auth{}, "")

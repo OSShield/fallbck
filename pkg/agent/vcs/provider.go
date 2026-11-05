@@ -9,7 +9,7 @@ import (
 	spec "github.com/osshield/fallbck/pkg/vcs"
 )
 
-// one repository a run backs up
+// Project is one repository a run backs up
 type Project struct {
 	// ID is the provider's project id (GitLab); 0 for the git provider
 	ID int64
@@ -29,19 +29,19 @@ type Project struct {
 	LastActivity time.Time
 }
 
-// lists the projects of a run
+// Provider lists the projects of a run
 type Provider interface {
 	// returns what to back up (already filtered by the job's selection) and
 	// warnings worth noting in the manifest
 	Projects(ctx context.Context) ([]Project, []string, error)
 }
 
-// backs up the job's explicit repository URLs
+// GitProvider backs up the job's explicit repository URLs
 type GitProvider struct {
 	Spec *spec.Spec
 }
 
-// maps every repository URL to its archive directory (<host>/<path>)
+// Projects maps every repository URL to its archive directory (<host>/<path>)
 func (p GitProvider) Projects(context.Context) ([]Project, []string, error) {
 	var out []Project
 	for _, raw := range p.Spec.Repositories {

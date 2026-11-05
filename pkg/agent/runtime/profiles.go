@@ -49,7 +49,7 @@ func ProfileSummaries(cfg *config.AgentConfig) []dbspec.ProfileSummary {
 	return credstore.Summaries(cfg.DBBackup.Profiles)
 }
 
-// returns a VCS credential profile from the encrypted store. The
+// VCSProfileLookup returns a VCS credential profile from the encrypted store. The
 // store is read on every call, so a profile created while the agent runs is used by
 // the next run without a restart.
 func VCSProfileLookup(cfg *config.AgentConfig) func(name string) (*vcs.Profile, error) {
@@ -58,7 +58,7 @@ func VCSProfileLookup(cfg *config.AgentConfig) func(name string) (*vcs.Profile, 
 	}
 }
 
-// lists the VCS profiles an agent reports to the server: names,
+// VCSProfileSummaries lists the VCS profiles an agent reports to the server: names,
 // URLs and token expiry, never tokens
 func VCSProfileSummaries(cfg *config.AgentConfig) []vcs.ProfileSummary {
 	if cfg == nil {

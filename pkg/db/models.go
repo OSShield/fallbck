@@ -353,7 +353,6 @@ func (t *BackupTarget) Sanitize() *BackupTarget {
 	return t
 }
 
-// BackupJob defines what, when, and where an agent backs up
 // EffectiveBackupID is the PBS backup group a filesystem, Docker, Proxmox VE or
 // kubernetes job writes to: the stored backup_id, else the agent ID (with -docker /
 // -pve for those types). Server-derived on purpose: an agent must not be able to
@@ -371,6 +370,7 @@ func (j *BackupJob) EffectiveBackupID() string {
 	return j.AgentID.String()
 }
 
+// BackupJob defines what, when, and where an agent backs up
 type BackupJob struct {
 	ID           uuid.UUID `json:"id" db:"id"`
 	Name         string    `json:"name" db:"name"`
@@ -436,9 +436,9 @@ const (
 	RunStatusRunning   RunStatus = "running"
 	RunStatusCompleted RunStatus = "completed"
 	RunStatusFailed    RunStatus = "failed"
-	// RunStatusPartial: some of the actions/contents in the backup might have failed
+	// RunStatusPartial means some of the actions/contents in the backup might have failed
 	RunStatusPartial RunStatus = "partial"
-	// RunStatusCancelling: cancellation requested, waiting for the agent to stop
+	// RunStatusCancelling means cancellation was requested, waiting for the agent to stop
 	RunStatusCancelling RunStatus = "cancelling"
 	RunStatusCancelled  RunStatus = "cancelled"
 )

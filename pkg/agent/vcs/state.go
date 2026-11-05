@@ -9,15 +9,15 @@ import (
 	"time"
 )
 
-// bumped when the index layout changes incompatibly (an old file is
+// IndexVersion is bumped when the index layout changes incompatibly (an old file is
 // then ignored; the mirrors themselves stay valid)
 const IndexVersion = 1
 
-// how many runs a project may be missing from the selection
+// DefaultForgetAfter is how many runs a project may be missing from the selection
 // before its mirrors are deleted
 const DefaultForgetAfter = 7
 
-// what the agent remembers about a job between runs. The mirrors on disk are
+// Index is what the agent remembers about a job between runs. The mirrors on disk are
 // the real state; the index records when each was last fetched and how long a
 // project has been gone. Saved only after the run's snapshot finished.
 type Index struct {
@@ -39,7 +39,7 @@ type ProjectIndex struct {
 	Missing int `json:"missing,omitempty"`
 }
 
-// a job's directory under the agent's VCS state directory
+// State is a job's directory under the agent's VCS state directory
 type State struct {
 	Dir string
 }
@@ -50,7 +50,7 @@ func (s State) indexPath() string { return filepath.Join(s.Dir, "index.json") }
 func (s State) RepoDir(key string) string { return filepath.Join(s.Dir, "mirrors", key+".git") }
 func (s State) WikiDir(key string) string { return filepath.Join(s.Dir, "mirrors", key+".wiki.git") }
 
-// reads the index; a missing or outdated file is an empty index
+// Load reads the index; a missing or outdated file is an empty index
 func (s State) Load() (*Index, error) {
 	idx := &Index{Version: IndexVersion, Projects: map[string]*ProjectIndex{}}
 	data, err := os.ReadFile(s.indexPath())
@@ -70,7 +70,7 @@ func (s State) Load() (*Index, error) {
 	return &stored, nil
 }
 
-// writes the index atomically
+// Save writes the index atomically
 func (s State) Save(idx *Index) error {
 	if err := os.MkdirAll(s.Dir, 0o700); err != nil {
 		return err
@@ -86,7 +86,7 @@ func (s State) Save(idx *Index) error {
 	return os.Rename(tmp, s.indexPath())
 }
 
-// deletes a project's mirrors
+// Forget deletes a project's mirrors
 func (s State) Forget(key string) error {
 	if err := os.RemoveAll(s.RepoDir(key)); err != nil {
 		return err

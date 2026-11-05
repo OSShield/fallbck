@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// an agent credential profile for VCS jobs: a token that lives only in
+// Profile is an agent credential profile for VCS jobs: a token that lives only in
 // the agent's encrypted store and is used for exactly one URL. A job names it
 // (Spec.Profile); the agent uses it only when URL equals the job's connection URL,
 // so a changed connection cannot send the token anywhere else.
@@ -29,7 +29,7 @@ type Profile struct {
 	TokenExpires *time.Time `json:"token_expires,omitempty"`
 }
 
-// what the agent reports about a profile: never the token
+// ProfileSummary is what the agent reports about a profile: never the token
 type ProfileSummary struct {
 	Name         string     `json:"name"`
 	URL          string     `json:"url"`
@@ -37,14 +37,14 @@ type ProfileSummary struct {
 	TokenExpires *time.Time `json:"token_expires,omitempty"`
 }
 
-// reports whether name is usable for a profile (letters, digits,
+// ValidProfileName reports whether name is usable for a profile (letters, digits,
 // '.', '_' and '-', at most 64, starting with a letter or digit)
 func ValidProfileName(name string) bool { return profileNameRe.MatchString(name) }
 
-// the stored form of a profile name (lower case)
+// NormalizeProfileName returns the stored form of a profile name (lower case)
 func NormalizeProfileName(name string) string { return strings.ToLower(strings.TrimSpace(name)) }
 
-// normalizes the URL and checks that exactly one token source is set
+// Validate normalizes the URL and checks that exactly one token source is set
 func (p *Profile) Validate() error {
 	url, err := NormalizeBaseURL(p.URL)
 	if err != nil {
@@ -63,7 +63,7 @@ func (p *Profile) Validate() error {
 	return checkToken(p.Token)
 }
 
-// returns the token, reading TokenFile when set
+// ResolveToken returns the token, reading TokenFile when set
 func (p *Profile) ResolveToken() (string, error) {
 	if p.TokenFile == "" {
 		return p.Token, nil

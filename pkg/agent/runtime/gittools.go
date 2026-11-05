@@ -9,9 +9,9 @@ import (
 	vcsrun "github.com/osshield/fallbck/pkg/agent/vcs"
 )
 
-// returns a cached probe for the git (and git-lfs) this agent can run VCS with
-// Like DBEngineProbe it detects on first use and after refresh, so a heartbeat never 
-// executes git, and an installation made after the agent started is picked up 
+// GitProbe returns a cached probe for the git (and git-lfs) this agent can run VCS with
+// Like DBEngineProbe it detects on first use and after refresh, so a heartbeat never
+// executes git, and an installation made after the agent started is picked up
 // after next refresh
 func GitProbe(refresh time.Duration) func() (version string, lfs bool) {
 	var mu sync.Mutex

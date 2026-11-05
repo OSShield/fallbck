@@ -11,7 +11,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// how long a job's state directory survives after the server stopped listing the job
+// DefaultOrphanGrace is how long a job's state directory survives after the server stopped listing the job
 // for this agent (moved to another agent, deleted). Long enough that a server
 // briefly answering with the wrong list, or a job moved and moved back, costs
 // nothing; the mirrors can always be fetched again.
@@ -21,7 +21,7 @@ const DefaultOrphanGrace = 7 * 24 * time.Hour
 // seen missing
 const orphanMarker = ".orphaned"
 
-// deletes the state directories (<root>/<job id>) of jobs not in keep once they have
+// SweepJobs deletes the state directories (<root>/<job id>) of jobs not in keep once they have
 // been missing for grace. A directory missing for the first time gets a marker; a
 // job that reappears loses its marker. Only directories named by a job id are
 // touched. Returns the directories removed.

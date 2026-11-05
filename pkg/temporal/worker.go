@@ -37,7 +37,7 @@ func (sw *ServerWorker) RegisterWorkflow(workflowFunc interface{}) {
 	sw.worker.RegisterWorkflow(workflowFunc)
 }
 
-// RegisterWorkflowAndActivities registers workflows and server activities
+// Register registers workflows and server activities
 func (sw *ServerWorker) Register(workflowFunc interface{}, serverActivities interface{}) {
 	sw.worker.RegisterWorkflow(workflowFunc)
 	sw.worker.RegisterActivity(serverActivities)

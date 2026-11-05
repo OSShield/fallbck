@@ -92,7 +92,7 @@ func (c *contents) profiles() map[string]dbspec.CredentialProfile {
 	return out
 }
 
-// returns the VCS profiles (an empty map when there are none)
+// LoadVCS returns the VCS profiles (an empty map when there are none)
 func (s *Store) LoadVCS() (map[string]vcs.Profile, error) {
 	c, err := s.read()
 	if err != nil {
@@ -107,7 +107,7 @@ func (s *Store) LoadVCS() (map[string]vcs.Profile, error) {
 	return out, nil
 }
 
-// returns one VCS profile (ErrNotFound when there is none of that name)
+// VCSProfile returns one VCS profile (ErrNotFound when there is none of that name)
 func (s *Store) VCSProfile(name string) (*vcs.Profile, error) {
 	profiles, err := s.LoadVCS()
 	if err != nil {
@@ -120,7 +120,7 @@ func (s *Store) VCSProfile(name string) (*vcs.Profile, error) {
 	return &p, nil
 }
 
-// lists names, URLs and token expiry of a VCS profile set (never tokens)
+// VCSSummaries lists names, URLs and token expiry of a VCS profile set (never tokens)
 func VCSSummaries(profiles map[string]vcs.Profile) []vcs.ProfileSummary {
 	out := make([]vcs.ProfileSummary, 0, len(profiles))
 	for name, p := range profiles {
@@ -130,7 +130,7 @@ func VCSSummaries(profiles map[string]vcs.Profile) []vcs.ProfileSummary {
 	return out
 }
 
-// creates or replaces a VCS profile
+// PutVCS creates or replaces a VCS profile
 func (s *Store) PutVCS(name string, p vcs.Profile) error {
 	name = vcs.NormalizeProfileName(name)
 	if !vcs.ValidProfileName(name) {
@@ -152,7 +152,7 @@ func (s *Store) PutVCS(name string, p vcs.Profile) error {
 	return s.write(c)
 }
 
-// removes a VCS profile
+// DeleteVCS removes a VCS profile
 func (s *Store) DeleteVCS(name string) error {
 	c, err := s.read()
 	if err != nil {

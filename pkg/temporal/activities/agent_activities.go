@@ -66,7 +66,7 @@ type AgentActivities struct {
 	VCSCredentials func(ctx context.Context, ticket string) (*vcs.Credentials, error)
 	// VCSStateDir holds the per-job git mirrors of VCS jobs (vcs_state_dir)
 	VCSStateDir string
-	// VCSProfile looks up an agent credential profile 
+	// VCSProfile looks up an agent credential profile
 	// of a VCS job in the encrypted store (nil: no store)
 	VCSProfile func(name string) (*vcs.Profile, error)
 	// CacheDir holds the per-group metadata caches for change detection
@@ -343,7 +343,7 @@ func (a *AgentActivities) ExecuteM365Backup(ctx context.Context, session *tempor
 	return result, nil
 }
 
-// backs up the git repositories of a VCS job: every mirror in the
+// ExecuteVCSBackup backs up the git repositories of a VCS job: every mirror in the
 // job's state directory is brought up to date, all of them go into one snapshot
 // in the job's group together with the run manifest.
 func (a *AgentActivities) ExecuteVCSBackup(ctx context.Context, session *temporal.BackupSessionInfo) (*temporal.BackupExecutionResult, error) {

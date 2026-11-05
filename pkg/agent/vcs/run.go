@@ -20,7 +20,7 @@ import (
 	"github.com/osshield/gopbs/scan"
 )
 
-// writes the run's snapshot: the caller opens the transport and runs the
+// UploadFunc writes the run's snapshot: the caller opens the transport and runs the
 // backup engine with the tree (archive spec.ArchiveName) and the blobs
 type UploadFunc func(ctx context.Context, tree *scan.Node, blobs []gopbs.Blob) (*temporal.BackupExecutionResult, error)
 
@@ -63,7 +63,7 @@ type projectOutcome struct {
 	lfsPending bool
 }
 
-// executes one VCS backup: precheck → list projects → bring every mirror up to
+// Run executes one VCS backup: precheck → list projects → bring every mirror up to
 // date (Concurrency in flight) → one snapshot of all mirrors with the run manifest →
 // save the index. A project that fails keeps its last good mirror in the snapshot
 // (stale) and the run ends partial; the run fails only when nothing could be backed
