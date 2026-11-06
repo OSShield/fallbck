@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"path"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -25,6 +26,22 @@ const (
 	// ProviderGit mirrors an explicit list of HTTPS repository URLs
 	ProviderGit = "git"
 )
+
+// AgentProviders are the providers this agent build can list repositories of; it
+// reports them to the server, which only gives it jobs of these providers
+var AgentProviders = []string{ProviderGit, ProviderGitLab}
+
+// CleanProviders keeps the known providers of an agent's report, without duplicates
+func CleanProviders(in []string) []string {
+	out := []string{}
+	for _, p := range in {
+		p = strings.ToLower(strings.TrimSpace(p))
+		if (p == ProviderGit || p == ProviderGitLab) && !slices.Contains(out, p) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
 
 // Names inside the snapshot
 const (

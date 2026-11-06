@@ -149,20 +149,32 @@ func TestLiveVCSConnections(t *testing.T) {
 		t.Errorf("repository outside the connection URL: %d %s", code, body)
 	}
 
-	// GitLab jobs are refused until agents can list GitLab projects; the connection
-	// and profile rules still answer first
-	glJob := map[string]any{"name": "repos", "agent_id": f.agentA.ID, "target_id": f.targetA.ID, "job_type": "vcs",
+	// GitLab jobs need an agent that reports the gitlab provider (older agents only
+	// list git repositories)
+	glJob := map[string]any{"name": "repos-api", "agent_id": f.agentA.ID, "target_id": f.targetA.ID, "job_type": "vcs",
 		"vcs_config": map[string]any{"connection_id": gl.ID, "groups": []string{"platform"}}}
-	if code, body := call(t, h, http.MethodPost, "/api/v1/jobs", glJob); code != http.StatusBadRequest || !strings.Contains(string(body), "not supported yet") {
-		t.Errorf("GitLab job: %d %s", code, body)
+	if code, body := call(t, h, http.MethodPost, "/api/v1/jobs", glJob); code != http.StatusBadRequest || !strings.Contains(string(body), "update the agent") {
+		t.Errorf("GitLab job on an agent without the provider: %d %s", code, body)
 	}
+	if _, err := d.UpdateAgentHeartbeat(ctx, f.agentA.ID, db.AgentStatusOnline, db.AgentCapabilities{GitVersion: "2.43.0", GitLFS: true, VCSProviders: vcs.AgentProviders}); err != nil {
+		t.Fatal(err)
+	}
+	code, body = call(t, h, http.MethodPost, "/api/v1/jobs", glJob)
+	if code != http.StatusCreated {
+		t.Fatalf("GitLab job: %d %s", code, body)
+	}
+	var glCreated db.BackupJob
+	_ = json.Unmarshal(body, &glCreated)
+	if code, body := call(t, h, http.MethodDelete, "/api/v1/jobs/"+glCreated.ID.String(), nil); code >= 300 {
+		t.Fatalf("delete GitLab job: %d %s", code, body)
+	}
+	// The connection and profile rules still apply
 	glJob["vcs_config"] = map[string]any{"connection_id": agentSide.ID, "groups": []string{"platform"}}
 	if code, body := call(t, h, http.MethodPost, "/api/v1/jobs", glJob); code != http.StatusBadRequest || !strings.Contains(string(body), "profile") {
 		t.Errorf("job on a tokenless connection without a profile: %d %s", code, body)
 	}
 
-	// The rest of the GitLab behaviour runs on jobs stored directly, as they will be
-	// once the GitLab provider exists
+	// The rest of the GitLab behaviour runs on jobs stored directly
 	storeJob := func(name string, conn uuid.UUID, profile string) *db.BackupJob {
 		t.Helper()
 		j := &db.BackupJob{Name: name, AgentID: f.agentA.ID, TargetID: f.targetA.ID, JobType: db.JobTypeVCS,

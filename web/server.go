@@ -584,17 +584,21 @@ func (u *UIHandler) HandleAgentDetail(w http.ResponseWriter, r *http.Request) {
 		j.LastRun = last[j.ID]
 	}
 	runs, _ := u.DB.ListRunsByAgent(ctx, agent.ID, 20, scope(r, auth.PermJobsRead))
-	// VCS jobs with an agent credential profile are checked against their connection's
-	// URL; only the URLs are needed
-	connectionURLs := map[uuid.UUID]string{}
+	// VCS jobs are checked against their connection's provider and, with an agent
+	// credential profile, its URL
+	connectionURLs, connectionProviders := map[uuid.UUID]string{}, map[uuid.UUID]string{}
 	for _, j := range jobs {
-		if j.IsVCS() && j.VCSConfig != nil && j.VCSConfig.Profile != "" {
-			if c, err := u.DB.GetConnectionByID(ctx, j.VCSConfig.ConnectionID, db.Unscoped); err == nil {
-				connectionURLs[c.ID] = c.BaseURL
-			}
+		if !j.IsVCS() || j.VCSConfig == nil {
+			continue
+		}
+		if _, seen := connectionProviders[j.VCSConfig.ConnectionID]; seen {
+			continue
+		}
+		if c, err := u.DB.GetConnectionByID(ctx, j.VCSConfig.ConnectionID, db.Unscoped); err == nil {
+			connectionURLs[c.ID], connectionProviders[c.ID] = c.BaseURL, c.Provider
 		}
 	}
-	alerts := agenthealth.Evaluate(agenthealth.Input{Agent: agent, Jobs: jobs, LastRuns: last, ConnectionURLs: connectionURLs, ServerVersion: u.deps.Version, Now: now})
+	alerts := agenthealth.Evaluate(agenthealth.Input{Agent: agent, Jobs: jobs, LastRuns: last, ConnectionURLs: connectionURLs, ConnectionProviders: connectionProviders, ServerVersion: u.deps.Version, Now: now})
 
 	behind, bok := agenthealth.VersionBehind(agent.Version, u.deps.Version)
 	u.renderPage(w, r, "agent_detail.html", map[string]interface{}{

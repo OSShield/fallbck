@@ -32,6 +32,9 @@ type EnrollRequest struct {
 	// newer) and GitLFS whether git-lfs is installed
 	GitVersion string `json:"git_version,omitempty"`
 	GitLFS     bool   `json:"git_lfs,omitempty"`
+	// VCSProviders are the VCS providers a filesystem agent can list repositories
+	// of (git, gitlab); agents that predate the list only run git jobs
+	VCSProviders []string `json:"vcs_providers,omitempty"`
 }
 
 // EnrollResponse contains the credentials and configuration needed for the agent to start.
@@ -85,9 +88,10 @@ type HeartbeatRequest struct {
 	// DBEngines / DBTools: see EnrollRequest
 	DBEngines []string `json:"db_engines,omitempty"`
 	DBTools   bool     `json:"db_tools,omitempty"`
-	// GitVersion / GitLFS: see EnrollRequest
-	GitVersion string `json:"git_version,omitempty"`
-	GitLFS     bool   `json:"git_lfs,omitempty"`
+	// GitVersion / GitLFS / VCSProviders: see EnrollRequest
+	GitVersion   string   `json:"git_version,omitempty"`
+	GitLFS       bool     `json:"git_lfs,omitempty"`
+	VCSProviders []string `json:"vcs_providers,omitempty"`
 	// Inventory is the compact inventory summary (inventory.Summary), attached every
 	// few minutes rather than with every heartbeat
 	Inventory json.RawMessage `json:"inventory,omitempty"`
