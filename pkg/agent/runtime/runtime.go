@@ -536,6 +536,9 @@ func StartHeartbeat(ctx context.Context, cfg *config.AgentConfig, store *TokenSt
 	sendHeartbeat := func() {
 		req := api.HeartbeatRequest{AgentID: agentUUID, Status: "online", Version: version, PVEHost: pvebackup.IsPVEHost(), DockerHost: dockerHost(), DBEngines: a.dbEngines(), DBTools: len(a.dbEngines()) > 0, SelfUpdate: selfUpdate}
 		req.GitVersion, req.GitLFS = a.git()
+		if a.Git != nil {
+			req.VCSProviders = vcs.AgentProviders
+		}
 		if selfUpdate {
 			req.UpdateError = a.update.lastErr
 		}

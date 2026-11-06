@@ -41,8 +41,8 @@ func (d *DB) CreateAgent(ctx context.Context, agent *Agent) error {
 	agent.UpdatedAt = now
 
 	query := `
-		INSERT INTO agents (id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, pve_host, docker_host, db_tools, db_engines, labels, git_version, git_lfs)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+		INSERT INTO agents (id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, pve_host, docker_host, db_tools, db_engines, labels, git_version, git_lfs, vcs_providers)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
 		RETURNING id, created_at, updated_at
 	`
 	if agent.AgentType == "" {
@@ -53,7 +53,7 @@ func (d *DB) CreateAgent(ctx context.Context, agent *Agent) error {
 		agent.ID, agent.Hostname, agent.IPAddress, agent.OS, agent.Arch,
 		agent.Version, agent.TaskQueue, agent.Status, agent.LastSeenAt,
 		agent.CreatedAt, agent.UpdatedAt, agent.AgentType, agent.PVEHost, agent.DockerHost, agent.DBTools, enginesOrEmpty(agent.DBEngines), agent.Labels.JSON(),
-		agent.GitVersion, agent.GitLFS,
+		agent.GitVersion, agent.GitLFS, enginesOrEmpty(agent.VCSProviders),
 	).Scan(&agent.ID, &agent.CreatedAt, &agent.UpdatedAt)
 }
 
@@ -62,8 +62,8 @@ func (d *DB) UpsertAgent(ctx context.Context, agent *Agent) error {
 	agent.UpdatedAt = now
 
 	query := `
-		INSERT INTO agents (id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, pve_host, docker_host, db_tools, db_engines, git_version, git_lfs)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+		INSERT INTO agents (id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, pve_host, docker_host, db_tools, db_engines, git_version, git_lfs, vcs_providers)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
 		ON CONFLICT (id) DO UPDATE SET
 			agent_type = EXCLUDED.agent_type,
 			pve_host = EXCLUDED.pve_host,
@@ -72,6 +72,7 @@ func (d *DB) UpsertAgent(ctx context.Context, agent *Agent) error {
 			db_engines = EXCLUDED.db_engines,
 			git_version = EXCLUDED.git_version,
 			git_lfs = EXCLUDED.git_lfs,
+			vcs_providers = EXCLUDED.vcs_providers,
 			hostname = EXCLUDED.hostname,
 			ip_address = EXCLUDED.ip_address,
 			os = EXCLUDED.os,
@@ -86,16 +87,16 @@ func (d *DB) UpsertAgent(ctx context.Context, agent *Agent) error {
 	return d.Pool.QueryRow(ctx, query,
 		agent.ID, agent.Hostname, agent.IPAddress, agent.OS, agent.Arch,
 		agent.Version, agent.TaskQueue, agent.Status, agent.LastSeenAt,
-		now, now, agent.AgentType, agent.PVEHost, agent.DockerHost, agent.DBTools, enginesOrEmpty(agent.DBEngines), agent.GitVersion, agent.GitLFS,
+		now, now, agent.AgentType, agent.PVEHost, agent.DockerHost, agent.DBTools, enginesOrEmpty(agent.DBEngines), agent.GitVersion, agent.GitLFS, enginesOrEmpty(agent.VCSProviders),
 	).Scan(&agent.CreatedAt, &agent.UpdatedAt)
 }
 
-const agentSelect = `SELECT id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, debug_logging, pve_host, docker_host, db_tools, db_engines, inventory, inventory_at, inventory_detail, inventory_detail_at, auto_update, self_update, update_requested_at, update_error, labels, git_version, git_lfs
+const agentSelect = `SELECT id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, debug_logging, pve_host, docker_host, db_tools, db_engines, inventory, inventory_at, inventory_detail, inventory_detail_at, auto_update, self_update, update_requested_at, update_error, labels, git_version, git_lfs, vcs_providers
 	FROM agents`
 
 func scanAgent(row pgx.Row) (*Agent, error) {
 	var a Agent
-	err := row.Scan(&a.ID, &a.Hostname, &a.IPAddress, &a.OS, &a.Arch, &a.Version, &a.TaskQueue, &a.Status, &a.LastSeenAt, &a.CreatedAt, &a.UpdatedAt, &a.AgentType, &a.DebugLogging, &a.PVEHost, &a.DockerHost, &a.DBTools, &a.DBEngines, &a.Inventory, &a.InventoryAt, &a.InventoryDetail, &a.InventoryDetailAt, &a.AutoUpdate, &a.SelfUpdate, &a.UpdateRequestedAt, &a.UpdateError, &a.Labels, &a.GitVersion, &a.GitLFS)
+	err := row.Scan(&a.ID, &a.Hostname, &a.IPAddress, &a.OS, &a.Arch, &a.Version, &a.TaskQueue, &a.Status, &a.LastSeenAt, &a.CreatedAt, &a.UpdatedAt, &a.AgentType, &a.DebugLogging, &a.PVEHost, &a.DockerHost, &a.DBTools, &a.DBEngines, &a.Inventory, &a.InventoryAt, &a.InventoryDetail, &a.InventoryDetailAt, &a.AutoUpdate, &a.SelfUpdate, &a.UpdateRequestedAt, &a.UpdateError, &a.Labels, &a.GitVersion, &a.GitLFS, &a.VCSProviders)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -146,7 +147,7 @@ func (d *DB) UpdateAgentHeartbeat(ctx context.Context, id uuid.UUID, status Agen
 		inventory = COALESCE($8, inventory), inventory_at = CASE WHEN $8::jsonb IS NULL THEN inventory_at ELSE $1 END,
 		version = COALESCE(NULLIF($9, ''), version), self_update = $10, update_error = $11,
 		update_requested_at = CASE WHEN $11 <> '' THEN NULL ELSE update_requested_at END,
-		git_version = $12, git_lfs = $13
+		git_version = $12, git_lfs = $13, vcs_providers = $14
 		WHERE id = $3 RETURNING debug_logging, auto_update, update_requested_at IS NOT NULL, os, arch`
 	var st HeartbeatState
 	var inv []byte
@@ -154,7 +155,7 @@ func (d *DB) UpdateAgentHeartbeat(ctx context.Context, id uuid.UUID, status Agen
 		inv = caps.Inventory
 	}
 	if err := d.Pool.QueryRow(ctx, query, now, status, id, caps.PVEHost, caps.DockerHost, caps.DBTools, enginesOrEmpty(caps.DBEngines), inv,
-		caps.Version, caps.SelfUpdate, caps.UpdateError, caps.GitVersion, caps.GitLFS).Scan(&st.DebugLogging, &st.AutoUpdate, &st.UpdateRequested, &st.OS, &st.Arch); err != nil {
+		caps.Version, caps.SelfUpdate, caps.UpdateError, caps.GitVersion, caps.GitLFS, enginesOrEmpty(caps.VCSProviders)).Scan(&st.DebugLogging, &st.AutoUpdate, &st.UpdateRequested, &st.OS, &st.Arch); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return st, ErrNotFound
 		}

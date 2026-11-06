@@ -1,0 +1,48 @@
+{{/* VCS connection fields (the Git Connections page modal). */}}
+{{define "connection-fields"}}
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+  <div class="form-group">
+    <label>Name</label>
+    <input type="text" name="conn_name" class="form-control" placeholder="gitlab" required>
+    <span class="form-text">Also the default snapshot group: vcs-&lt;name&gt;.</span>
+  </div>
+  <div class="form-group">
+    <label>Provider</label>
+    <select name="conn_provider" class="form-control" onchange="updateConnectionProvider(this.closest('.connection-fields'))">
+      <option value="gitlab" selected>GitLab (projects listed by group)</option>
+      <option value="git">Plain git (a list of repository URLs)</option>
+    </select>
+  </div>
+</div>
+<div class="form-group">
+  <label class="conn-gitlab-opts">GitLab URL</label>
+  <label class="conn-git-opts" hidden>Base URL (every repository of the connection's jobs is below it)</label>
+  <input type="url" name="conn_base_url" class="form-control" placeholder="https://gitlab.example.com" required>
+  <span class="form-text">HTTPS only. The token is only ever sent to this URL.</span>
+</div>
+<div class="conn-gitlab-opts" style="background-color: var(--bg-subtle); padding: 14px; border-radius: var(--radius-sm); margin-bottom: 16px; font-size: 13px;">
+  Use a group, project or personal access token with the <code>read_api</code> and <code>read_repository</code> scopes. With groups in the job it sees those groups' projects; a job without groups needs an administrator's token to see every project. <em>Test</em> on the connection list checks the token and records its expiry.
+</div>
+<div style="display: grid; grid-template-columns: 2fr 1fr; gap: 16px;">
+  <div class="form-group">
+    <label>Access token (optional)</label>
+    <input type="password" name="conn_token" class="form-control" autocomplete="new-password">
+    <span class="form-text">Sealed on the server and handed to the agent per run. Leave it out to keep the token on the agent instead (<code>fallbck-agent vcs profile create</code>), or for public repositories.</span>
+    <div class="conn-clear-token" style="margin-top: 6px; font-size: 13px;" hidden><label style="display: flex; align-items: center; gap: 6px;"><input type="checkbox" name="conn_clear_token"> Remove the stored token</label></div>
+  </div>
+  <div class="form-group">
+    <label>Token expires</label>
+    <input type="date" name="conn_token_expires" class="form-control">
+    <span class="form-text conn-git-opts" hidden>Shown on the list; warning 30 days before.</span>
+    <span class="form-text conn-gitlab-opts">Read from GitLab by <em>Test</em>.</span>
+  </div>
+</div>
+<details style="margin-bottom: 16px;">
+  <summary style="cursor: pointer; font-size: 13px; color: var(--text-muted);">Private CA</summary>
+  <div class="form-group" style="margin-top: 8px;">
+    <label>CA bundle (PEM) for a host with a private certificate authority</label>
+    <textarea name="conn_ca_pem" class="form-control" rows="4" placeholder="-----BEGIN CERTIFICATE-----" style="font-family: var(--font-mono); font-size: 11px;"></textarea>
+  </div>
+</details>
+{{template "labels-field" "conn_labels"}}
+{{end}}

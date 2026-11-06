@@ -49,6 +49,12 @@
           M365 Tenants
         </a>
         {{end}}
+        {{if index .Can "connections:read"}}
+        <a href="/vcs" class="nav-link {{if eq .ActiveNav "vcs"}}active{{end}}">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 3v12m0 0a3 3 0 103 3m-3-3a3 3 0 013 3m0 0h3a6 6 0 006-6V9m0 0a3 3 0 10-3-3 3 3 0 003 3z"/></svg>
+          Git Connections
+        </a>
+        {{end}}
         {{if index .Can "jobs:read"}}
         <a href="/jobs" class="nav-link {{if eq .ActiveNav "jobs"}}active{{end}}">
           <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>

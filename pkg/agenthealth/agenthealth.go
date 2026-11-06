@@ -50,6 +50,9 @@ type Input struct {
 	// ConnectionURLs maps VCS connection id → base URL, to check that a job's agent
 	// credential profile is for its connection (nil skips that check)
 	ConnectionURLs map[uuid.UUID]string
+	// ConnectionProviders maps VCS connection id → provider, to check that the agent
+	// supports it (nil skips that check)
+	ConnectionProviders map[uuid.UUID]string
 	// ServerVersion is compared with the agent's version ("dev" disables the check)
 	ServerVersion string
 	Now           time.Time
@@ -147,7 +150,7 @@ func Evaluate(in Input) []Alert {
 		if !j.Enabled {
 			continue
 		}
-		if reason := cannotRun(a, summary, j, in.ConnectionURLs); reason != "" {
+		if reason := cannotRun(a, summary, j, in.ConnectionURLs, in.ConnectionProviders); reason != "" {
 			add(LevelDanger, fmt.Sprintf("Job %q cannot run on this agent", j.Name), reason, j)
 		} else if p := vcsProfileOf(summary, j); p != nil && p.TokenExpires != nil && p.TokenExpires.Sub(in.Now) < vcs.ExpiryWarning {
 			add(LevelWarning, fmt.Sprintf("The token of VCS profile %q expires soon", p.Name),
@@ -178,7 +181,7 @@ func rank(l Level) int {
 }
 
 // cannotRun explains why the agent cannot execute the job, or "" when it can
-func cannotRun(a *db.Agent, summary *inventory.Summary, j *db.BackupJob, connectionURLs map[uuid.UUID]string) string {
+func cannotRun(a *db.Agent, summary *inventory.Summary, j *db.BackupJob, connectionURLs, connectionProviders map[uuid.UUID]string) string {
 	jobType, _ := db.NormalizeJobType(j.JobType)
 	if !a.CanRunJob(jobType) {
 		switch jobType {
@@ -195,6 +198,11 @@ func cannotRun(a *db.Agent, summary *inventory.Summary, j *db.BackupJob, connect
 			return fmt.Sprintf("The agent has git %s; VCS jobs need %d.%d or newer.", a.GitVersion, vcs.MinGitMajor, vcs.MinGitMinor)
 		}
 		return fmt.Sprintf("A %s agent cannot run %s jobs.", a.AgentType, jobType)
+	}
+	if jobType == db.JobTypeVCS && j.VCSConfig != nil {
+		if provider, ok := connectionProviders[j.VCSConfig.ConnectionID]; ok && !a.CanRunVCSProvider(provider) {
+			return fmt.Sprintf("The agent does not support %s connections yet; update it.", provider)
+		}
 	}
 	if jobType == db.JobTypeVCS && j.VCSConfig != nil && j.VCSConfig.Profile != "" && summary != nil {
 		name := j.VCSConfig.Profile

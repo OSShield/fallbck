@@ -19,6 +19,7 @@ import (
 	"github.com/osshield/fallbck/pkg/dbbackup"
 	"github.com/osshield/fallbck/pkg/inventory"
 	"github.com/osshield/fallbck/pkg/pbs"
+	"github.com/osshield/fallbck/pkg/vcs"
 )
 
 func TestUIRenderRoutes(t *testing.T) {
@@ -50,7 +51,13 @@ func TestUIRenderRoutes(t *testing.T) {
 		{"/jobs", http.StatusOK, `id="k8s-job-form"`},
 		{"/jobs", http.StatusOK, `<option value="mssql">Microsoft SQL Server</option>`},
 		{"/onboarding", http.StatusOK, `name="ms_backup_dir"`},
-		{"/onboarding", http.StatusOK, `data-value="windows" data-types="files,database,m365"`},
+		{"/onboarding", http.StatusOK, `data-value="windows" data-types="files,database,m365,vcs"`},
+		{"/onboarding", http.StatusOK, `data-kind="backup" data-value="vcs"`},
+		{"/onboarding", http.StatusOK, `id="job-vcs-fields"`},
+		{"/vcs", http.StatusOK, "Git Connections"},
+		{"/vcs", http.StatusOK, `id="connection-form"`},
+		{"/jobs", http.StatusOK, `id="job-vcs-fields"`},
+		{"/jobs", http.StatusOK, `<option value="vcs">Git repositories (GitLab groups`},
 		{"/jobs", http.StatusOK, `href="/onboarding"`},
 		{"/tokens", http.StatusOK, "Show used and expired"},
 		{"/tokens?all=1", http.StatusOK, "Hide used and expired"},
@@ -105,6 +112,40 @@ func TestUIRenderRoutes(t *testing.T) {
 				t.Errorf("Path %s missing CSP header", tc.path)
 			}
 		})
+	}
+}
+
+// The VCS pieces of the jobs page carry what the form logic filters on: the agent's
+// git and providers, the connection's provider
+func TestJobsPageVCS(t *testing.T) {
+	ui := NewUIHandler(nil, config.DefaultServerConfig(), Deps{Version: "test"})
+	agent := &db.Agent{ID: uuid.New(), Hostname: "git1", AgentType: db.AgentTypeFilesystem, OS: "linux", GitVersion: "2.43.0", GitLFS: true, VCSProviders: []string{"git", "gitlab"}}
+	old := &db.Agent{ID: uuid.New(), Hostname: "old1", AgentType: db.AgentTypeFilesystem, OS: "linux", GitVersion: "2.25.1"}
+	conn := &vcs.Connection{ID: uuid.New(), Name: "gitlab", Provider: vcs.ProviderGitLab, BaseURL: "https://gitlab.example.com", HasToken: true}
+	job := &db.BackupJob{ID: uuid.New(), AgentID: agent.ID, Name: "repos", JobType: db.JobTypeVCS, VCSConfig: &vcs.Spec{ConnectionID: conn.ID, Groups: []string{"platform"}}}
+
+	rr := httptest.NewRecorder()
+	ui.renderPage(rr, httptest.NewRequest(http.MethodGet, "/jobs", nil), "jobs.html", map[string]interface{}{
+		"Title": "Backup Jobs", "ActiveNav": "jobs", "Jobs": []*db.BackupJob{job}, "Agents": []*db.Agent{agent, old},
+		"AgentProfiles": agentProfiles([]*db.Agent{agent, old}), "Connections": []*vcs.Connection{conn},
+	})
+	body := rr.Body.String()
+	for _, want := range []string{
+		`data-vcs="true" data-vcs-providers="git,gitlab"`, `data-vcs="false" data-vcs-providers=""`,
+		`data-provider="gitlab" data-name="gitlab" data-url="https://gitlab.example.com" data-token="true"`,
+		`<span class="badge badge-info">Git</span>`, "groups platform",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("jobs page missing %q", want)
+		}
+	}
+
+	rr = httptest.NewRecorder()
+	ui.renderPage(rr, httptest.NewRequest(http.MethodGet, "/agents", nil), "agents.html", map[string]interface{}{"Title": "Agents", "ActiveNav": "agents", "Agents": []*db.Agent{agent, old},
+		"Stale": map[uuid.UUID]bool{}, "Behind": map[uuid.UUID]bool{}})
+	body = rr.Body.String()
+	if !strings.Contains(body, "git 2.43.0 + LFS") || !strings.Contains(body, "providers: git, gitlab") || !strings.Contains(body, "need git 2.31 or newer") {
+		t.Error("agents page lacks the git badges")
 	}
 }
 

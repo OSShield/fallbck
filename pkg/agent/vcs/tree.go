@@ -257,9 +257,7 @@ if [ ! -d "$repo" ]; then
     exit 1
 fi
 
-# Branches and tags. Merge request refs are read-only on GitLab and stay in the backup.
-git --git-dir="$repo" push "$2" '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*'
-
+# LFS objects first: GitLab refuses a push whose LFS objects it does not have yet
 if [ -d "$repo/lfs/objects" ]; then
     if git lfs version >/dev/null 2>&1; then
         git --git-dir="$repo" lfs push --all "$2"
@@ -267,6 +265,9 @@ if [ -d "$repo/lfs/objects" ]; then
         echo "warning: git-lfs is not installed; the LFS objects were not pushed" >&2
     fi
 fi
+
+# Branches and tags. Merge request refs are read-only on GitLab and stay in the backup.
+git --git-dir="$repo" push "$2" '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*'
 
 if [ $# -ge 3 ]; then
     wiki="$here/$1/wiki.git"

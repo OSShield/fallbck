@@ -13,7 +13,6 @@ import (
 	"github.com/osshield/fallbck/pkg/dbbackup"
 	"github.com/osshield/fallbck/pkg/dockerbackup"
 	"github.com/osshield/fallbck/pkg/pvebackup"
-	"github.com/osshield/fallbck/pkg/vcs"
 )
 
 // DBCredentials hands an agent the server-stored database password for a run
@@ -108,10 +107,9 @@ func (s *ServerAPI) validateJob(ctx context.Context, job *db.BackupJob, existing
 			if err := job.VCSConfig.ValidateFor(conn); err != nil {
 				return err.Error(), err
 			}
-			// Agents cannot list GitLab projects yet: a GitLab job could only fail its
-			// precheck. Goes with the GitLab provider.
-			if conn.Provider == vcs.ProviderGitLab {
-				return "GitLab jobs are not supported yet; back up the repositories through a git connection with their URLs", errors.New("gitlab provider not supported yet")
+			// An agent that predates a provider would only fail the job's precheck
+			if agent != nil && agent.CanRunJob(db.JobTypeVCS) && !agent.CanRunVCSProvider(conn.Provider) {
+				return "Agent " + agent.Hostname + " cannot run " + conn.Provider + " jobs yet: update the agent", errors.New("agent without vcs provider")
 			}
 		}
 		if agent != nil && !agent.CanRunJob(db.JobTypeVCS) {

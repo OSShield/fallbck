@@ -18,6 +18,7 @@ import (
 	"github.com/osshield/fallbck/pkg/config"
 	"github.com/osshield/fallbck/pkg/dockerbackup"
 	"github.com/osshield/fallbck/pkg/pvebackup"
+	"github.com/osshield/fallbck/pkg/vcs"
 )
 
 // AgentVersion is reported to the server at enrollment; set by the agent binary
@@ -103,6 +104,7 @@ func Enroll(ctx context.Context, o Options) (*config.AgentConfig, error) {
 		reqBody.DBTools = len(o.DBEngines) > 0 // understood by servers older than db_engines
 		if o.Git != nil {
 			reqBody.GitVersion, reqBody.GitLFS = o.Git()
+			reqBody.VCSProviders = vcs.AgentProviders
 		}
 	}
 

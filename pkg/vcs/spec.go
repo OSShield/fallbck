@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"path"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -25,6 +26,22 @@ const (
 	// ProviderGit mirrors an explicit list of HTTPS repository URLs
 	ProviderGit = "git"
 )
+
+// AgentProviders are the providers this agent build can list repositories of; it
+// reports them to the server, which only gives it jobs of these providers
+var AgentProviders = []string{ProviderGit, ProviderGitLab}
+
+// CleanProviders keeps the known providers of an agent's report, without duplicates
+func CleanProviders(in []string) []string {
+	out := []string{}
+	for _, p := range in {
+		p = strings.ToLower(strings.TrimSpace(p))
+		if (p == ProviderGit || p == ProviderGitLab) && !slices.Contains(out, p) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
 
 // Names inside the snapshot
 const (
@@ -89,10 +106,10 @@ type Spec struct {
 	Concurrency int `json:"concurrency,omitempty"`
 	// BackupID overrides the job's PBS group (default vcs-<connection name>)
 	BackupID string `json:"backup_id,omitempty"`
-	// Profile names agent credential profile holding the token (created with
-	// fallbck-agent vcs profile create). The agent only uses a profile whose URL maqtches
-	// the connection URL, the server never hands out their own token for a
-	// job that names a pårofile. Empty: the connection token.
+	// Profile names the agent credential profile holding the token (created with
+	// fallbck-agent vcs profile create). The agent only uses a profile whose URL matches
+	// the connection URL, and the server never hands out the connection token for a
+	// job that names a profile. Empty: the connection token.
 	Profile string `json:"profile,omitempty"`
 }
 

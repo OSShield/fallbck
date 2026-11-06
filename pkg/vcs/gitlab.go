@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -44,23 +45,10 @@ func TestConnection(ctx context.Context, c Credentials, client *http.Client) (*I
 	if c.Provider != ProviderGitLab {
 		return nil, fmt.Errorf("connection test is only available for GitLab connections")
 	}
-	inst := &Instance{}
-	var version struct {
-		Version string `json:"version"`
-	}
-	if err := gitlabGet(ctx, client, c, "/version", &version); err != nil {
+	inst, err := Identify(ctx, c, client)
+	if err != nil {
 		return nil, err
 	}
-	inst.Version = version.Version
-
-	var user struct {
-		Username string `json:"username"`
-		IsAdmin  bool   `json:"is_admin"`
-	}
-	if err := gitlabGet(ctx, client, c, "/user", &user); err != nil {
-		return nil, err
-	}
-	inst.Username, inst.IsAdmin = user.Username, user.IsAdmin
 
 	var tok struct {
 		Name      string   `json:"name"`
@@ -94,6 +82,28 @@ func TestConnection(ctx context.Context, c Credentials, client *http.Client) (*I
 	if !inst.IsAdmin && !IsGitLabCom(c.BaseURL) {
 		inst.Warnings = append(inst.Warnings, "the token's user is not an administrator: jobs without groups only see the projects "+inst.Username+" is a member of")
 	}
+	return inst, nil
+}
+
+// Identify reads the GitLab version (/version) and the token's user (/user)
+func Identify(ctx context.Context, c Credentials, client *http.Client) (*Instance, error) {
+	inst := &Instance{}
+	var version struct {
+		Version string `json:"version"`
+	}
+	if err := gitlabGet(ctx, client, c, "/version", &version); err != nil {
+		return nil, err
+	}
+	inst.Version = version.Version
+
+	var user struct {
+		Username string `json:"username"`
+		IsAdmin  bool   `json:"is_admin"`
+	}
+	if err := gitlabGet(ctx, client, c, "/user", &user); err != nil {
+		return nil, err
+	}
+	inst.Username, inst.IsAdmin = user.Username, user.IsAdmin
 	return inst, nil
 }
 
@@ -150,25 +160,43 @@ func isStatus(err error, status int) bool {
 
 // gitlabGet reads one /api/v4 resource into out
 func gitlabGet(ctx context.Context, client *http.Client, c Credentials, path string, out any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(c.BaseURL, "/")+"/api/v4"+path, nil)
+	body, _, err := gitlabDo(ctx, client, c, path, nil, 1<<20)
 	if err != nil {
 		return err
-	}
-	req.Header.Set("PRIVATE-TOKEN", c.Token)
-	req.Header.Set("Accept", "application/json")
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("request to %s failed (the caller needs outbound HTTPS to it; check the URL and CA bundle): %w", c.BaseURL, err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode != http.StatusOK {
-		return &statusError{path: path, status: resp.StatusCode, text: gitlabErrorText(body)}
 	}
 	if err := json.Unmarshal(body, out); err != nil {
 		return fmt.Errorf("unexpected answer to %s (is %s a GitLab instance?)", path, c.BaseURL)
 	}
 	return nil
+}
+
+// gitlabDo sends one GET to /api/v4 below the connection URL and returns the body
+// (at most limit bytes) and the response headers. A non-200 answer is a
+// *statusError.
+func gitlabDo(ctx context.Context, client *http.Client, c Credentials, path string, query url.Values, limit int64) ([]byte, http.Header, error) {
+	u := strings.TrimRight(c.BaseURL, "/") + "/api/v4" + path
+	if len(query) > 0 {
+		u += "?" + query.Encode()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	req.Header.Set("PRIVATE-TOKEN", c.Token)
+	req.Header.Set("Accept", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, nil, fmt.Errorf("request to %s failed (the caller needs outbound HTTPS to it; check the URL and CA bundle): %w", c.BaseURL, err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, limit))
+	if resp.StatusCode != http.StatusOK {
+		return nil, nil, &statusError{path: path, status: resp.StatusCode, text: gitlabErrorText(body)}
+	}
+	if err != nil {
+		return nil, nil, fmt.Errorf("reading the answer to %s: %w", path, err)
+	}
+	return body, resp.Header, nil
 }
 
 // gitlabErrorText extracts message / error from a GitLab error body

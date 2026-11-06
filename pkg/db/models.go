@@ -99,6 +99,8 @@ type AgentCapabilities struct {
 	// is installed
 	GitVersion string
 	GitLFS     bool
+	// VCSProviders are the VCS providers the agent can list repositories of
+	VCSProviders []string
 	// Version is the running binary's version (empty keeps the stored one)
 	Version string
 	// SelfUpdate / UpdateError: see Agent
@@ -141,6 +143,16 @@ func (a *Agent) CanRunDBEngine(engine string) bool {
 		return slices.Contains(a.DBEngines, engine)
 	}
 	return a.DBTools && engine != dbbackup.EngineMSSQL
+}
+
+// CanRunVCSProvider reports whether this agent can run VCS jobs of the provider:
+// git for any agent with a recent enough git, other providers only for agents
+// that report them (older agents do not report any)
+func (a *Agent) CanRunVCSProvider(provider string) bool {
+	if !a.CanRunJob(JobTypeVCS) {
+		return false
+	}
+	return provider == vcs.ProviderGit || slices.Contains(a.VCSProviders, provider)
 }
 
 // CanRunJob reports whether this agent may run a job of jobType, including the
@@ -213,6 +225,9 @@ type Agent struct {
 	// vcs.MinGitMajor.MinGitMinor); GitLFS whether git-lfs is installed
 	GitVersion string `json:"git_version" db:"git_version"`
 	GitLFS     bool   `json:"git_lfs" db:"git_lfs"`
+	// VCSProviders are the VCS providers the agent can list repositories of (see
+	// CanRunVCSProvider)
+	VCSProviders []string `json:"vcs_providers" db:"vcs_providers"`
 	// Inventory is the compact summary the agent attaches to a heartbeat every few
 	// minutes (inventory.Summary); InventoryDetail the on-demand full inventory
 	Inventory         json.RawMessage `json:"inventory,omitempty" db:"inventory"`
