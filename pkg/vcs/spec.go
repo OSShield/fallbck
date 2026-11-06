@@ -106,10 +106,10 @@ type Spec struct {
 	Concurrency int `json:"concurrency,omitempty"`
 	// BackupID overrides the job's PBS group (default vcs-<connection name>)
 	BackupID string `json:"backup_id,omitempty"`
-	// Profile names agent credential profile holding the token (created with
-	// fallbck-agent vcs profile create). The agent only uses a profile whose URL maqtches
-	// the connection URL, the server never hands out their own token for a
-	// job that names a pårofile. Empty: the connection token.
+	// Profile names the agent credential profile holding the token (created with
+	// fallbck-agent vcs profile create). The agent only uses a profile whose URL matches
+	// the connection URL, and the server never hands out the connection token for a
+	// job that names a profile. Empty: the connection token.
 	Profile string `json:"profile,omitempty"`
 }
 

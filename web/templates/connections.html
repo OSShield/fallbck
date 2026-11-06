@@ -1,0 +1,66 @@
+{{define "content"}}
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+  <p style="color: var(--text-muted); font-size: 14px;">GitLab instances and git hosts that Git repository jobs read from. A job takes its repositories from one connection.</p>
+</div>
+
+<div class="card">
+  <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+    <h3 class="card-title">Git Connections ({{len .Connections}})</h3>
+    <button class="btn btn-primary btn-sm" data-perm="connections:write" onclick="newConnection()">Add Connection</button>
+  </div>
+  <div class="table-container">
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Provider</th>
+          <th>URL</th>
+          <th>Token</th>
+          <th>Token expires</th>
+          <th>Jobs</th>
+          <th style="text-align: right;">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{if .Connections}}
+          {{range .Connections}}
+          <tr>
+            <td><strong>{{.Name}}</strong><br>{{template "label-chips" .Labels}}</td>
+            <td>{{if eq .Provider "gitlab"}}<span class="badge badge-info">GitLab</span>{{else}}<span class="badge badge-neutral">git</span>{{end}}</td>
+            <td><code style="font-size: 12px;">{{.BaseURL}}</code>{{if .CAPEM}} <span class="badge badge-neutral" title="Uses its own CA bundle">private CA</span>{{end}}</td>
+            <td>{{if .HasToken}}<span class="badge badge-success">stored</span>{{else}}<span class="badge badge-neutral" title="Jobs use an agent credential profile, or the repositories are public">on the agent</span>{{end}}</td>
+            <td>{{if .TokenExpires}}<span class="badge {{if .Expired}}badge-danger{{else if .ExpiringSoon}}badge-warning{{else}}badge-success{{end}}">{{.TokenExpires.Format "2006-01-02"}}</span>{{else}}<span style="color: var(--text-dim);">unknown</span>{{end}}</td>
+            <td>{{.Jobs}}</td>
+            <td style="text-align: right; display: flex; justify-content: flex-end; gap: 8px;">
+              {{if and (eq .Provider "gitlab") .HasToken}}<button class="btn btn-secondary btn-sm" data-perm="connections:write" onclick="testConnection('{{.ID}}', this)">Test</button>{{end}}
+              <button class="btn btn-secondary btn-sm" data-perm="connections:write" onclick="editConnection('{{.ID}}')">Edit</button>
+              <button class="btn btn-secondary btn-sm" data-perm="connections:delete" style="color: var(--danger-text);" {{if .Jobs}}disabled title="Used by {{.Jobs}} job(s)"{{end}} onclick="deleteResource('vcs/connections', '{{.ID}}')">Delete</button>
+            </td>
+          </tr>
+          {{end}}
+        {{else}}
+          <tr><td colspan="7"><div class="empty-state"><p>No git connections yet. A connection is a GitLab instance or git host and, optionally, the token to read it with; Git repository jobs reference it.</p></div></td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div id="modal-connection" class="modal-backdrop">
+  <div class="modal-content" style="max-width: 720px;">
+    <div class="modal-header">
+      <h3 id="connection-modal-title">Add Git Connection</h3>
+      <button class="close-btn" onclick="closeModal('modal-connection')">&times;</button>
+    </div>
+    <form id="connection-form" class="connection-fields" data-connection-id="" onsubmit="submitConnectionForm(event)">
+      <div class="modal-body">
+        {{template "connection-fields" .}}
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('modal-connection')">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save Connection</button>
+      </div>
+    </form>
+  </div>
+</div>
+{{end}}

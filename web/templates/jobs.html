@@ -1,7 +1,7 @@
 {{define "content"}}
 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
   <div>
-    <p style="color: var(--text-muted); font-size: 14px;">Every backup job — files, databases, Proxmox VE and Docker hosts, Microsoft 365 tenants, Kubernetes clusters — with its schedule and last run. New jobs are set up through the onboarding flow; retention is a Proxmox Backup Server prune job.</p>
+    <p style="color: var(--text-muted); font-size: 14px;">Every backup job — files, databases, Proxmox VE and Docker hosts, Microsoft 365 tenants, git repositories, Kubernetes clusters — with its schedule and last run. New jobs are set up through the onboarding flow; retention is a Proxmox Backup Server prune job.</p>
   </div>
   <a class="btn btn-primary" href="/onboarding">
     <svg style="width: 16px; height: 16px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
@@ -22,6 +22,7 @@
       <option value="pve">Proxmox VE host</option>
       <option value="docker">Docker host</option>
       <option value="m365">Microsoft 365</option>
+      <option value="vcs">Git repositories</option>
       <option value="kubernetes">Kubernetes</option>
     </select>
     <select name="f_enabled" class="form-control" aria-label="Filter by state">
@@ -78,6 +79,7 @@
               {{if .IsKubernetes}}<span class="badge badge-info">Kubernetes</span>
               {{else if .IsDocker}}<span class="badge badge-info">Docker host</span>
               {{else if .IsM365}}<span class="badge badge-info">Microsoft 365</span>
+              {{else if .IsVCS}}<span class="badge badge-info">Git</span>
               {{else if .IsPVE}}<span class="badge badge-info">Proxmox VE</span>
               {{else if .IsDatabase}}<span class="badge badge-info">Database</span>
               {{else}}<span class="badge badge-neutral">Files</span>{{end}}
@@ -91,6 +93,8 @@
                 <span style="font-size: 12px; color: var(--text-muted);">{{with .DockerConfig}}{{.Summary}}{{end}}</span>
               {{else if .IsM365}}
                 <span style="font-size: 12px; color: var(--text-muted);">{{with .M365Config}}{{.Summary}}{{end}}</span>
+              {{else if .IsVCS}}
+                <span style="font-size: 12px; color: var(--text-muted);">{{with .VCSConfig}}{{.Summary}}{{end}}</span>
               {{else if .IsPVE}}
                 <code style="display: inline-block; margin-right: 4px; font-size: 12px;">/etc</code>
                 {{with .PVEConfig}}{{range .DataPaths}}<code style="display: inline-block; margin-right: 4px; font-size: 12px;">{{.}}</code>{{end}}{{end}}
@@ -183,6 +187,7 @@
             <option value="pve">Proxmox VE host (configuration, package list, optional data paths; fallbck-agent on the node)</option>
             <option value="docker">Docker host (container, network and volume definitions, compose files, named volumes; fallbck-agent on the host)</option>
             <option value="m365">Microsoft 365 (mailboxes, OneDrive, SharePoint, Teams, Entra ID through Graph; any fallbck-agent with internet access)</option>
+            <option value="vcs">Git repositories (GitLab groups or a list of repository URLs; fallbck-agent with git)</option>
           </select>
         </div>
 
@@ -192,7 +197,7 @@
             <select name="agent_id" class="form-control" required onchange="updateDBTarget()">
               <option value="">-- Choose Agent --</option>
               {{range .Agents}}
-                <option value="{{.ID}}" data-agent-type="{{.AgentType}}" data-pve="{{if .PVEHost}}true{{else}}false{{end}}" data-docker="{{if .DockerHost}}true{{else}}false{{end}}" data-db="{{if .DBTools}}true{{else}}false{{end}}" data-db-engines="{{range $i, $e := .DBEngines}}{{if $i}},{{end}}{{$e}}{{end}}" data-db-profiles="{{index $.AgentProfiles .ID}}" data-hostname="{{.Hostname}}">{{.Hostname}} ({{.OS}}, {{.AgentType}}{{if .PVEHost}}, Proxmox VE{{end}}{{if .DockerHost}}, Docker{{end}}{{if .DBEngines}}, DB: {{range $i, $e := .DBEngines}}{{if $i}}/{{end}}{{$e}}{{end}}{{else if .DBTools}}, DB tools{{end}})</option>
+                <option value="{{.ID}}" data-agent-type="{{.AgentType}}" data-pve="{{if .PVEHost}}true{{else}}false{{end}}" data-docker="{{if .DockerHost}}true{{else}}false{{end}}" data-db="{{if .DBTools}}true{{else}}false{{end}}" data-db-engines="{{range $i, $e := .DBEngines}}{{if $i}},{{end}}{{$e}}{{end}}" data-db-profiles="{{index $.AgentProfiles .ID}}" data-vcs="{{if .CanRunJob "vcs"}}true{{else}}false{{end}}" data-vcs-providers="{{range $i, $p := .VCSProviders}}{{if $i}},{{end}}{{$p}}{{end}}" data-hostname="{{.Hostname}}">{{.Hostname}} ({{.OS}}, {{.AgentType}}{{if .PVEHost}}, Proxmox VE{{end}}{{if .DockerHost}}, Docker{{end}}{{if .DBEngines}}, DB: {{range $i, $e := .DBEngines}}{{if $i}}/{{end}}{{$e}}{{end}}{{else if .DBTools}}, DB tools{{end}}{{if .GitVersion}}, git {{.GitVersion}}{{end}})</option>
               {{end}}
             </select>
           </div>
@@ -211,6 +216,7 @@
         {{template "job-fields-pve" .}}
         {{template "job-fields-docker" .}}
         {{template "job-fields-m365" .}}
+        {{template "job-fields-vcs" .}}
         {{template "job-fields-database" .}}
         {{template "job-schedule" .}}
         {{template "labels-field" "labels"}}

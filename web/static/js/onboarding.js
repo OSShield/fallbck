@@ -9,6 +9,7 @@ const AGENT_WIZARD_TYPES = {
   proxmox:    { label: 'filesystem agent', pkg: 'fallbck-agent',    service: 'fallbck-agent' },
   docker:     { label: 'filesystem agent', pkg: 'fallbck-agent',    service: 'fallbck-agent' },
   m365:       { label: 'filesystem agent', pkg: 'fallbck-agent',    service: 'fallbck-agent' },
+  vcs:        { label: 'filesystem agent', pkg: 'fallbck-agent',    service: 'fallbck-agent' },
   database:   { label: 'database agent',   pkg: 'fallbck-agent',    service: 'fallbck-agent' },
   kubernetes: { label: 'Kubernetes agent' }
 };
@@ -279,9 +280,9 @@ const ob = {
 };
 
 // Capability the onboarding type needs before backups of that kind can be created
-const OB_TYPE_NEEDS = { database: 'db_tools', proxmox: 'pve_host', docker: 'docker_host' };
+const OB_TYPE_NEEDS = { database: 'db_tools', proxmox: 'pve_host', docker: 'docker_host', vcs: 'git_version' };
 // Default backup type per onboarding type
-const OB_TYPE_BACKUP = { files: 'filesystem', database: 'database', proxmox: 'pve', docker: 'docker', m365: 'm365', kubernetes: 'kubernetes' };
+const OB_TYPE_BACKUP = { files: 'filesystem', database: 'database', proxmox: 'pve', docker: 'docker', m365: 'm365', vcs: 'vcs', kubernetes: 'kubernetes' };
 
 document.addEventListener('DOMContentLoaded', obInit);
 
@@ -615,6 +616,7 @@ function obAgentCaps(a) {
   if (a.docker_host) caps.push('Docker');
   if ((a.db_engines || []).length) caps.push('DB: ' + a.db_engines.join(', '));
   else if (a.db_tools) caps.push('DB tools');
+  if (a.git_version) caps.push('git ' + a.git_version + (a.git_lfs ? ' + LFS' : ''));
   return caps;
 }
 
@@ -639,7 +641,7 @@ function obShowAgentCard() {
     const w = document.createElement('div');
     w.className = 'wizard-note';
     w.style.marginTop = '6px';
-    w.innerHTML = '<span class="ob-spinner"></span>Waiting for the agent to report ' + { db_tools: 'the database client tools', pve_host: 'that it runs on a Proxmox VE node', docker_host: 'a reachable Docker daemon' }[need] + ' (first heartbeat of the service)…';
+    w.innerHTML = '<span class="ob-spinner"></span>Waiting for the agent to report ' + { db_tools: 'the database client tools', pve_host: 'that it runs on a Proxmox VE node', docker_host: 'a reachable Docker daemon', git_version: 'git (install git, and git-lfs for LFS repositories)' }[need] + ' (first heartbeat of the service)…';
     card.appendChild(w);
   }
   card.hidden = false;
@@ -666,6 +668,7 @@ function obBackupAvailable(kind) {
     case 'pve': return t === 'filesystem' && a.pve_host;
     case 'docker': return t === 'filesystem' && a.docker_host;
     case 'm365': return t === 'filesystem'; // any agent with internet access
+    case 'vcs': return t === 'filesystem' && gitVersionOK(a.git_version);
     case 'kubernetes': return t === 'kubernetes';
   }
   return false;
@@ -690,7 +693,7 @@ async function obRenderBackupTypes() {
   }
   obMarkSelected('backup', ob.backupType);
   const note = document.getElementById('ob-backup-note');
-  const explain = { database: 'Database: install pg_dump / mariadb-dump / mongodump on the host; the agent reports them within a minute.', pve: 'Proxmox VE host: only for agents on a PVE node.', docker: 'Docker host: only for agents that can reach a Docker daemon.' };
+  const explain = { database: 'Database: install pg_dump / mariadb-dump / mongodump on the host; the agent reports them within a minute.', pve: 'Proxmox VE host: only for agents on a PVE node.', docker: 'Docker host: only for agents that can reach a Docker daemon.', vcs: 'Git repositories: install git 2.31 or newer (and git-lfs) on the host; the agent reports it within a minute.' };
   const lines = missing.map(m => explain[m]).filter(Boolean);
   note.innerText = lines.length ? 'Not offered for this agent yet: ' + lines.join(' ') : '';
   note.hidden = !lines.length;
@@ -815,8 +818,20 @@ function obRenderDetails() {
   }
   if (!form.elements['name'].value) {
     const label = { filesystem: 'files', database: 'databases', pve: 'PVE host', docker: 'Docker host', m365: 'Microsoft 365', kubernetes: 'cluster' }[ob.backupType] || 'backup';
-    form.elements['name'].value = ob.backupType === 'm365' ? 'Microsoft 365' : `${a.hostname || 'host'} ${label}`;
+    form.elements['name'].value = ob.backupType === 'm365' ? 'Microsoft 365' : ob.backupType === 'vcs' ? 'Git repositories' : `${a.hostname || 'host'} ${label}`;
   }
+}
+
+// obVCSAgentNote warns when the fixed agent cannot run the selected connection's
+// provider (an agent older than the provider): the server would refuse the job
+function obVCSAgentNote(form) {
+  const note = document.getElementById('ob-vcs-agent-note');
+  if (!note || form.id !== 'job-form') return;
+  const a = ob.agent || {};
+  const provider = vcsProvider(form);
+  const bad = ob.backupType === 'vcs' && provider && !agentRunsVCS(gitVersionOK(a.git_version), a.vcs_providers || [], provider);
+  note.innerText = bad ? `${a.hostname || 'This agent'} cannot run ${provider === 'gitlab' ? 'GitLab' : provider} jobs yet: update the agent, or pick a plain git connection.` : '';
+  note.hidden = !bad;
 }
 
 // obLimitEngines offers only the engines the fixed agent can back up: the ones a
@@ -850,7 +865,7 @@ function obRenderReview() {
   const target = obTargetCards().find(c => c.dataset.value === ob.targetId);
   const rows = [
     ['Agent', (ob.agent || {}).hostname || ob.agentId],
-    ['Backup type', { filesystem: 'Files', database: 'Database', pve: 'Proxmox VE host', docker: 'Docker host', m365: 'Microsoft 365 tenant', kubernetes: 'Kubernetes cluster' }[p.job_type] || p.job_type],
+    ['Backup type', { filesystem: 'Files', database: 'Database', pve: 'Proxmox VE host', docker: 'Docker host', m365: 'Microsoft 365 tenant', vcs: 'Git repositories', kubernetes: 'Kubernetes cluster' }[p.job_type] || p.job_type],
     ['Job name', p.name],
     ['Target', target ? `${target.dataset.name} (${target.dataset.datastore}${target.dataset.namespace ? ', ' + target.dataset.namespace : ''})` : ob.targetId, ob.targetAutoPicked ? 'change' : ''],
   ];
@@ -866,6 +881,16 @@ function obRenderReview() {
     const wl = Object.keys(mc.workloads).filter(k => mc.workloads[k]);
     rows.push(['Tenant', tenant || '-'], ['Workloads', wl.join(', ') || 'none'],
       ['Users', mc.users.groups.length ? 'members of ' + mc.users.groups.join(', ') : (mc.users.include.length ? mc.users.include.join(', ') : 'all licensed' + (mc.users.shared ? ' + shared mailboxes' : ''))]);
+  }
+  if (p.job_type === 'vcs') {
+    const vc = p.vcs_config;
+    const sel = document.getElementById('job-form').elements['vcs_connection_id'];
+    const opt = sel && sel.selectedOptions[0];
+    rows.push(['Connection', opt && opt.value ? `${opt.dataset.name} (${opt.dataset.url})` : '-']);
+    if (vc.repositories) rows.push(['Repositories', vc.repositories.join(', ') || 'none']);
+    else rows.push(['Groups', (vc.groups || []).length ? vc.groups.join(', ') + (vc.include_subgroups ? ' and subgroups' : '') : 'every project the token can see'],
+      ['Excludes', (vc.exclude || []).join(', ') || '-']);
+    rows.push(['Token', vc.profile ? `agent credential profile ${vc.profile}` : (opt && opt.dataset.token === 'true' ? 'the connection token' : 'none (public repositories)')]);
   }
   if (p.job_type === 'kubernetes') rows.push(['Volumes', p.k8s_config.volumes.mode], ['Namespaces', (p.k8s_config.namespaces.include || []).join(', ') || 'all']);
   rows.push(['Schedule', p.schedule_cron ? `${p.schedule_cron} (${document.getElementById('onboarding').dataset.timezone})` : 'manual only'],

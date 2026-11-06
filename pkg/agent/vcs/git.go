@@ -101,8 +101,9 @@ func basicCredentials(user, token string) string {
 // env is the complete environment of every git process: nothing inherited from the
 // agent but PATH, HOME, temp and proxy settings; no system or global git config, no
 // credential helpers, no prompts; https only (no file::, ext:: or ssh); and the
-// connection's header and CA bundle scoped to its URL
-func (g *Git) env() []string {
+// connection's header and CA bundle scoped to its URL. headerScope narrows the
+// header to a URL below the connection's ("" = the whole connection URL).
+func (g *Git) env(headerScope string) []string {
 	env := []string{"LANG=C", "LC_ALL=C", "TZ=UTC",
 		"GIT_TERMINAL_PROMPT=0", "GCM_INTERACTIVE=never", "GIT_ASKPASS=", "SSH_ASKPASS=",
 		"GIT_ALLOW_PROTOCOL=https",
@@ -121,7 +122,11 @@ func (g *Git) env() []string {
 		{"lfs.locksverify", "false"},
 	}
 	if g.auth.Token != "" && g.auth.BaseURL != "" {
-		cfg = append(cfg, [2]string{"http." + g.auth.BaseURL + "/.extraHeader", "Authorization: Basic " + basicCredentials(g.auth.Username, g.auth.Token)})
+		scope := g.auth.BaseURL
+		if strings.HasPrefix(headerScope, g.auth.BaseURL+"/") {
+			scope = strings.TrimRight(headerScope, "/")
+		}
+		cfg = append(cfg, [2]string{"http." + scope + "/.extraHeader", "Authorization: Basic " + basicCredentials(g.auth.Username, g.auth.Token)})
 	}
 	if g.caFile != "" && g.auth.BaseURL != "" {
 		cfg = append(cfg, [2]string{"http." + g.auth.BaseURL + "/.sslCAInfo", g.caFile})
@@ -182,9 +187,14 @@ func hintFor(stderr string) string {
 // progress, when set, gets every stderr line (git's --progress outputends lines with \r).
 // The returned error has the redacted stderr tail.
 func (g *Git) run(ctx context.Context, dir string, stdout io.Writer, progress func(string), args ...string) error {
+	return g.runScoped(ctx, dir, "", stdout, progress, args...)
+}
+
+// runScoped is run with the token header limited to headerScope (see env)
+func (g *Git) runScoped(ctx context.Context, dir, headerScope string, stdout io.Writer, progress func(string), args ...string) error {
 	cmd := exec.CommandContext(ctx, g.Path, args...)
 	cmd.Dir = dir
-	cmd.Env = g.env()
+	cmd.Env = g.env(headerScope)
 	cmd.Stdout = stdout
 	stderr := &lineWriter{limit: 64 << 10, secrets: g.secrets, onLine: progress}
 	cmd.Stderr = stderr

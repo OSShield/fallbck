@@ -277,6 +277,27 @@ func TestMirrorOnlyHTTPS(t *testing.T) {
 	}
 }
 
+// git lfs gets the token for the repository's LFS API only: GitLab answers with its
+// own Authorization header for each download, and two headers are refused
+func TestGitEnvironmentLFSScope(t *testing.T) {
+	g, err := NewGit("/usr/bin/git", Auth{BaseURL: "https://gitlab.example.com", Token: testToken}, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer g.Close()
+	for url, key := range map[string]string{
+		"https://gitlab.example.com/team/app.git": "http.https://gitlab.example.com/team/app.git/info/lfs/.extraHeader",
+		"https://gitlab.example.com/team/app":     "http.https://gitlab.example.com/team/app.git/info/lfs/.extraHeader",
+		// Never wider than, or outside, the connection URL
+		"https://elsewhere.example.com/app.git": "http.https://gitlab.example.com/.extraHeader",
+	} {
+		env := strings.Join(g.env(lfsEndpoint(url)), "\n")
+		if !strings.Contains(env, "="+key+"\n") {
+			t.Errorf("%s: environment lacks %s:\n%s", url, key, env)
+		}
+	}
+}
+
 func TestGitEnvironment(t *testing.T) {
 	t.Setenv("FALLBCK_AGENT_SECRET", "must-not-leak")
 	t.Setenv("GIT_DIR", "/elsewhere")
@@ -285,7 +306,7 @@ func TestGitEnvironment(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer g.Close()
-	env := strings.Join(g.env(), "\n")
+	env := strings.Join(g.env(""), "\n")
 	for _, want := range []string{
 		"GIT_ALLOW_PROTOCOL=https", "GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_NOSYSTEM=1",
 		"GIT_CONFIG_KEY_2=http.https://gitlab.example.com/.extraHeader",

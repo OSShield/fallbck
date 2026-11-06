@@ -160,7 +160,21 @@ func (m *Mirror) create(ctx context.Context) error {
 // lfs/objects (a repository without LFS pointers costs a history scan and no
 // requests)
 func (m *Mirror) FetchLFS(ctx context.Context, progress func(string)) error {
-	return m.git.run(ctx, m.Dir, nil, progress, "lfs", "fetch", "--all", "origin")
+	// The token goes to the repository's LFS API only. Its batch answer carries the
+	// credentials for each download (GitLab and Gitea an Authorization header,
+	// others signed URLs); sending ours as well makes GitLab refuse the download
+	// with 400 (two Authorization headers).
+	return m.git.runScoped(ctx, m.Dir, lfsEndpoint(m.URL), nil, progress, "lfs", "fetch", "--all", "origin")
+}
+
+// lfsEndpoint is the LFS API git-lfs derives from a remote URL: <url>/info/lfs,
+// with .git appended to the URL when it lacks it
+func lfsEndpoint(url string) string {
+	url = strings.TrimRight(url, "/")
+	if !strings.HasSuffix(url, ".git") {
+		url += ".git"
+	}
+	return url + "/info/lfs"
 }
 
 // LocalRefs lists the mirror's selected refs and their digest (comparable with

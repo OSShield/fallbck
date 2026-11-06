@@ -625,18 +625,21 @@ function setJobTypeIn(form, type) {
   const isPVE = type === 'pve';
   const isDocker = type === 'docker';
   const isM365 = type === 'm365';
+  const isVCS = type === 'vcs';
   const isK8s = type === 'kubernetes'; // cluster jobs: only the onboarding form carries that fieldset
   const show = (id, on) => {
     const el = form.querySelector('#' + id);
     if (el) { el.hidden = !on; el.disabled = !on; }
   };
-  show('job-fs-fields', !isDB && !isPVE && !isDocker && !isK8s && !isM365);
+  show('job-fs-fields', !isDB && !isPVE && !isDocker && !isK8s && !isM365 && !isVCS);
   show('job-db-fields', isDB);
   show('job-pve-fields', isPVE);
   show('job-docker-fields', isDocker);
   show('job-m365-fields', isM365);
+  show('job-vcs-fields', isVCS);
   show('job-k8s-fields', isK8s);
-  show('job-backup-group', !isDB && !isM365); // those two carry the group in their own config
+  show('job-backup-group', !isDB && !isM365 && !isVCS); // those carry the group in their own config
+  if (isVCS) updateVCSProvider(form);
   filterJobAgents(form, type);
   if (form.elements['db_engine']) setDBEngine(form.elements['db_engine'].value, form);
   else updateDBTarget(form);
@@ -664,10 +667,89 @@ function filterJobAgents(form, type) {
     if (type === 'pve') match = agentType === 'filesystem' && opt.dataset.pve === 'true';
     if (type === 'docker') match = agentType === 'filesystem' && opt.dataset.docker === 'true';
     if (type === 'm365') match = agentType === 'filesystem'; // any agent with internet access
+    if (type === 'vcs') match = agentType === 'filesystem' && agentRunsVCS(opt.dataset.vcs === 'true', opt.dataset.vcsProviders, vcsProvider(form));
     opt.hidden = !match; opt.disabled = !match;
     if (match && opt.selected) keep = true;
   }
   if (!keep) sel.value = '';
+}
+
+// ---- Git repository (VCS) jobs ----
+
+// vcsProvider is the provider of the connection selected in a job form ('' = none)
+function vcsProvider(form) {
+  const sel = form.elements['vcs_connection_id'];
+  const opt = sel && sel.selectedOptions[0];
+  return opt && opt.value ? opt.dataset.provider || '' : '';
+}
+
+// agentRunsVCS mirrors db.Agent.CanRunVCSProvider: git jobs need a recent enough
+// git, other providers an agent that reports them (older agents report none)
+function agentRunsVCS(hasGit, providers, provider) {
+  if (!hasGit) return false;
+  if (!provider || provider === 'git') return true;
+  const list = Array.isArray(providers) ? providers : (providers || '').split(',').filter(Boolean);
+  return list.includes(provider);
+}
+
+// gitVersionOK mirrors vcs.GitVersionOK (2.31 or newer) for agents loaded from the API
+function gitVersionOK(v) {
+  const m = /^(\d+)\.(\d+)/.exec(v || '');
+  if (!m) return false;
+  const major = parseInt(m[1]), minor = parseInt(m[2]);
+  return major > 2 || (major === 2 && minor >= 31);
+}
+
+// updateVCSProvider shows the GitLab or the plain-git fields for the selected
+// connection and limits the agents to those that can run it
+function updateVCSProvider(form) {
+  const git = vcsProvider(form) === 'git';
+  form.querySelectorAll('.vcs-gitlab-opts').forEach(el => { el.hidden = git; });
+  form.querySelectorAll('.vcs-git-opts').forEach(el => { el.hidden = !git; });
+  const typeEl = form.elements['job_type'];
+  if ((typeEl ? typeEl.value : form.dataset.jobType) === 'vcs') filterJobAgents(form, 'vcs');
+  if (typeof obVCSAgentNote === 'function') obVCSAgentNote(form);
+}
+
+function loadVCSIntoForm(form, vc) {
+  const wl = vc.workloads || {};
+  form.elements['vcs_connection_id'].value = vc.connection_id || '';
+  form.elements['vcs_groups'].value = (vc.groups || []).join('\n');
+  form.elements['vcs_exclude'].value = (vc.exclude || []).join('\n');
+  form.elements['vcs_repositories'].value = (vc.repositories || []).join('\n');
+  form.elements['vcs_include_subgroups'].checked = vc.include_subgroups !== false;
+  form.elements['vcs_archived'].checked = vc.archived !== false;
+  form.elements['vcs_forks'].checked = vc.forks !== false;
+  form.elements['vcs_wl_lfs'].checked = wl.lfs !== false;
+  form.elements['vcs_wl_wiki'].checked = wl.wiki !== false;
+  form.elements['vcs_max_repo_size_gb'].value = vc.max_repo_size ? parseFloat((vc.max_repo_size / 2 ** 30).toFixed(2)) : '';
+  form.elements['vcs_concurrency'].value = vc.concurrency || '';
+  form.elements['vcs_profile'].value = vc.profile || '';
+  form.elements['vcs_backup_id'].value = vc.backup_id || '';
+}
+
+function buildVCSConfig(form, fd) {
+  const on = (name) => fd.get(name) === 'on';
+  const gitlab = vcsProvider(form) !== 'git';
+  const gb = parseFloat(fd.get('vcs_max_repo_size_gb') || '0') || 0;
+  const vc = {
+    connection_id: fd.get('vcs_connection_id') || '',
+    workloads: { lfs: on('vcs_wl_lfs'), wiki: gitlab && on('vcs_wl_wiki') },
+    concurrency: parseInt(fd.get('vcs_concurrency') || '0') || 0,
+    profile: (fd.get('vcs_profile') || '').trim(),
+    backup_id: (fd.get('vcs_backup_id') || '').trim()
+  };
+  if (gitlab) {
+    vc.groups = formLines(fd, 'vcs_groups');
+    vc.exclude = formLines(fd, 'vcs_exclude');
+    vc.include_subgroups = on('vcs_include_subgroups');
+    vc.archived = on('vcs_archived');
+    vc.forks = on('vcs_forks');
+    vc.max_repo_size = Math.round(gb * 2 ** 30);
+  } else {
+    vc.repositories = formLines(fd, 'vcs_repositories');
+  }
+  return vc;
 }
 
 // selectedAgentIsK8s: from the agent select, or from data-agent-type when the form
@@ -805,6 +887,7 @@ function loadJobIntoForm(form, job) {
     form.elements['m365_concurrency'].value = mc.concurrency || '';
     form.elements['m365_backup_id'].value = mc.backup_id || '';
   }
+  if (jobType === 'vcs') loadVCSIntoForm(form, job.vcs_config || {});
   if (jobType === 'database' && job.db_config) {
     const dc = job.db_config;
     form.elements['db_engine'].value = dc.engine || 'postgres';
@@ -918,6 +1001,12 @@ function buildJobPayload(form) {
       concurrency: parseInt(fd.get('m365_concurrency') || '0') || 0,
       backup_id: (fd.get('m365_backup_id') || '').trim()
     };
+  }
+
+  if (payload.job_type === 'vcs') {
+    payload.backup_paths = [];
+    payload.exclude_paths = [];
+    payload.vcs_config = buildVCSConfig(form, fd);
   }
 
   if (payload.job_type === 'database') {
@@ -1428,7 +1517,7 @@ function renderRun(run) {
   }
   const d = run.details || {};
   const type = d.type || 'filesystem';
-  const typeLabel = { filesystem: 'Filesystem', database: 'Database', kubernetes: 'Kubernetes', pve: 'Proxmox VE host', docker: 'Docker host', m365: 'Microsoft 365' }[type] || type;
+  const typeLabel = { filesystem: 'Filesystem', database: 'Database', kubernetes: 'Kubernetes', pve: 'Proxmox VE host', docker: 'Docker host', m365: 'Microsoft 365', vcs: 'Git repositories' }[type] || type;
 
   const active = RUN_ACTIVE.includes(run.status);
   let html = '';
@@ -1457,7 +1546,7 @@ function renderRun(run) {
   // Live progress while running; after a failed or cancelled run, the last reported
   // per-item statuses are what remains when the agent never produced a detail blob
   const m = d.manifest || {};
-  const hasItemDetail = (m.volumes && m.volumes.length) || (m.databases && m.databases.length) || (m.units && m.units.length) || d.archives;
+  const hasItemDetail = (m.volumes && m.volumes.length) || (m.databases && m.databases.length) || (m.units && m.units.length) || (m.repositories && m.repositories.length) || d.archives;
   const items = run.progress && run.progress.items ? Object.keys(run.progress.items).length : 0;
   if (active && run.progress) html += renderProgress(run.progress);
   else if (!active && items && !hasItemDetail) html += renderProgress(run.progress, true);
@@ -1467,6 +1556,7 @@ function renderRun(run) {
   else if (type === 'pve') html += renderPVEDetail(d.manifest || {});
   else if (type === 'docker') html += renderDockerDetail(d.manifest || {});
   else if (type === 'm365') html += renderM365Detail(d.manifest || {});
+  else if (type === 'vcs') html += renderVCSDetail(d.manifest || {});
   else if (d.archives || d.paths) html += renderFsDetail(d);
 
   if (run.log_tail) html += rdCard('Agent log (captured at the run)', rdPre(run.log_tail));
@@ -1678,6 +1768,49 @@ function renderM365Detail(m) {
   return html;
 }
 
+// Git repositories: the source, one row per repository, warnings and the restore
+// notes
+function renderVCSDetail(m) {
+  let html = '';
+  const src = m.source || {}, gen = m.generator || {}, t = m.totals || {};
+  const repos = m.repositories || [];
+  const gitlab = src.provider === 'gitlab';
+  const sourceRows = [
+    ['Source', `${rdEsc(gitlab ? 'GitLab' : 'git')} ${rdMono(src.base_url || '-')}` + (src.version ? ` <span style="color:var(--text-muted);font-size:12px;">${rdEsc(src.version)}</span>` : '')],
+  ];
+  if (src.username) sourceRows.push(['Token of', rdEsc(src.username) + (src.is_admin ? ' (administrator)' : '')]);
+  sourceRows.push(
+    ['Repositories', `${t.repositories || 0} (${t.completed || 0} completed, ${t.stale || 0} stale, ${t.failed || 0} failed, ${t.skipped || 0} skipped)`],
+    ['Mirrors', rdBytes(t.bytes)],
+    ['git on the agent', rdEsc([gen.git_version, gen.lfs_version ? gen.lfs_version.split(' ')[0] : 'no git-lfs'].filter(Boolean).join(', ') || '-')],
+    ['Group', rdMono((m.job || {}).group || '-')],
+  );
+  html += rdCard('Git repositories', rdKV(sourceRows));
+  if (repos.length) {
+    const statusOf = s => s === 'stale' ? 'partial' : s === 'skipped' ? 'cancelled' : s;
+    const rows = repos.map(r => {
+      const flags = [r.wiki ? 'wiki' : '', r.archived ? 'archived' : '', r.fork ? 'fork' : ''].filter(Boolean).join(', ');
+      const label = r.status === 'stale' ? 'Stale' : r.status === 'skipped' ? 'Skipped' : '';
+      const status = label ? `<span class="badge ${r.status === 'stale' ? 'badge-warning' : 'badge-neutral'}"><span class="badge-dot"></span> ${label}</span>` : rdStatus(statusOf(r.status));
+      const notes = [r.error, ...(r.warnings || [])].filter(Boolean).map(n => rdEsc(n.split('\n')[0].slice(0, 200)));
+      if (r.status === 'stale' && r.last_fetched) notes.unshift('last fetched ' + rdEsc(new Date(r.last_fetched).toLocaleString()));
+      return [
+        rdMono(r.path), status, r.changed ? 'changed' : 'unchanged', String(r.refs || 0),
+        rdBytes(r.bytes) + (r.lfs_bytes ? ` <span style="color:var(--text-muted);font-size:12px;">+ ${rdBytes(r.lfs_bytes)} LFS</span>` : ''),
+        rdEsc(flags) || '-', notes.join('<br>') || '-',
+      ];
+    });
+    html += rdCard(`Repositories (${repos.length})`, rdTable(['Path', 'Status', 'Fetch', 'Refs', 'Size', 'Includes', 'Notes'], rows));
+  }
+  if (m.warnings && m.warnings.length) html += rdCard('Warnings', '<ul style="margin:0 0 0 18px;font-size:13px;">' + m.warnings.map(w => `<li>${rdEsc(w)}</li>`).join('') + '</ul>');
+  if (m.restore) {
+    const r = m.restore;
+    const cmds = [r.restore, r.push].filter(Boolean);
+    html += rdCard('Restore', (cmds.length ? rdPre(cmds.join('\n')) : '') + (r.readme ? `<p style="font-size:13px;margin-top:8px;">Full instructions: ${rdEsc(r.readme)}.</p>` : ''));
+  }
+  return html;
+}
+
 function renderK8sDetail(m) {
   const k = m.kubernetes || {};
   const res = m.resources || {};
@@ -1870,3 +2003,121 @@ async function testTenant(id, btn) {
   }
 }
 
+
+// ===== Git (VCS) connections ===================================================
+// The connection fields live in the Git Connections page modal (class
+// connection-fields).
+
+function connectionForm() { return document.getElementById('connection-form'); }
+function connField(form, name) { return form.querySelector(`[name="${name}"]`); }
+
+function updateConnectionProvider(form) {
+  const git = connField(form, 'conn_provider').value === 'git';
+  form.querySelectorAll('.conn-gitlab-opts').forEach(el => { el.hidden = git; });
+  form.querySelectorAll('.conn-git-opts').forEach(el => { el.hidden = !git; });
+  connField(form, 'conn_base_url').placeholder = git ? 'https://git.example.com/team' : 'https://gitlab.example.com';
+}
+
+function resetConnectionFields(form) {
+  form.reset();
+  form.dataset.connectionId = '';
+  connField(form, 'conn_token').placeholder = '';
+  form.querySelector('.conn-clear-token').hidden = true;
+  connField(form, 'conn_provider').disabled = false;
+  updateConnectionProvider(form);
+}
+
+function newConnection() {
+  const form = connectionForm();
+  resetConnectionFields(form);
+  document.getElementById('connection-modal-title').innerText = 'Add Git Connection';
+  openModal('modal-connection');
+}
+
+async function editConnection(id) {
+  try {
+    const resp = await apiFetch(`/api/v1/vcs/connections/${id}`);
+    if (!resp.ok) throw new Error('Failed to load connection');
+    const c = await resp.json();
+    const form = connectionForm();
+    resetConnectionFields(form);
+    form.dataset.connectionId = id;
+    connField(form, 'conn_name').value = c.name || '';
+    connField(form, 'conn_provider').value = c.provider || 'gitlab';
+    // The API refuses a provider change while jobs use the connection
+    connField(form, 'conn_provider').disabled = (c.jobs || 0) > 0;
+    connField(form, 'conn_base_url').value = c.base_url || '';
+    connField(form, 'conn_ca_pem').value = c.ca_pem || '';
+    if (c.token_expires) connField(form, 'conn_token_expires').value = c.token_expires.slice(0, 10);
+    if (c.has_token) {
+      connField(form, 'conn_token').placeholder = 'leave blank to keep the stored token';
+      form.querySelector('.conn-clear-token').hidden = false;
+    }
+    setFormLabels(form, c.labels, 'conn_labels');
+    updateConnectionProvider(form);
+    document.getElementById('connection-modal-title').innerText = 'Edit Git Connection';
+    openModal('modal-connection');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+function buildConnectionPayload(form) {
+  const v = (name) => (connField(form, name).value || '').trim();
+  const p = {
+    name: v('conn_name'), provider: connField(form, 'conn_provider').value, base_url: v('conn_base_url'),
+    token: connField(form, 'conn_token').value || '', ca_pem: v('conn_ca_pem'),
+    clear_token: connField(form, 'conn_clear_token').checked,
+    labels: formLabels(form, 'conn_labels')
+  };
+  const exp = v('conn_token_expires');
+  if (exp) p.token_expires = new Date(exp + 'T00:00:00Z').toISOString();
+  return p;
+}
+
+async function submitConnectionForm(e) {
+  e.preventDefault();
+  const form = e.target;
+  const id = form.dataset.connectionId || '';
+  try {
+    const resp = await apiFetch(id ? `/api/v1/vcs/connections/${id}` : '/api/v1/vcs/connections', {
+      method: id ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(buildConnectionPayload(form))
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.error || 'Failed to save connection');
+    showToast(`Connection ${data.name || ''} saved`, 'success');
+    closeModal('modal-connection');
+    setTimeout(() => window.location.reload(), 600);
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+// testConnection asks the server to check a GitLab token: version, user, scopes and
+// expiry (stored, so the list shows it after the reload)
+async function testConnection(id, btn) {
+  if (btn) { btn.disabled = true; btn.innerText = 'Testing…'; }
+  try {
+    const resp = await apiFetch(`/api/v1/vcs/connections/${id}/test`, { method: 'POST' });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.error || 'Test failed');
+    const inst = data.instance || {};
+    if (!data.ok) {
+      showToast(data.error || 'Test failed', 'error');
+    } else if (!data.tested) {
+      showToast(data.message || 'Nothing to test', 'info');
+    } else {
+      const who = inst.username ? `, token of ${inst.username}${inst.is_admin ? ' (administrator)' : ''}` : '';
+      const scopes = (inst.scopes || []).length ? `; scopes ${inst.scopes.join(', ')}` : '';
+      showToast(`Connected: GitLab ${inst.version || ''}${who}${scopes}`, 'success');
+    }
+    (inst.warnings || []).forEach(w => showToast(w, 'warning'));
+    if (data.tested && inst.token_expires) setTimeout(() => window.location.reload(), 2500);
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerText = 'Test'; }
+  }
+}

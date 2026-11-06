@@ -22,6 +22,7 @@ import (
 	"github.com/osshield/fallbck/pkg/db"
 	"github.com/osshield/fallbck/pkg/m365"
 	temporalui "github.com/osshield/fallbck/pkg/temporal/ui"
+	"github.com/osshield/fallbck/pkg/vcs"
 )
 
 // Deps are the collaborators the UI needs beyond the database and config
@@ -105,6 +106,7 @@ func (u *UIHandler) RegisterRoutes(r chi.Router) {
 		r.With(need(auth.PermAgentsEnroll)).Get("/onboarding", u.HandleOnboarding)
 		r.With(need(auth.PermTargetsRead)).Get("/targets", u.HandleTargets)
 		r.With(need(auth.PermTenantsRead)).Get("/tenants", u.HandleTenants)
+		r.With(need(auth.PermConnectionsRead)).Get("/vcs", u.HandleConnections)
 		r.With(need(auth.PermJobsRead)).Get("/jobs", u.HandleJobs)
 		r.With(need(auth.PermJobsRead)).Get("/kubernetes", u.HandleKubernetes)
 		r.With(need(auth.PermJobsRead)).Get("/runs", u.HandleRuns)
@@ -627,18 +629,21 @@ func (u *UIHandler) HandleOnboarding(w http.ResponseWriter, r *http.Request) {
 	var agents []*db.Agent
 	var targets []*db.BackupTarget
 	var tenants []*m365.Tenant
+	var connections []*vcs.Connection
 	if u.DB != nil {
 		agents, _ = u.DB.ListAgents(ctx, scope(r, auth.PermAgentsRead))
 		targets, _ = u.DB.ListTargets(ctx, scope(r, auth.PermTargetsRead))
 		tenants, _ = u.DB.ListTenants(ctx, scope(r, auth.PermTenantsRead))
+		connections, _ = u.DB.ListConnections(ctx, scope(r, auth.PermConnectionsRead))
 	}
 	u.renderPage(w, r, "onboarding.html", map[string]interface{}{
-		"Title":     "Set up a new server",
-		"ActiveNav": "onboarding",
-		"Timezone":  u.timezone(),
-		"Agents":    agents,
-		"Targets":   targets,
-		"Tenants":   tenants,
+		"Title":       "Set up a new server",
+		"ActiveNav":   "onboarding",
+		"Timezone":    u.timezone(),
+		"Agents":      agents,
+		"Targets":     targets,
+		"Tenants":     tenants,
+		"Connections": connections,
 	})
 }
 
@@ -668,18 +673,34 @@ func (u *UIHandler) HandleTenants(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// HandleConnections lists the VCS connections (GitLab instances and git hosts) VCS
+// jobs read their repositories through
+func (u *UIHandler) HandleConnections(w http.ResponseWriter, r *http.Request) {
+	var connections []*vcs.Connection
+	if u.DB != nil {
+		connections, _ = u.DB.ListConnections(r.Context(), scope(r, auth.PermConnectionsRead))
+	}
+	u.renderPage(w, r, "connections.html", map[string]interface{}{
+		"Title":       "Git Connections",
+		"ActiveNav":   "vcs",
+		"Connections": connections,
+	})
+}
+
 func (u *UIHandler) HandleJobs(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var jobs []*db.BackupJob
 	var agents []*db.Agent
 	var targets []*db.BackupTarget
 	var tenants []*m365.Tenant
+	var connections []*vcs.Connection
 
 	if u.DB != nil {
 		jobs, _ = u.DB.ListJobs(ctx, scope(r, auth.PermJobsRead))
 		agents, _ = u.DB.ListAgents(ctx, scope(r, auth.PermAgentsRead))
 		targets, _ = u.DB.ListTargets(ctx, scope(r, auth.PermTargetsRead))
 		tenants, _ = u.DB.ListTenants(ctx, scope(r, auth.PermTenantsRead))
+		connections, _ = u.DB.ListConnections(ctx, scope(r, auth.PermConnectionsRead))
 	}
 	// Every job type is listed here (filtered client-side); the newest run per job feeds
 	// the last-run column and filter
@@ -700,6 +721,7 @@ func (u *UIHandler) HandleJobs(w http.ResponseWriter, r *http.Request) {
 		"AgentProfiles": agentProfiles(agents),
 		"Targets":       targets,
 		"Tenants":       tenants,
+		"Connections":   connections,
 	})
 }
 

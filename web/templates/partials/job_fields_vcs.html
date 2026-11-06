@@ -1,0 +1,76 @@
+{{/* Git repository (VCS) job fields. */}}
+{{define "job-fields-vcs"}}
+<fieldset id="job-vcs-fields" style="border: 0; padding: 0; margin: 0;" hidden disabled>
+  <div style="background-color: var(--bg-subtle); padding: 14px; border-radius: var(--radius-sm); margin-bottom: 16px; font-size: 13px;">
+    The agent keeps a bare mirror of every repository in its VCS state directory and fetches only what changed; each run writes one snapshot with every mirror (branches, tags, merge request heads, LFS objects, GitLab wikis) and a restore script. Needs git 2.31 or newer on the agent, and git-lfs for LFS repositories.
+  </div>
+  <div class="form-group">
+    <label>Connection</label>
+    <div style="display: flex; gap: 8px; align-items: center;">
+      <select name="vcs_connection_id" class="form-control" required onchange="updateVCSProvider(this.form)">
+        <option value="">-- Choose connection --</option>
+        {{range .Connections}}<option value="{{.ID}}" data-provider="{{.Provider}}" data-name="{{.Name}}" data-url="{{.BaseURL}}" data-token="{{if .HasToken}}true{{else}}false{{end}}">{{.Name}} ({{if eq .Provider "gitlab"}}GitLab{{else}}git{{end}}, {{.BaseURL}})</option>{{end}}
+      </select>
+      <a href="/vcs" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">Manage connections</a>
+    </div>
+  </div>
+
+  <div class="vcs-gitlab-opts">
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+      <div class="form-group">
+        <label>Groups (full paths, one per line)</label>
+        <textarea name="vcs_groups" class="form-control" rows="3" placeholder="platform&#10;data/pipelines"></textarea>
+        <span class="form-text">Empty: every project the token can see (an administrator's token sees all; not allowed on gitlab.com).</span>
+      </div>
+      <div class="form-group">
+        <label>Exclude (project or group path patterns, optional)</label>
+        <textarea name="vcs_exclude" class="form-control" rows="3" placeholder="platform/sandbox&#10;*/playground-*"></textarea>
+        <span class="form-text">A match on a group leaves out everything below it.</span>
+      </div>
+    </div>
+    <div style="display: flex; gap: 16px; margin-bottom: 16px; font-size: 13px; flex-wrap: wrap;">
+      <label style="display: flex; align-items: center; gap: 6px;"><input type="checkbox" name="vcs_include_subgroups" checked> Include subgroups</label>
+      <label style="display: flex; align-items: center; gap: 6px;"><input type="checkbox" name="vcs_archived" checked> Include archived projects</label>
+      <label style="display: flex; align-items: center; gap: 6px;"><input type="checkbox" name="vcs_forks" checked> Include forks</label>
+    </div>
+  </div>
+
+  <div class="vcs-git-opts" hidden>
+    <div class="form-group">
+      <label>Repository URLs (HTTPS, one per line, below the connection URL)</label>
+      <textarea name="vcs_repositories" class="form-control" rows="4" placeholder="https://git.example.com/team/app.git&#10;https://git.example.com/team/infra.git"></textarea>
+    </div>
+  </div>
+
+  <div class="form-group">
+    <label>Workloads</label>
+    <div style="display: flex; flex-wrap: wrap; gap: 16px; font-size: 13px;">
+      <label style="display: flex; align-items: center; gap: 6px;"><input type="checkbox" name="vcs_wl_lfs" checked> Git LFS objects</label>
+      <label class="vcs-gitlab-opts" style="display: flex; align-items: center; gap: 6px;"><input type="checkbox" name="vcs_wl_wiki" checked> Project wikis</label>
+    </div>
+  </div>
+
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+    <div class="form-group vcs-gitlab-opts">
+      <label>Skip repositories larger than (GB, optional)</label>
+      <input type="number" name="vcs_max_repo_size_gb" class="form-control" min="0" step="0.1" placeholder="no limit">
+      <span class="form-text">LFS objects not counted; GitLab reports sizes to tokens with the Reporter role or higher.</span>
+    </div>
+    <div class="form-group">
+      <label>Repositories fetched at once</label>
+      <input type="number" name="vcs_concurrency" class="form-control" min="1" max="32" placeholder="4">
+    </div>
+  </div>
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+    <div class="form-group">
+      <label>Agent credential profile (optional)</label>
+      <input type="text" name="vcs_profile" class="form-control" placeholder="gitlab-internal">
+      <span class="form-text">Use a token kept on the agent (<code>fallbck-agent vcs profile create</code>) instead of the connection's; the server never hands out its token for such a job.</span>
+    </div>
+    <div class="form-group">
+      <label>Snapshot group (optional, default vcs-&lt;connection name&gt;)</label>
+      <input type="text" name="vcs_backup_id" class="form-control" placeholder="vcs-gitlab">
+    </div>
+  </div>
+</fieldset>
+{{end}}

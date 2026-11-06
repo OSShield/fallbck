@@ -14,6 +14,7 @@
     {{if $a.PVEHost}}<span class="badge badge-warning" title="Runs on a Proxmox VE node">PVE</span>{{end}}
     {{if $a.DockerHost}}<span class="badge badge-info" title="A Docker daemon answers on this host">Docker</span>{{end}}
     {{if $a.DBEngines}}<span class="badge badge-success" title="Database engines this agent can back up">DB: {{range $i, $e := $a.DBEngines}}{{if $i}}, {{end}}{{$e}}{{end}}</span>{{end}}
+    {{with $a}}{{if .GitVersion}} <span class="badge {{if .CanRunJob "vcs"}}badge-success{{else}}badge-warning{{end}}" title="{{if .CanRunJob "vcs"}}Can run Git repository jobs{{else}}Git repository jobs need git 2.31 or newer{{end}}{{if .VCSProviders}} (providers: {{range $i, $p := .VCSProviders}}{{if $i}}, {{end}}{{$p}}{{end}}){{end}}{{if not .GitLFS}}; git-lfs not installed{{end}}">git {{.GitVersion}}{{if .GitLFS}} + LFS{{end}}</span>{{end}}{{end}}
   </div>
   <div style="display: flex; gap: 8px; flex-wrap: wrap;">
     <button class="btn btn-secondary btn-sm" id="agent-refresh-btn" data-perm="agents:write" onclick="refreshAgentInventory('{{$a.ID}}')" title="Ask the agent for its full inventory now (it must be online)">Refresh inventory</button>

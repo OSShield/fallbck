@@ -363,6 +363,10 @@ func backupProject(ctx context.Context, g *Git, state State, s *spec.Spec, o Run
 			// An enabled wiki without pages has no repository: only worth a warning
 			// once it had one
 			r.Warnings = append(r.Warnings, "wiki: "+err.Error())
+		} else if _, refs, err := wm.LocalRefs(ctx); err == nil && refs == 0 {
+			// GitLab answers for an enabled wiki without pages with an empty
+			// repository: nothing to keep
+			_ = os.RemoveAll(wm.Dir)
 		}
 		out.hasWiki = wm.Exists()
 	}
