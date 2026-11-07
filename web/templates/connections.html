@@ -1,6 +1,6 @@
 {{define "content"}}
 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-  <p style="color: var(--text-muted); font-size: 14px;">GitLab instances and git hosts that Git repository jobs read from. A job takes its repositories from one connection.</p>
+  <p style="color: var(--text-muted); font-size: 14px;">GitLab and GitHub instances and git hosts that Git repository jobs read from. A job takes its repositories from one connection.</p>
 </div>
 
 <div class="card">
@@ -26,13 +26,13 @@
           {{range .Connections}}
           <tr>
             <td><strong>{{.Name}}</strong><br>{{template "label-chips" .Labels}}</td>
-            <td>{{if eq .Provider "gitlab"}}<span class="badge badge-info">GitLab</span>{{else}}<span class="badge badge-neutral">git</span>{{end}}</td>
+            <td>{{if eq .Provider "gitlab"}}<span class="badge badge-info">GitLab</span>{{else if eq .Provider "github"}}<span class="badge badge-info">GitHub</span>{{else}}<span class="badge badge-neutral">git</span>{{end}}</td>
             <td><code style="font-size: 12px;">{{.BaseURL}}</code>{{if .CAPEM}} <span class="badge badge-neutral" title="Uses its own CA bundle">private CA</span>{{end}}</td>
             <td>{{if .HasToken}}<span class="badge badge-success">stored</span>{{else}}<span class="badge badge-neutral" title="Jobs use an agent credential profile, or the repositories are public">on the agent</span>{{end}}</td>
             <td>{{if .TokenExpires}}<span class="badge {{if .Expired}}badge-danger{{else if .ExpiringSoon}}badge-warning{{else}}badge-success{{end}}">{{.TokenExpires.Format "2006-01-02"}}</span>{{else}}<span style="color: var(--text-dim);">unknown</span>{{end}}</td>
             <td>{{.Jobs}}</td>
             <td style="text-align: right; display: flex; justify-content: flex-end; gap: 8px;">
-              {{if and (eq .Provider "gitlab") .HasToken}}<button class="btn btn-secondary btn-sm" data-perm="connections:write" onclick="testConnection('{{.ID}}', this)">Test</button>{{end}}
+              {{if and (or (eq .Provider "gitlab") (eq .Provider "github")) .HasToken}}<button class="btn btn-secondary btn-sm" data-perm="connections:write" onclick="testConnection('{{.ID}}', this)">Test</button>{{end}}
               <button class="btn btn-secondary btn-sm" data-perm="connections:write" onclick="editConnection('{{.ID}}')">Edit</button>
               <button class="btn btn-secondary btn-sm" data-perm="connections:delete" style="color: var(--danger-text);" {{if .Jobs}}disabled title="Used by {{.Jobs}} job(s)"{{end}} onclick="deleteResource('vcs/connections', '{{.ID}}')">Delete</button>
             </td>

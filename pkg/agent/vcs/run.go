@@ -60,6 +60,7 @@ type projectOutcome struct {
 	result     spec.RepoResult
 	included   bool
 	hasWiki    bool
+	hasMeta    bool
 	lfsPending bool
 }
 
@@ -108,16 +109,27 @@ func Run(ctx context.Context, o RunOptions) (*temporal.BackupExecutionResult, er
 		switch o.Credentials.Provider {
 		case spec.ProviderGit:
 			provider = GitProvider{Spec: s}
-		case spec.ProviderGitLab:
-			creds := spec.Credentials{Provider: spec.ProviderGitLab, BaseURL: o.Credentials.BaseURL, Token: auth.Token, CAPEM: o.Credentials.CAPEM}
+		case spec.ProviderGitLab, spec.ProviderGitHub:
+			creds := spec.Credentials{Provider: o.Credentials.Provider, BaseURL: o.Credentials.BaseURL, Token: auth.Token, CAPEM: o.Credentials.CAPEM}
 			client, err := creds.HTTPClient(gitlabAPITimeout)
 			if err != nil {
 				return nil, &dbrun.PrecheckError{Msg: "the connection's CA bundle", Err: err}
 			}
-			provider = &GitLabProvider{Spec: s, Credentials: creds, Client: client}
+			if creds.Provider == spec.ProviderGitHub {
+				provider = &GitHubProvider{Spec: s, Credentials: creds, Client: client}
+			} else {
+				provider = &GitLabProvider{Spec: s, Credentials: creds, Client: client}
+			}
 		default:
 			return nil, &dbrun.PrecheckError{Msg: "this agent version cannot list " + o.Credentials.Provider + " projects yet", Hint: "update the agent"}
 		}
+	}
+	if x, ok := provider.(interface{ ExtraURLs() []string }); ok {
+		auth.ExtraURLs = x.ExtraURLs()
+	}
+	var meta MetadataProvider
+	if mp, ok := provider.(MetadataProvider); ok && s.Workloads.Metadata {
+		meta = mp
 	}
 	tempDir := o.TempDir
 	if tempDir == "" {
@@ -174,7 +186,11 @@ func Run(ctx context.Context, o RunOptions) (*temporal.BackupExecutionResult, er
 	}
 	live := map[string]rundetail.ProgressItem{}
 	for _, p := range projects {
-		live[p.Key] = rundetail.ProgressItem{Name: p.Path, Kind: "repository", Status: "pending"}
+		kind := "repository"
+		if p.Kind != "" {
+			kind = p.Kind
+		}
+		live[p.Key] = rundetail.ProgressItem{Name: p.Path, Kind: kind, Status: "pending"}
 	}
 	items(live)
 
@@ -200,7 +216,7 @@ func Run(ctx context.Context, o RunOptions) (*temporal.BackupExecutionResult, er
 			mu.Lock()
 			prev := idx.Projects[p.Key]
 			mu.Unlock()
-			out := backupProject(ctx, g, state, s, o, p, prev, lfs, activity, now)
+			out := backupProject(ctx, g, state, s, o, p, prev, lfs, meta, activity, now)
 			mu.Lock()
 			outcomes[i] = out
 			done++
@@ -240,6 +256,9 @@ func Run(ctx context.Context, o RunOptions) (*temporal.BackupExecutionResult, er
 		tp := TreeProject{Path: out.project.Path, Repository: state.RepoDir(out.project.Key)}
 		if out.hasWiki {
 			tp.Wiki = state.WikiDir(out.project.Key)
+		}
+		if out.hasMeta {
+			tp.Metadata = state.MetaDir(out.project.Key)
 		}
 		treeProjects = append(treeProjects, tp)
 	}
@@ -300,8 +319,8 @@ func applyProfile(auth *Auth, name string, lookup func(string) (*spec.Profile, e
 
 // brings one project's mirrors up to date; never returns an error,
 // the outcome says what went into the snapshot (one failing repository must not fail the run)
-func backupProject(ctx context.Context, g *Git, state State, s *spec.Spec, o RunOptions, p Project, prev *ProjectIndex, lfs bool, activity func(string), now func() time.Time) projectOutcome {
-	out := projectOutcome{project: p, result: spec.RepoResult{ProjectID: p.ID, Path: p.Path, URL: p.URL, Archived: p.Archived, Fork: p.Fork}}
+func backupProject(ctx context.Context, g *Git, state State, s *spec.Spec, o RunOptions, p Project, prev *ProjectIndex, lfs bool, meta MetadataProvider, activity func(string), now func() time.Time) projectOutcome {
+	out := projectOutcome{project: p, result: spec.RepoResult{ProjectID: p.ID, Path: p.Path, URL: p.URL, Archived: p.Archived, Fork: p.Fork, Kind: p.Kind}}
 	r := &out.result
 	if prev != nil && !prev.LastFetched.IsZero() {
 		t := prev.LastFetched
@@ -369,6 +388,17 @@ func backupProject(ctx context.Context, g *Git, state State, s *spec.Spec, o Run
 			_ = os.RemoveAll(wm.Dir)
 		}
 		out.hasWiki = wm.Exists()
+	}
+	if meta != nil {
+		activity(p.Path + ": fetching metadata")
+		if err := meta.Metadata(ctx, p, state.MetaDir(p.Key), r); err != nil {
+			r.Warnings = append(r.Warnings, "metadata: "+err.Error())
+		}
+		_, err := os.Stat(state.MetaDir(p.Key))
+		out.hasMeta = err == nil
+	} else {
+		// The workload was switched off: the snapshot stops carrying it
+		_ = os.RemoveAll(state.MetaDir(p.Key))
 	}
 	if r.Status == "" {
 		r.Status = spec.RepoCompleted

@@ -33,7 +33,7 @@ const vcsUsage = `Usage:
   fallbck-agent vcs profile create --name <name> --url <connection URL> (--ask-token | --token-file <path>) [--username <u>]
   fallbck-agent vcs profile list
   fallbck-agent vcs profile delete --name <name>
-  fallbck-agent vcs profile test --name <name> [--ca-file <pem>]   # GitLab: check the token, record its expiry
+  fallbck-agent vcs profile test --name <name> [--provider gitlab|github] [--ca-file <pem>]   # check the token, record its expiry
 Every command takes --config <agent.yaml> (default: the enrolled agent's file). A job uses a
 profile by naming it; the agent sends its token only to the profile's URL, which must equal the
 job's connection URL. Tokens are encrypted under <data dir>/credentials.key; only names, URLs
@@ -54,6 +54,7 @@ func vcsProfileCommand(args []string) error {
 	tokenFile := fs.String("token-file", "", "File holding the token (read at every run)")
 	askToken := fs.Bool("ask-token", false, "Prompt for the token without echo (or read one line from standard input)")
 	caFile := fs.String("ca-file", "", "test: CA bundle for an instance with a private CA")
+	provider := fs.String("provider", "", "test: gitlab or github (default: github for github.com, else gitlab)")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -124,15 +125,15 @@ func vcsProfileCommand(args []string) error {
 		if *name == "" {
 			return errors.New("--name is required")
 		}
-		return testVCSProfile(store, *name, *caFile)
+		return testVCSProfile(store, *name, *provider, *caFile)
 	default:
 		return fmt.Errorf("unknown profile command %q\n%s", args[0], vcsUsage)
 	}
 }
 
-// testVCSProfile checks a profile's token against GitLab from this host and records
-// the expiry GitLab reports
-func testVCSProfile(store *credstore.Store, name, caFile string) error {
+// testVCSProfile checks a profile's token against GitLab or GitHub from this host and
+// records the expiry the provider reports
+func testVCSProfile(store *credstore.Store, name, provider, caFile string) error {
 	p, err := store.VCSProfile(name)
 	if err != nil {
 		return err
@@ -141,7 +142,13 @@ func testVCSProfile(store *credstore.Store, name, caFile string) error {
 	if err != nil {
 		return err
 	}
-	creds := vcs.Credentials{Provider: vcs.ProviderGitLab, BaseURL: p.URL, Token: token}
+	if provider == "" {
+		provider = vcs.ProviderGitLab
+		if vcs.IsGitHubCom(p.URL) {
+			provider = vcs.ProviderGitHub
+		}
+	}
+	creds := vcs.Credentials{Provider: provider, BaseURL: p.URL, Token: token}
 	if caFile != "" {
 		data, err := os.ReadFile(caFile)
 		if err != nil {
@@ -157,7 +164,11 @@ func testVCSProfile(store *credstore.Store, name, caFile string) error {
 	defer cancel()
 	inst, err := vcs.TestConnection(ctx, creds, client)
 	if inst != nil {
-		fmt.Printf("GitLab %s, token of %s (admin: %v)\n", inst.Version, inst.Username, inst.IsAdmin)
+		if provider == vcs.ProviderGitHub {
+			fmt.Printf("GitHub, token of %s\n", inst.Username)
+		} else {
+			fmt.Printf("GitLab %s, token of %s (admin: %v)\n", inst.Version, inst.Username, inst.IsAdmin)
+		}
 		if len(inst.Scopes) > 0 {
 			fmt.Printf("Scopes: %s\n", strings.Join(inst.Scopes, ", "))
 		}

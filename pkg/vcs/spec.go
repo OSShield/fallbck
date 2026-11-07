@@ -25,18 +25,21 @@ const (
 	ProviderGitLab = "gitlab"
 	// ProviderGit mirrors an explicit list of HTTPS repository URLs
 	ProviderGit = "git"
+	// ProviderGitHub enumerates owners, stars and gists through the GitHub REST API
+	// (github.com or GitHub Enterprise Server)
+	ProviderGitHub = "github"
 )
 
 // AgentProviders are the providers this agent build can list repositories of; it
 // reports them to the server, which only gives it jobs of these providers
-var AgentProviders = []string{ProviderGit, ProviderGitLab}
+var AgentProviders = []string{ProviderGit, ProviderGitLab, ProviderGitHub}
 
 // CleanProviders keeps the known providers of an agent's report, without duplicates
 func CleanProviders(in []string) []string {
 	out := []string{}
 	for _, p := range in {
 		p = strings.ToLower(strings.TrimSpace(p))
-		if (p == ProviderGit || p == ProviderGitLab) && !slices.Contains(out, p) {
+		if (p == ProviderGit || p == ProviderGitLab || p == ProviderGitHub) && !slices.Contains(out, p) {
 			out = append(out, p)
 		}
 	}
@@ -72,6 +75,9 @@ type Workloads struct {
 	LFS *bool `json:"lfs,omitempty"`
 	// Wiki mirrors the project wiki (<project>.wiki.git) where the project has one
 	Wiki *bool `json:"wiki,omitempty"`
+	// Metadata stores issues, pull requests, comments and releases as JSON next to
+	// the mirror (GitHub only; off by default)
+	Metadata bool `json:"metadata,omitempty"`
 }
 
 func on(b *bool) bool { return b == nil || *b }
@@ -96,9 +102,14 @@ type Spec struct {
 	// Archived / Forks include archived projects and forks (default true)
 	Archived *bool `json:"archived,omitempty"`
 	Forks    *bool `json:"forks,omitempty"`
-	// Repositories are the HTTPS clone URLs of a git-provider job
-	Repositories []string  `json:"repositories,omitempty"`
-	Workloads    Workloads `json:"workloads"`
+	// Repositories are the HTTPS clone URLs of a git-provider job, or explicit
+	// repositories of a GitHub job (kept regardless of the filters)
+	Repositories []string `json:"repositories,omitempty"`
+	// Starred backs up every repository the GitHub token's user has starred
+	Starred bool `json:"starred,omitempty"`
+	// Gists selects GitHub gists
+	Gists     *Gists    `json:"gists,omitempty"`
+	Workloads Workloads `json:"workloads"`
 	// MaxRepoSize skips repositories larger than this many bytes (0 = no limit)
 	MaxRepoSize int64 `json:"max_repo_size,omitempty"`
 	// Concurrency is the number of repositories fetched at once (default
@@ -171,8 +182,13 @@ func (s *Spec) Validate() error {
 		repos = append(repos, u)
 	}
 	s.Repositories = nilIfEmpty(repos)
-	if len(s.Groups) > 0 && len(s.Repositories) > 0 {
-		return specErr("groups apply to GitLab connections and repositories to git connections; set one of them")
+	if s.Gists != nil {
+		if err := s.Gists.normalize(); err != nil {
+			return err
+		}
+		if !s.Gists.Any() {
+			s.Gists = nil
+		}
 	}
 	if s.MaxRepoSize < 0 {
 		return specErr("max_repo_size must be 0 (no limit) or a size in bytes")
@@ -200,7 +216,12 @@ func (s *Spec) ValidateFor(c *Connection) error {
 	if c == nil {
 		return specErr("the connection does not exist")
 	}
+	if c.Provider != ProviderGitHub && (s.Starred || s.Gists != nil || s.Workloads.Metadata) {
+		return specErr("starred repositories, gists and metadata apply to GitHub connections only")
+	}
 	switch c.Provider {
+	case ProviderGitHub:
+		return s.validateGitHub(c)
 	case ProviderGitLab:
 		if len(s.Repositories) > 0 {
 			return specErr("GitLab connections select projects by group, not by repository URL")
@@ -338,8 +359,13 @@ func (s *Spec) Clone() *Spec {
 		return &v
 	}
 	c.Groups, c.Exclude, c.Repositories = cp(s.Groups), cp(s.Exclude), cp(s.Repositories)
+	if s.Gists != nil {
+		g := *s.Gists
+		g.Users, g.IDs = cp(s.Gists.Users), cp(s.Gists.IDs)
+		c.Gists = &g
+	}
 	c.IncludeSubgroups, c.Archived, c.Forks = cpb(s.IncludeSubgroups), cpb(s.Archived), cpb(s.Forks)
-	c.Workloads = Workloads{LFS: cpb(s.Workloads.LFS), Wiki: cpb(s.Workloads.Wiki)}
+	c.Workloads = Workloads{LFS: cpb(s.Workloads.LFS), Wiki: cpb(s.Workloads.Wiki), Metadata: s.Workloads.Metadata}
 	return &c
 }
 
@@ -349,6 +375,13 @@ func (s *Spec) Summary() string {
 		return "VCS"
 	}
 	var out string
+	if g := s.githubSummary(); g != "" {
+		out = g
+		if len(s.Exclude) > 0 {
+			out += "; excluding " + strings.Join(s.Exclude, ", ")
+		}
+		return out
+	}
 	switch {
 	case len(s.Repositories) == 1:
 		out = "1 repository"

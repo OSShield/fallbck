@@ -830,7 +830,7 @@ function obVCSAgentNote(form) {
   const a = ob.agent || {};
   const provider = vcsProvider(form);
   const bad = ob.backupType === 'vcs' && provider && !agentRunsVCS(gitVersionOK(a.git_version), a.vcs_providers || [], provider);
-  note.innerText = bad ? `${a.hostname || 'This agent'} cannot run ${provider === 'gitlab' ? 'GitLab' : provider} jobs yet: update the agent, or pick a plain git connection.` : '';
+  note.innerText = bad ? `${a.hostname || 'This agent'} cannot run ${{ gitlab: 'GitLab', github: 'GitHub' }[provider] || provider} jobs yet: update the agent, or pick a plain git connection.` : '';
   note.hidden = !bad;
 }
 

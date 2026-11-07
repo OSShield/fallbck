@@ -700,12 +700,12 @@ function gitVersionOK(v) {
   return major > 2 || (major === 2 && minor >= 31);
 }
 
-// updateVCSProvider shows the GitLab or the plain-git fields for the selected
-// connection and limits the agents to those that can run it
+// updateVCSProvider shows the fields of the selected connection's provider (elements
+// list theirs in data-providers) and limits the agents to those that can run it
 function updateVCSProvider(form) {
-  const git = vcsProvider(form) === 'git';
-  form.querySelectorAll('.vcs-gitlab-opts').forEach(el => { el.hidden = git; });
-  form.querySelectorAll('.vcs-git-opts').forEach(el => { el.hidden = !git; });
+  const provider = vcsProvider(form) || 'gitlab';
+  const box = form.querySelector('#job-vcs-fields') || form;
+  box.querySelectorAll('[data-providers]').forEach(el => { el.hidden = !el.dataset.providers.split(' ').includes(provider); });
   const typeEl = form.elements['job_type'];
   if ((typeEl ? typeEl.value : form.dataset.jobType) === 'vcs') filterJobAgents(form, 'vcs');
   if (typeof obVCSAgentNote === 'function') obVCSAgentNote(form);
@@ -726,15 +726,24 @@ function loadVCSIntoForm(form, vc) {
   form.elements['vcs_concurrency'].value = vc.concurrency || '';
   form.elements['vcs_profile'].value = vc.profile || '';
   form.elements['vcs_backup_id'].value = vc.backup_id || '';
+  const gists = vc.gists || {};
+  form.elements['vcs_starred'].checked = !!vc.starred;
+  form.elements['vcs_wl_metadata'].checked = !!wl.metadata;
+  form.elements['vcs_gists_own'].checked = !!gists.own;
+  form.elements['vcs_gists_starred'].checked = !!gists.starred;
+  form.elements['vcs_gist_users'].value = (gists.users || []).join('\n');
+  form.elements['vcs_gist_ids'].value = (gists.ids || []).join('\n');
 }
 
 function buildVCSConfig(form, fd) {
   const on = (name) => fd.get(name) === 'on';
-  const gitlab = vcsProvider(form) !== 'git';
+  const provider = vcsProvider(form);
+  const gitlab = provider === 'gitlab' || provider === 'github';
+  const github = provider === 'github';
   const gb = parseFloat(fd.get('vcs_max_repo_size_gb') || '0') || 0;
   const vc = {
     connection_id: fd.get('vcs_connection_id') || '',
-    workloads: { lfs: on('vcs_wl_lfs'), wiki: gitlab && on('vcs_wl_wiki') },
+    workloads: { lfs: on('vcs_wl_lfs'), wiki: gitlab && on('vcs_wl_wiki'), metadata: github && on('vcs_wl_metadata') },
     concurrency: parseInt(fd.get('vcs_concurrency') || '0') || 0,
     profile: (fd.get('vcs_profile') || '').trim(),
     backup_id: (fd.get('vcs_backup_id') || '').trim()
@@ -746,8 +755,12 @@ function buildVCSConfig(form, fd) {
     vc.archived = on('vcs_archived');
     vc.forks = on('vcs_forks');
     vc.max_repo_size = Math.round(gb * 2 ** 30);
-  } else {
-    vc.repositories = formLines(fd, 'vcs_repositories');
+  }
+  if (!gitlab || github) vc.repositories = formLines(fd, 'vcs_repositories');
+  if (github) {
+    delete vc.include_subgroups;
+    vc.starred = on('vcs_starred');
+    vc.gists = { own: on('vcs_gists_own'), starred: on('vcs_gists_starred'), users: formLines(fd, 'vcs_gist_users'), ids: formLines(fd, 'vcs_gist_ids') };
   }
   return vc;
 }
@@ -1774,9 +1787,9 @@ function renderVCSDetail(m) {
   let html = '';
   const src = m.source || {}, gen = m.generator || {}, t = m.totals || {};
   const repos = m.repositories || [];
-  const gitlab = src.provider === 'gitlab';
+  const providerLabel = { gitlab: 'GitLab', github: 'GitHub' }[src.provider] || 'git';
   const sourceRows = [
-    ['Source', `${rdEsc(gitlab ? 'GitLab' : 'git')} ${rdMono(src.base_url || '-')}` + (src.version ? ` <span style="color:var(--text-muted);font-size:12px;">${rdEsc(src.version)}</span>` : '')],
+    ['Source', `${rdEsc(providerLabel)} ${rdMono(src.base_url || '-')}` + (src.version ? ` <span style="color:var(--text-muted);font-size:12px;">${rdEsc(src.version)}</span>` : '')],
   ];
   if (src.username) sourceRows.push(['Token of', rdEsc(src.username) + (src.is_admin ? ' (administrator)' : '')]);
   sourceRows.push(
@@ -1789,7 +1802,8 @@ function renderVCSDetail(m) {
   if (repos.length) {
     const statusOf = s => s === 'stale' ? 'partial' : s === 'skipped' ? 'cancelled' : s;
     const rows = repos.map(r => {
-      const flags = [r.wiki ? 'wiki' : '', r.archived ? 'archived' : '', r.fork ? 'fork' : ''].filter(Boolean).join(', ');
+      const meta = (r.issues || r.pulls || r.comments || r.releases) ? `${r.issues || 0} issues, ${r.pulls || 0} PRs, ${r.comments || 0} comments, ${r.releases || 0} releases` : '';
+      const flags = [r.kind === 'gist' ? 'gist' : '', r.wiki ? 'wiki' : '', r.archived ? 'archived' : '', r.fork ? 'fork' : '', meta].filter(Boolean).join(', ');
       const label = r.status === 'stale' ? 'Stale' : r.status === 'skipped' ? 'Skipped' : '';
       const status = label ? `<span class="badge ${r.status === 'stale' ? 'badge-warning' : 'badge-neutral'}"><span class="badge-dot"></span> ${label}</span>` : rdStatus(statusOf(r.status));
       const notes = [r.error, ...(r.warnings || [])].filter(Boolean).map(n => rdEsc(n.split('\n')[0].slice(0, 200)));
@@ -2012,10 +2026,11 @@ function connectionForm() { return document.getElementById('connection-form'); }
 function connField(form, name) { return form.querySelector(`[name="${name}"]`); }
 
 function updateConnectionProvider(form) {
-  const git = connField(form, 'conn_provider').value === 'git';
-  form.querySelectorAll('.conn-gitlab-opts').forEach(el => { el.hidden = git; });
-  form.querySelectorAll('.conn-git-opts').forEach(el => { el.hidden = !git; });
-  connField(form, 'conn_base_url').placeholder = git ? 'https://git.example.com/team' : 'https://gitlab.example.com';
+  const provider = connField(form, 'conn_provider').value;
+  form.querySelectorAll('.conn-gitlab-opts').forEach(el => { el.hidden = provider !== 'gitlab'; });
+  form.querySelectorAll('.conn-git-opts').forEach(el => { el.hidden = provider !== 'git'; });
+  form.querySelectorAll('.conn-github-opts').forEach(el => { el.hidden = provider !== 'github'; });
+  connField(form, 'conn_base_url').placeholder = { git: 'https://git.example.com/team', github: 'https://github.com' }[provider] || 'https://gitlab.example.com';
 }
 
 function resetConnectionFields(form) {
@@ -2111,7 +2126,7 @@ async function testConnection(id, btn) {
     } else {
       const who = inst.username ? `, token of ${inst.username}${inst.is_admin ? ' (administrator)' : ''}` : '';
       const scopes = (inst.scopes || []).length ? `; scopes ${inst.scopes.join(', ')}` : '';
-      showToast(`Connected: GitLab ${inst.version || ''}${who}${scopes}`, 'success');
+      showToast(inst.version ? `Connected: GitLab ${inst.version}${who}${scopes}` : `Connected${who}${scopes}`, 'success');
     }
     (inst.warnings || []).forEach(w => showToast(w, 'warning'));
     if (data.tested && inst.token_expires) setTimeout(() => window.location.reload(), 2500);

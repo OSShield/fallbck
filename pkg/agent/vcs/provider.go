@@ -27,6 +27,16 @@ type Project struct {
 	Archived     bool
 	Fork         bool
 	LastActivity time.Time
+	// Kind is "gist" for GitHub gists ("" = repository)
+	Kind string
+	// Ref names the project to the provider's metadata API (GitHub owner/name or gist id)
+	Ref string
+}
+
+// MetadataProvider writes a project's API metadata (issues, pull requests, ...) as
+// files into dir; the counts and warnings go into the manifest
+type MetadataProvider interface {
+	Metadata(ctx context.Context, p Project, dir string, r *spec.RepoResult) error
 }
 
 // Provider lists the projects of a run

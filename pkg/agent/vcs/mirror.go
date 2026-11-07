@@ -11,13 +11,15 @@ import (
 	"strings"
 )
 
-// FetchRefspecs are the refs a mirror keeps: branches, tags and merge request heads.
+// FetchRefspecs are the refs a mirror keeps: branches, tags, and merge (GitLab) or
+// pull (GitHub) request heads.
 // Not +refs/*:refs/*: GitLab also advertises refs/environments, refs/pipelines and
 // refs/workloads, internal refs that can outnumber everything else by far.
 var FetchRefspecs = []string{
 	"+refs/heads/*:refs/heads/*",
 	"+refs/tags/*:refs/tags/*",
 	"+refs/merge-requests/*/head:refs/merge-requests/*/head",
+	"+refs/pull/*/head:refs/pull/*/head",
 }
 
 // DefaultRepackThreshold is the pack count above which Repack merges small packs

@@ -36,7 +36,6 @@ func TestCreateVCSJobValidation(t *testing.T) {
 		"foreign config":   head + `,"m365_config":{},"vcs_config":{"connection_id":"` + conn + `"}}`,
 		"bad group":        head + `,"vcs_config":{"connection_id":"` + conn + `","groups":["../x"]}}`,
 		"http repository":  head + `,"vcs_config":{"connection_id":"` + conn + `","repositories":["http://git.example.com/a.git"]}}`,
-		"groups and repos": head + `,"vcs_config":{"connection_id":"` + conn + `","groups":["g"],"repositories":["https://git.example.com/a.git"]}}`,
 		"fs job vcs cfg":   `{"name":"j","agent_id":"` + agent + `","target_id":"` + target + `","backup_paths":["/etc"],"vcs_config":{"connection_id":"` + conn + `"}}`,
 		"m365 job vcs cfg": `{"name":"j","agent_id":"` + agent + `","target_id":"` + target + `","job_type":"m365","m365_config":{"tenant_id":"` + conn + `"},"vcs_config":{"connection_id":"` + conn + `"}}`,
 	}

@@ -157,7 +157,7 @@ For certificate auth, use `"auth_method": "certificate"` with `certificate_pem` 
 | `GET` | `/vcs/connections/{id}` | |
 | `PUT` | `/vcs/connections/{id}` | A blank `token` keeps the stored one; `"clear_token": true` removes it. The provider can't change while jobs use the connection. |
 | `DELETE` | `/vcs/connections/{id}` | Refused while jobs still use it. |
-| `POST` | `/vcs/connections/{id}/test` | GitLab: checks the token, its scopes and expiry. Answers `"tested": false` for git connections and connections without a token. |
+| `POST` | `/vcs/connections/{id}/test` | GitLab and GitHub: checks the token, its scopes and expiry. Answers `"tested": false` for git connections and connections without a token. |
 
 ```json
 {
@@ -169,7 +169,7 @@ For certificate auth, use `"auth_method": "certificate"` with `certificate_pem` 
 }
 ```
 
-`provider` is `git` (a list of repository URLs below `base_url`) or `gitlab` (projects listed through the GitLab API, selected by group). A GitLab job needs an agent that reports the `gitlab` provider: update older agents first. The token is optional and write-only: leave it out when the jobs use an agent credential profile. Needs the `connections:*` permissions. See [Git repositories](../agents/vcs.md).
+`provider` is `git` (a list of repository URLs below `base_url`), `gitlab` (projects listed through the GitLab API, selected by group) or `github` (owners, starred repositories and gists listed through the GitHub API; `base_url` is `https://github.com` or a GitHub Enterprise Server). A GitLab or GitHub job needs an agent that reports that provider: update older agents first. The token is optional and write-only: leave it out when the jobs use an agent credential profile. Needs the `connections:*` permissions. See [Git repositories](../agents/vcs.md).
 
 ## Jobs
 

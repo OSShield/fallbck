@@ -171,7 +171,7 @@ func (s *ServerAPI) connectionChangeConflict(ctx context.Context, old, updated *
 		return "The connection is used by backup jobs; its provider cannot change"
 	}
 	urlChanged := updated.Provider == vcs.ProviderGit && updated.BaseURL != old.BaseURL
-	tokenRemoved := updated.Provider == vcs.ProviderGitLab && old.Token != "" && updated.Token == ""
+	tokenRemoved := updated.Provider != vcs.ProviderGit && old.Token != "" && updated.Token == ""
 	if !urlChanged && !tokenRemoved {
 		return ""
 	}
@@ -228,7 +228,7 @@ func (s *ServerAPI) HandleTestConnection(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	if c.Provider != vcs.ProviderGitLab {
+	if c.Provider != vcs.ProviderGitLab && c.Provider != vcs.ProviderGitHub {
 		s.writeJSON(w, http.StatusOK, map[string]any{"ok": true, "tested": false, "message": "Git connections have no API to test; the agent checks access when a job runs"})
 		return
 	}

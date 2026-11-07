@@ -64,9 +64,9 @@ func (c *Connection) Validate() error {
 		return connErr("name is required")
 	}
 	switch c.Provider {
-	case ProviderGitLab, ProviderGit:
+	case ProviderGitLab, ProviderGit, ProviderGitHub:
 	default:
-		return connErr("provider must be %s or %s", ProviderGitLab, ProviderGit)
+		return connErr("provider must be %s, %s or %s", ProviderGitLab, ProviderGitHub, ProviderGit)
 	}
 	base, err := NormalizeBaseURL(c.BaseURL)
 	if err != nil {

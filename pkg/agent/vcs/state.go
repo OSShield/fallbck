@@ -50,6 +50,9 @@ func (s State) indexPath() string { return filepath.Join(s.Dir, "index.json") }
 func (s State) RepoDir(key string) string { return filepath.Join(s.Dir, "mirrors", key+".git") }
 func (s State) WikiDir(key string) string { return filepath.Join(s.Dir, "mirrors", key+".wiki.git") }
 
+// MetaDir holds a project's API metadata (JSON files; the metadata workload)
+func (s State) MetaDir(key string) string { return filepath.Join(s.Dir, "metadata", key) }
+
 // Load reads the index; a missing or outdated file is an empty index
 func (s State) Load() (*Index, error) {
 	idx := &Index{Version: IndexVersion, Projects: map[string]*ProjectIndex{}}
@@ -89,6 +92,9 @@ func (s State) Save(idx *Index) error {
 // Forget deletes a project's mirrors
 func (s State) Forget(key string) error {
 	if err := os.RemoveAll(s.RepoDir(key)); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(s.MetaDir(key)); err != nil {
 		return err
 	}
 	return os.RemoveAll(s.WikiDir(key))
