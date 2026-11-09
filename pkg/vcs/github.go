@@ -32,7 +32,8 @@ func (g *Gists) Any() bool {
 var (
 	// githubLoginRe is a GitHub user or organization login
 	githubLoginRe = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$`)
-	gistIDRe      = regexp.MustCompile(`^[0-9a-fA-F]{20,40}$`)
+	// hex ids, or the short numeric ids of gists from before 2012 (gist.github.com/1234567)
+	gistIDRe = regexp.MustCompile(`^(?:[0-9a-fA-F]{20,40}|[0-9]{1,12})$`)
 )
 
 // ValidGitHubLogin / ValidGistID check names the API returns before they become paths

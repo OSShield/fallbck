@@ -21,8 +21,10 @@ const (
 	// cannot end in .git, so neither can collide with a subgroup or project.
 	RepositoryDir = "repository.git"
 	WikiDir       = "wiki.git"
-	// MetadataDir holds API metadata as JSON; GitHub logins cannot contain '_' and its
-	// paths are owner/name, so no project path reaches it
+	// MetadataDir holds API metadata as JSON next to repository.git. Not a reserved
+	// segment: GitLab and GitHub allow it as a project name, and only a project nested
+	// below one with metadata collides (BuildTree refuses that; GitHub paths are
+	// owner/name, so it can't happen)
 	MetadataDir = "_metadata"
 	// RestoreReadme / RestoreScript sit at the archive root
 	RestoreReadme = "RESTORE.md"
@@ -66,6 +68,7 @@ func BuildTree(name string, projects []TreeProject, now time.Time) (*scan.Node, 
 		return n
 	}
 	seen := map[string]bool{}
+	var withMeta []string
 	for _, pr := range projects {
 		p, err := projectPath(pr.Path)
 		if err != nil {
@@ -94,6 +97,13 @@ func BuildTree(name string, projects []TreeProject, now time.Time) (*scan.Node, 
 				return nil, fmt.Errorf("project %s metadata: %w", p, err)
 			}
 			dir.Children = append(dir.Children, meta)
+			withMeta = append(withMeta, p)
+		}
+	}
+	// ensure() made a directory for every project path and its parents
+	for _, p := range withMeta {
+		if _, ok := dirs[p+"/"+MetadataDir]; ok {
+			return nil, fmt.Errorf("project %s: a project below it collides with its %s directory", p, MetadataDir)
 		}
 	}
 	root.Children = append(root.Children,
@@ -113,7 +123,7 @@ func projectPath(p string) (string, error) {
 		switch {
 		case s == "" || s == "." || s == "..":
 			return "", fmt.Errorf("invalid project path %q", p)
-		case s == RepositoryDir || s == WikiDir || s == MetadataDir:
+		case s == RepositoryDir || s == WikiDir:
 			return "", fmt.Errorf("project path %q uses the reserved name %s", p, s)
 		case i == 0 && (s == RestoreReadme || s == RestoreScript):
 			return "", fmt.Errorf("project path %q collides with %s at the archive root", p, s)

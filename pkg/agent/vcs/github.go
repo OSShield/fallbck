@@ -231,7 +231,7 @@ func (p *GitHubProvider) ExtraURLs() []string {
 
 // Metadata stores a repository's issues, pulls, comments, releases, labels and milestones,
 // or a gist and its comments; a failed list keeps its last file and becomes a warning.
-func (p *GitHubProvider) Metadata(ctx context.Context, pr Project, dir string, r *spec.RepoResult) error {
+func (p *GitHubProvider) Metadata(ctx context.Context, pr Project, dir string, r *spec.RepoResult) (err error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
@@ -242,6 +242,12 @@ func (p *GitHubProvider) Metadata(ctx context.Context, pr Project, dir string, r
 		return writeIfChanged(filepath.Join(dir, name), data)
 	}
 	defer func() {
+		// Do not remove everything if an error occurred during the run
+		// Only a successful run can safely remove stale files, a cancelled
+		// or failed run might delete repositories that are still valid
+		if err != nil {
+			return
+		}
 		entries, _ := os.ReadDir(dir)
 		for _, e := range entries {
 			if !written[e.Name()] {

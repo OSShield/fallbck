@@ -255,6 +255,9 @@ func TestGitHubSpec(t *testing.T) {
 	if (&Spec{Gists: &Gists{IDs: []string{"nope"}}, ConnectionID: conn}).Validate() == nil {
 		t.Error("a bad gist id must be refused")
 	}
+	if id, ok := GistID("https://gist.github.com/1234567"); !ok || id != "1234567" {
+		t.Error("legacy numeric gist ids must be accepted")
+	}
 	if GitHubAPIURL("https://github.com") != "https://api.github.com" || GitHubAPIURL("https://ghe.example.com") != "https://ghe.example.com/api/v3" {
 		t.Error("GitHubAPIURL")
 	}

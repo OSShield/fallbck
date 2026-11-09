@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -273,7 +275,28 @@ func TestGitEnvironmentExtraURLs(t *testing.T) {
 	if strings.Contains(strings.Join(plain.env(""), "\n"), "gist.github.com") {
 		t.Error("without gists the token must not go to gist.github.com")
 	}
-	if _, err := projectPath("acme/" + MetadataDir); err == nil {
-		t.Error("a project path must not reach the metadata directory")
+
+	// This would cause an error on projects named "_metadata", which is a valid project name on GitHub and GitLab
+	// if _, err := projectPath("acme/" + MetadataDir); err == nil {
+	// 	t.Error("a project path must not reach the metadata directory")
+	// }
+}
+
+// Make sure the metadata files are kept in case a run is cancelled since we can't determine what is stale and what isn't
+func TestGitHubMetadataKeepsFilesWhenCancelled(t *testing.T) {
+	srv := fakeGitHubAPI(t)
+	dir := t.TempDir()
+	old := filepath.Join(dir, "pulls.json")
+	if err := os.WriteFile(old, []byte("[]"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	p := &GitHubProvider{Spec: &spec.Spec{}, Credentials: spec.Credentials{BaseURL: srv.URL, Token: testToken}, API: githubAPI(srv)}
+	if err := p.Metadata(ctx, Project{Ref: "acme/web"}, dir, &spec.RepoResult{}); err == nil {
+		t.Fatal("a cancelled run must return an error")
+	}
+	if _, err := os.Stat(old); err != nil {
+		t.Error("a cancelled run must keep the previous run's files:", err)
 	}
 }

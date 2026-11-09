@@ -128,6 +128,8 @@ func TestBuildTreeRejects(t *testing.T) {
 		"duplicate":        {{Path: "a/b", Repository: repo}, {Path: "a/b/", Repository: repo}},
 		"missing mirror":   {{Path: "a/b", Repository: filepath.Join(t.TempDir(), "nope.git")}},
 		"missing wiki":     {{Path: "a/b", Repository: repo, Wiki: filepath.Join(t.TempDir(), "nope.git")}},
+		"metadata collision": {{Path: "a/b", Repository: repo, Metadata: t.TempDir()},
+			{Path: "a/b/" + MetadataDir + "/c", Repository: repo}},
 	}
 	for name, projects := range cases {
 		if _, err := BuildTree("vcs", projects, time.Now()); err == nil {
