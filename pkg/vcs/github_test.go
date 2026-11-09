@@ -56,7 +56,7 @@ func TestGitHubClient(t *testing.T) {
 	if slept <= 0 || slept > 5*time.Second {
 		t.Errorf("rate limit wait = %s", slept)
 	}
-	if items, err := c.RepoList(ctx, "acme", "r1", "issues", nil); err != nil || items != nil {
+	if items, err := c.RepoList(ctx, "acme", "r1", "issues", nil, nil); err != nil || items != nil {
 		t.Errorf("disabled issues must read as empty: %v %v", items, err)
 	}
 	if _, _, err := c.OwnerRepos(ctx, "nobody", "me"); !IsGitHubNotFound(err) {

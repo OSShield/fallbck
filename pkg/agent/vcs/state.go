@@ -37,6 +37,10 @@ type ProjectIndex struct {
 	LFSPending bool `json:"lfs_pending,omitempty"`
 	// counts consecutive runs the project was not selected
 	Missing int `json:"missing,omitempty"`
+	// MetaSince is when the last complete metadata pass started (the next one fetches
+	// only what changed since); MetaFull when the last complete full pass did
+	MetaSince time.Time `json:"meta_since,omitzero"`
+	MetaFull  time.Time `json:"meta_full,omitzero"`
 }
 
 // State is a job's directory under the agent's VCS state directory

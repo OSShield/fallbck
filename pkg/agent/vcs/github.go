@@ -10,7 +10,9 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 
 	spec "github.com/osshield/fallbck/pkg/vcs"
 )
@@ -231,9 +233,11 @@ func (p *GitHubProvider) ExtraURLs() []string {
 
 // Metadata stores a repository's issues, pulls, comments, releases, labels and milestones,
 // or a gist and its comments; a failed list keeps its last file and becomes a warning.
-func (p *GitHubProvider) Metadata(ctx context.Context, pr Project, dir string, r *spec.RepoResult) (err error) {
+// With since set, issues, pulls and comments only fetch what changed after it and are
+// merged into the last files; complete reports that every list was fetched.
+func (p *GitHubProvider) Metadata(ctx context.Context, pr Project, dir string, since time.Time, r *spec.RepoResult) (complete bool, err error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
+		return false, err
 	}
 	api := p.api()
 	written := map[string]bool{}
@@ -255,8 +259,10 @@ func (p *GitHubProvider) Metadata(ctx context.Context, pr Project, dir string, r
 			}
 		}
 	}()
+	complete = true
 	keep := func(name, what string, err error) {
 		written[name] = true
+		complete = false
 		r.Warnings = append(r.Warnings, "metadata "+what+": "+err.Error())
 	}
 
@@ -264,70 +270,157 @@ func (p *GitHubProvider) Metadata(ctx context.Context, pr Project, dir string, r
 		gist, err := api.Gist(ctx, pr.Ref)
 		if err != nil {
 			if ctx.Err() != nil {
-				return err
+				return false, err
 			}
 			keep("gist.json", "gist", err)
 		} else if err := write("gist.json", indentJSON(gist.Raw)); err != nil {
-			return err
+			return false, err
 		}
 		comments, err := api.GistComments(ctx, pr.Ref)
 		if err != nil {
 			if ctx.Err() != nil {
-				return err
+				return false, err
 			}
 			keep("comments.json", "comments", err)
-			return nil
+			return complete, nil
 		}
 		r.Comments = len(comments)
-		return write("comments.json", marshalList(comments))
+		return complete, write("comments.json", marshalList(comments))
 	}
 
 	owner, name, _ := strings.Cut(pr.Ref, "/")
 	asc := url.Values{"sort": {"created"}, "direction": {"asc"}}
 	all := url.Values{"state": {"all"}, "sort": {"created"}, "direction": {"asc"}}
+	// incremental: "since" for endpoints that take since=, "paged" for pulls (no
+	// since=: listed newest update first, paging stops past since), "" always whole
 	lists := []struct {
-		file, sub string
-		q         url.Values
-		count     *int
+		file, sub, incremental string
+		q                      url.Values
 	}{
-		{"issues.json", "issues", all, &r.Issues},
-		{"issue-comments.json", "issues/comments", asc, nil},
-		{"pulls.json", "pulls", all, &r.Pulls},
-		{"pull-review-comments.json", "pulls/comments", asc, nil},
-		{"releases.json", "releases", nil, &r.Releases},
-		{"labels.json", "labels", nil, nil},
-		{"milestones.json", "milestones", url.Values{"state": {"all"}}, nil},
+		{"issues.json", "issues", "since", all},
+		{"issue-comments.json", "issues/comments", "since", asc},
+		{"pulls.json", "pulls", "paged", all},
+		{"pull-review-comments.json", "pulls/comments", "since", asc},
+		{"releases.json", "releases", "", nil},
+		{"labels.json", "labels", "", nil},
+		{"milestones.json", "milestones", "", url.Values{"state": {"all"}}},
 	}
-	comments := 0
+	// ponytail: an issue or comment deleted on GitHub stays in the files until the
+	// next full pass (metadataFullEvery); only a full listing can tell
+	cut := since.Add(-metadataSkew)
 	for _, l := range lists {
-		q := url.Values{}
-		for k, v := range l.q {
-			q[k] = v
+		var old []json.RawMessage
+		incr := !since.IsZero() && l.incremental != ""
+		if incr {
+			var rerr error
+			// no usable last file (first pass, workload switched back on): list it whole
+			old, rerr = readList(filepath.Join(dir, l.file))
+			incr = rerr == nil
 		}
-		items, err := api.RepoList(ctx, owner, name, l.sub, q)
+		q, more := l.q, (func([]json.RawMessage) bool)(nil)
+		switch {
+		case incr && l.incremental == "since":
+			q = url.Values{"since": {cut.UTC().Format(time.RFC3339)}}
+			for k, v := range l.q {
+				q[k] = v
+			}
+		case incr:
+			q = url.Values{"state": {"all"}, "sort": {"updated"}, "direction": {"desc"}}
+			more = func(page []json.RawMessage) bool {
+				var last metaItem
+				return len(page) > 0 && json.Unmarshal(page[len(page)-1], &last) == nil && !last.UpdatedAt.Before(cut)
+			}
+		}
+		items, err := api.RepoList(ctx, owner, name, l.sub, q, more)
 		if err != nil {
 			if ctx.Err() != nil {
-				return err
+				return false, err
 			}
 			keep(l.file, l.sub, err)
 			continue
 		}
-		if l.count != nil {
-			*l.count = len(items)
+		if incr {
+			items = mergeByID(old, items)
 		}
-		if strings.HasSuffix(l.sub, "comments") {
-			comments += len(items)
+		switch l.sub {
+		case "issues":
+			// The issues listing returns pull requests too
+			r.Issues = 0
+			for _, it := range items {
+				var m metaItem
+				if json.Unmarshal(it, &m) == nil && len(m.PullRequest) == 0 {
+					r.Issues++
+				}
+			}
+		case "pulls":
+			r.Pulls = len(items)
+		case "releases":
+			r.Releases = len(items)
+		case "issues/comments", "pulls/comments":
+			r.Comments += len(items)
 		}
 		if err := write(l.file, marshalList(items)); err != nil {
-			return err
+			return false, err
 		}
 	}
-	r.Comments = comments
-	// The issues listing counts pull requests too
-	if r.Issues >= r.Pulls {
-		r.Issues -= r.Pulls
+	return complete, nil
+}
+
+// metadataSkew re-reads this much before since, for clock skew between the agent and
+// GitHub; merging makes the overlap harmless
+const metadataSkew = 10 * time.Minute
+
+// metaItem is what merging and counting need from a listed issue, pull or comment
+type metaItem struct {
+	ID          int64           `json:"id"`
+	UpdatedAt   time.Time       `json:"updated_at"`
+	PullRequest json.RawMessage `json:"pull_request"`
+}
+
+// readList loads a list file written by marshalList, items compacted
+func readList(path string) ([]json.RawMessage, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
 	}
-	return nil
+	var items []json.RawMessage
+	if err := json.Unmarshal(data, &items); err != nil {
+		return nil, err
+	}
+	for i, it := range items {
+		var b bytes.Buffer
+		if json.Compact(&b, it) == nil {
+			items[i] = b.Bytes()
+		}
+	}
+	return items, nil
+}
+
+// mergeByID lays fresh items over old ones with the same id and sorts by id, which
+// is creation order (what a full listing returns)
+func mergeByID(old, fresh []json.RawMessage) []json.RawMessage {
+	type entry struct {
+		id   int64
+		item json.RawMessage
+	}
+	var out []entry
+	at := map[int64]int{}
+	for _, it := range append(old, fresh...) {
+		var m metaItem
+		_ = json.Unmarshal(it, &m)
+		if i, ok := at[m.ID]; ok && m.ID != 0 {
+			out[i].item = it
+			continue
+		}
+		at[m.ID] = len(out)
+		out = append(out, entry{m.ID, it})
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].id < out[j].id })
+	items := make([]json.RawMessage, len(out))
+	for i, e := range out {
+		items[i] = e.item
+	}
+	return items
 }
 
 // writeIfChanged leaves an identical file alone, so its mtime holds and change

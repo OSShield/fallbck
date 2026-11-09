@@ -203,8 +203,10 @@ func TestGitHubProviderProjects(t *testing.T) {
 func TestGitHubRun(t *testing.T) {
 	e := newRunEnv(t)
 	api := fakeGitHubAPI(t)
+	bares := map[string]string{}
 	for _, name := range []string{"acme/web.git", "acme/web.wiki.git", "me/dotfiles.git", "other/lib.git", "other/explicit.git", "gist/" + gistOwn + ".git", "gist/" + gistStarred + ".git"} {
 		_, bare := e.h.repo(t, name)
+		bares[name] = bare
 		head := hostGit(t, bare, "rev-parse", "main")
 		hostGit(t, bare, "update-ref", "refs/pull/3/head", head)
 	}
@@ -251,6 +253,18 @@ func TestGitHubRun(t *testing.T) {
 		t.Errorf("source %+v, unauthenticated git requests %d", e.rec.manifest.Source, e.h.unauthenticated.Load())
 	}
 
+	// A failed fetch keeps the last mirror (stale), and its metadata with it
+	if err := os.RemoveAll(bares["acme/web.git"]); err != nil {
+		t.Fatal(err)
+	}
+	o.Session = &temporal.BackupSessionInfo{JobID: e.job, BackupRunID: uuid.New(), BackupType: "host", BackupID: "vcs-test"}
+	if _, err := Run(ctx(t), o); err != nil {
+		t.Fatal(err)
+	}
+	if r := e.rec.repo("acme/web"); r.Status != spec.RepoStale || !e.rec.has("acme/web/_metadata/issues.json") {
+		t.Errorf("a stale repository must keep its metadata in the snapshot: %+v", r)
+	}
+
 	// The metadata workload switched off: the next snapshot stops carrying it
 	s.Workloads.Metadata = false
 	o.Session = &temporal.BackupSessionInfo{JobID: e.job, BackupRunID: uuid.New(), BackupType: "host", BackupID: "vcs-test"}
@@ -293,10 +307,63 @@ func TestGitHubMetadataKeepsFilesWhenCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	p := &GitHubProvider{Spec: &spec.Spec{}, Credentials: spec.Credentials{BaseURL: srv.URL, Token: testToken}, API: githubAPI(srv)}
-	if err := p.Metadata(ctx, Project{Ref: "acme/web"}, dir, &spec.RepoResult{}); err == nil {
+	if _, err := p.Metadata(ctx, Project{Ref: "acme/web"}, dir, time.Time{}, &spec.RepoResult{}); err == nil {
 		t.Fatal("a cancelled run must return an error")
 	}
 	if _, err := os.Stat(old); err != nil {
 		t.Error("a cancelled run must keep the previous run's files:", err)
+	}
+}
+
+// A pass with since fetches only what changed and merges it into the last files
+func TestGitHubMetadataIncremental(t *testing.T) {
+	now := time.Now().UTC()
+	recent, old := now.Format(time.RFC3339), now.Add(-30*24*time.Hour).Format(time.RFC3339)
+	var sinceSent, page2 bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		switch strings.TrimPrefix(r.URL.Path, "/repos/acme/web/") {
+		case "issues":
+			if q.Get("since") != "" {
+				sinceSent = true
+				fmt.Fprintf(w, `[{"id":2,"title":"edited","updated_at":%q}]`, recent)
+				return
+			}
+			_, _ = w.Write([]byte(`[{"id":1},{"id":2,"title":"first"},{"id":3,"pull_request":{}}]`))
+		case "pulls":
+			if q.Get("sort") != "updated" {
+				_, _ = w.Write([]byte(`[{"id":3}]`))
+				return
+			}
+			if q.Get("page") == "2" {
+				page2 = true
+			}
+			w.Header().Set("Link", fmt.Sprintf(`<http://%s%s?sort=updated&page=2>; rel="next"`, r.Host, r.URL.Path))
+			fmt.Fprintf(w, `[{"id":4,"updated_at":%q},{"id":3,"updated_at":%q}]`, recent, old)
+		default:
+			_, _ = w.Write([]byte(`[]`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	p := &GitHubProvider{Spec: &spec.Spec{}, API: &spec.GitHubClient{APIURL: srv.URL, Token: testToken, HTTP: srv.Client()}}
+	dir := t.TempDir()
+	r := &spec.RepoResult{}
+	if complete, err := p.Metadata(context.Background(), Project{Ref: "acme/web"}, dir, time.Time{}, r); err != nil || !complete {
+		t.Fatalf("full pass: complete %v, %v", complete, err)
+	}
+	if r.Issues != 2 || r.Pulls != 1 {
+		t.Errorf("full pass counts: %+v", r)
+	}
+
+	r = &spec.RepoResult{}
+	if complete, err := p.Metadata(context.Background(), Project{Ref: "acme/web"}, dir, now, r); err != nil || !complete {
+		t.Fatalf("incremental pass: complete %v, %v", complete, err)
+	}
+	issues, _ := os.ReadFile(filepath.Join(dir, "issues.json"))
+	if !sinceSent || !strings.Contains(string(issues), "edited") || strings.Contains(string(issues), "first") || r.Issues != 2 {
+		t.Errorf("issues not merged (since sent %v, %d issues):\n%s", sinceSent, r.Issues, issues)
+	}
+	if r.Pulls != 2 || page2 {
+		t.Errorf("pulls: %d, page 2 fetched %v (paging must stop past since)", r.Pulls, page2)
 	}
 }

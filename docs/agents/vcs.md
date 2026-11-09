@@ -64,7 +64,7 @@ fallbck-agent vcs profile list
 fallbck-agent vcs profile test --name git-internal   # GitLab or GitHub: checks the token and records its expiry
 ```
 
-The job then names the profile (`"profile": "git-internal"`). The agent only uses a profile for the URL it was created for, so the profile's `--url` must equal the connection's `base_url`. Use `--token-file` instead of `--ask-token` when a secret manager keeps the token in a file. `--username` sets the basic auth user name.
+The job then names the profile (`"profile": "git-internal"`). The agent only uses a profile for the URL it was created for, so the profile's `--url` must equal the connection's `base_url`. Use `--token-file` instead of `--ask-token` when a secret manager keeps the token in a file. `--username` sets the basic auth user name. `profile test` assumes GitHub for github.com and GitLab for everything else; add `--provider github` for GitHub Enterprise Server.
 
 ## 4. Create a job
 
@@ -131,7 +131,7 @@ A GitHub job names owners, explicit repositories, starred repositories and gists
 | `starred` | `false` | Every repository the token's user has starred. |
 | `gists` | none | `own` (the token user's gists, secret ones included), `starred`, `users` (their public gists) and `ids` (ids or URLs). Gists are not filtered. |
 | `exclude`, `archived`, `forks`, `max_repo_size` | as for GitLab | Globs on `owner/name`; apply to listed repositories, not to explicit ones. |
-| `workloads.metadata` | `false` | Issues (with pull requests), issue comments, pull requests, review comments, releases, labels and milestones as JSON in `_metadata/`; for gists, the gist object and its comments. A list that fails is a warning and keeps its previous file. |
+| `workloads.metadata` | `false` | Issues (with pull requests), issue comments, pull requests, review comments, releases, labels and milestones as JSON in `_metadata/`; for gists, the gist object and its comments. A list that fails is a warning and keeps its previous file. After the first run, issues, pull requests and comments only fetch what changed since the last run; once a week everything is listed again, which is when items deleted on GitHub drop out. |
 
 Mirrors are kept by GitHub's repository id, so a renamed or transferred repository carries on from its mirror. API rate limits are waited out (up to an hour per request) instead of failing the run.
 

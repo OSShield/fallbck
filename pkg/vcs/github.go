@@ -138,7 +138,8 @@ func GitHubRepoFromURL(repoURL, baseURL string) (owner, name string, ok bool) {
 var githubRepoNameRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,100}$`)
 
 func (s *Spec) githubSummary() string {
-	if !s.Starred && !s.Gists.Any() {
+	// owners or repositories alone read fine in the generic summary
+	if !s.Starred && !s.Gists.Any() && (len(s.Groups) == 0 || len(s.Repositories) == 0) {
 		return ""
 	}
 	var parts []string
@@ -370,11 +371,19 @@ var githubLinkNextRe = regexp.MustCompile(`<([^>]+)>;\s*rel="next"`)
 // List follows the pagination of a list endpoint and returns every element verbatim.
 // Only next links below the API URL are followed, so the token stays with the API.
 func (c *GitHubClient) List(ctx context.Context, path string, query url.Values) ([]json.RawMessage, error) {
-	if query == nil {
-		query = url.Values{}
+	return c.ListWhile(ctx, path, query, nil)
+}
+
+// ListWhile is List that stops paging once more (when set) returns false for a page;
+// that page is still returned. The query is not modified.
+func (c *GitHubClient) ListWhile(ctx context.Context, path string, query url.Values, more func(page []json.RawMessage) bool) ([]json.RawMessage, error) {
+	q := url.Values{"per_page": {"100"}}
+	for k, v := range query {
+		if k != "per_page" {
+			q[k] = v
+		}
 	}
-	query.Set("per_page", "100")
-	next := c.url(path, query)
+	next := c.url(path, q)
 	var out []json.RawMessage
 	for page := 0; next != ""; page++ {
 		if page == maxPages {
@@ -392,6 +401,9 @@ func (c *GitHubClient) List(ctx context.Context, path string, query url.Values) 
 		}
 		out = append(out, items...)
 		next = ""
+		if more != nil && !more(items) {
+			break
+		}
 		if m := githubLinkNextRe.FindStringSubmatch(resp.Header.Get("Link")); m != nil && strings.HasPrefix(m[1], strings.TrimRight(c.APIURL, "/")+"/") {
 			next = m[1]
 		}
@@ -511,8 +523,8 @@ func (c *GitHubClient) Repo(ctx context.Context, owner, name string) (*GitHubRep
 
 // RepoList lists a per-repository collection (issues, pulls, comments, releases); a
 // 404/410 (feature disabled) is an empty list
-func (c *GitHubClient) RepoList(ctx context.Context, owner, name, sub string, query url.Values) ([]json.RawMessage, error) {
-	items, err := c.List(ctx, "/repos/"+url.PathEscape(owner)+"/"+url.PathEscape(name)+"/"+sub, query)
+func (c *GitHubClient) RepoList(ctx context.Context, owner, name, sub string, query url.Values, more func([]json.RawMessage) bool) ([]json.RawMessage, error) {
+	items, err := c.ListWhile(ctx, "/repos/"+url.PathEscape(owner)+"/"+url.PathEscape(name)+"/"+sub, query, more)
 	if IsGitHubNotFound(err) {
 		return nil, nil
 	}

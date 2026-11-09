@@ -34,9 +34,11 @@ type Project struct {
 }
 
 // MetadataProvider writes a project's API metadata (issues, pull requests, ...) as
-// files into dir; the counts and warnings go into the manifest
+// files into dir; the counts and warnings go into the manifest. since is the start of
+// the last complete pass (zero = fetch everything); complete reports that every list
+// was fetched, so the next pass may start from this one.
 type MetadataProvider interface {
-	Metadata(ctx context.Context, p Project, dir string, r *spec.RepoResult) error
+	Metadata(ctx context.Context, p Project, dir string, since time.Time, r *spec.RepoResult) (complete bool, err error)
 }
 
 // Provider lists the projects of a run

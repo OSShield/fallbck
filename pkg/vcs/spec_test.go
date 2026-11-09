@@ -255,6 +255,9 @@ func TestGitHubSpec(t *testing.T) {
 	if (&Spec{Gists: &Gists{IDs: []string{"nope"}}, ConnectionID: conn}).Validate() == nil {
 		t.Error("a bad gist id must be refused")
 	}
+	if got := (&Spec{Groups: []string{"acme"}, Repositories: []string{"https://github.com/other/lib"}}).Summary(); got != "owners acme, 1 repository" {
+		t.Errorf("owners and repositories summary: %q", got)
+	}
 	if id, ok := GistID("https://gist.github.com/1234567"); !ok || id != "1234567" {
 		t.Error("legacy numeric gist ids must be accepted")
 	}

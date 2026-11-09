@@ -62,6 +62,8 @@ type projectOutcome struct {
 	hasWiki    bool
 	hasMeta    bool
 	lfsPending bool
+	// set by a complete metadata pass (metaFull also when it was a full one)
+	metaSince, metaFull time.Time
 }
 
 // Run executes one VCS backup: precheck → list projects → bring every mirror up to
@@ -317,6 +319,10 @@ func applyProfile(auth *Auth, name string, lookup func(string) (*spec.Profile, e
 	return nil
 }
 
+// metadataFullEvery is how often metadata is listed whole instead of since the last
+// pass: the only way to notice issues and comments deleted on GitHub
+const metadataFullEvery = 7 * 24 * time.Hour
+
 // brings one project's mirrors up to date; never returns an error,
 // the outcome says what went into the snapshot (one failing repository must not fail the run)
 func backupProject(ctx context.Context, g *Git, state State, s *spec.Spec, o RunOptions, p Project, prev *ProjectIndex, lfs bool, meta MetadataProvider, activity func(string), now func() time.Time) projectOutcome {
@@ -347,6 +353,11 @@ func backupProject(ctx context.Context, g *Git, state State, s *spec.Spec, o Run
 			r.Status, out.included = spec.RepoStale, true
 			out.hasWiki = prev != nil && prev.HasWiki
 			out.lfsPending = prev != nil && prev.LFSPending
+			// and the metadata of the last pass with it
+			if meta != nil {
+				_, serr := os.Stat(state.MetaDir(p.Key))
+				out.hasMeta = serr == nil
+			}
 		} else {
 			r.Status = spec.RepoFailed
 		}
@@ -391,10 +402,21 @@ func backupProject(ctx context.Context, g *Git, state State, s *spec.Spec, o Run
 	}
 	if meta != nil {
 		activity(p.Path + ": fetching metadata")
-		if err := meta.Metadata(ctx, p, state.MetaDir(p.Key), r); err != nil {
-			r.Warnings = append(r.Warnings, "metadata: "+err.Error())
+		var since time.Time
+		if prev != nil && now().Sub(prev.MetaFull) < metadataFullEvery {
+			since = prev.MetaSince
 		}
-		_, err := os.Stat(state.MetaDir(p.Key))
+		start := now()
+		complete, err := meta.Metadata(ctx, p, state.MetaDir(p.Key), since, r)
+		if err != nil {
+			r.Warnings = append(r.Warnings, "metadata: "+err.Error())
+		} else if complete {
+			out.metaSince = start
+			if since.IsZero() {
+				out.metaFull = start
+			}
+		}
+		_, err = os.Stat(state.MetaDir(p.Key))
 		out.hasMeta = err == nil
 	} else {
 		// The workload was switched off: the snapshot stops carrying it
@@ -455,6 +477,12 @@ func saveIndex(state State, idx *Index, outcomes []projectOutcome, forgetAfter i
 		}
 		if out.included {
 			e.HasWiki, e.LFSPending = out.hasWiki, out.lfsPending
+		}
+		if !out.metaSince.IsZero() {
+			e.MetaSince = out.metaSince
+		}
+		if !out.metaFull.IsZero() {
+			e.MetaFull = out.metaFull
 		}
 	}
 	for key, e := range idx.Projects {

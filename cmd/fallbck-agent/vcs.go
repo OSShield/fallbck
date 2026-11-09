@@ -54,7 +54,7 @@ func vcsProfileCommand(args []string) error {
 	tokenFile := fs.String("token-file", "", "File holding the token (read at every run)")
 	askToken := fs.Bool("ask-token", false, "Prompt for the token without echo (or read one line from standard input)")
 	caFile := fs.String("ca-file", "", "test: CA bundle for an instance with a private CA")
-	provider := fs.String("provider", "", "test: gitlab or github (default: github for github.com, else gitlab)")
+	provider := fs.String("provider", "", "test: gitlab or github (default: github for github.com, else gitlab; GitHub Enterprise Server needs github)")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -142,11 +142,16 @@ func testVCSProfile(store *credstore.Store, name, provider, caFile string) error
 	if err != nil {
 		return err
 	}
-	if provider == "" {
-		provider = vcs.ProviderGitLab
-		if vcs.IsGitHubCom(p.URL) {
+	guessed := false
+	switch provider = strings.ToLower(strings.TrimSpace(provider)); provider {
+	case vcs.ProviderGitLab, vcs.ProviderGitHub:
+	case "":
+		provider, guessed = vcs.ProviderGitLab, !vcs.IsGitHubCom(p.URL)
+		if !guessed {
 			provider = vcs.ProviderGitHub
 		}
+	default:
+		return fmt.Errorf("--provider must be %s or %s", vcs.ProviderGitLab, vcs.ProviderGitHub)
 	}
 	creds := vcs.Credentials{Provider: provider, BaseURL: p.URL, Token: token}
 	if caFile != "" {
@@ -184,6 +189,9 @@ func testVCSProfile(store *credstore.Store, name, provider, caFile string) error
 		}
 	}
 	if err != nil {
+		if guessed {
+			return fmt.Errorf("%w (tested as GitLab; for GitHub Enterprise Server pass --provider github)", err)
+		}
 		return err
 	}
 	fmt.Println("The token works.")
