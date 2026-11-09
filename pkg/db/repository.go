@@ -973,7 +973,7 @@ func (d *DB) UpdateRun(ctx context.Context, run *BackupRun) error {
 	}
 	query := `
 		UPDATE backup_runs
-		SET status = $1, start_time = $2, end_time = $3, bytes_scanned = $4,
+		SET status = $1, start_time = COALESCE($2, start_time), end_time = $3, bytes_scanned = $4,
 		    bytes_uploaded = $5, dedup_ratio = $6, chunk_count = $7,
 		    error_message = $8, pbs_snapshot_id = $9, log_tail = $10, details = $11,
 		    key_fingerprint = $13

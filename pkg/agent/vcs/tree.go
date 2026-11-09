@@ -21,6 +21,11 @@ const (
 	// cannot end in .git, so neither can collide with a subgroup or project.
 	RepositoryDir = "repository.git"
 	WikiDir       = "wiki.git"
+	// MetadataDir holds API metadata as JSON next to repository.git. Not a reserved
+	// segment: GitLab and GitHub allow it as a project name, and only a project nested
+	// below one with metadata collides (BuildTree refuses that; GitHub paths are
+	// owner/name, so it can't happen)
+	MetadataDir = "_metadata"
 	// RestoreReadme / RestoreScript sit at the archive root
 	RestoreReadme = "RESTORE.md"
 	RestoreScript = "restore.sh"
@@ -35,6 +40,8 @@ type TreeProject struct {
 	Repository string
 	// Wiki is the wiki's mirror on disk ("" when none)
 	Wiki string
+	// Metadata is the directory of API metadata on disk ("" when none)
+	Metadata string
 }
 
 // BuildTree assembles the run's virtual tree: every project's mirrors under its
@@ -61,6 +68,7 @@ func BuildTree(name string, projects []TreeProject, now time.Time) (*scan.Node, 
 		return n
 	}
 	seen := map[string]bool{}
+	var withMeta []string
 	for _, pr := range projects {
 		p, err := projectPath(pr.Path)
 		if err != nil {
@@ -82,6 +90,20 @@ func BuildTree(name string, projects []TreeProject, now time.Time) (*scan.Node, 
 				return nil, fmt.Errorf("project %s wiki: %w", p, err)
 			}
 			dir.Children = append(dir.Children, wiki)
+		}
+		if pr.Metadata != "" {
+			meta, err := diskNode(pr.Metadata, MetadataDir)
+			if err != nil {
+				return nil, fmt.Errorf("project %s metadata: %w", p, err)
+			}
+			dir.Children = append(dir.Children, meta)
+			withMeta = append(withMeta, p)
+		}
+	}
+	// ensure() made a directory for every project path and its parents
+	for _, p := range withMeta {
+		if _, ok := dirs[p+"/"+MetadataDir]; ok {
+			return nil, fmt.Errorf("project %s: a project below it collides with its %s directory", p, MetadataDir)
 		}
 	}
 	root.Children = append(root.Children,
@@ -212,12 +234,15 @@ const restoreReadme = `# Restoring repositories from this backup
 Every project is a directory named after its path (the GitLab full path, or
 <host>/<path> for plain git repositories) holding:
 
-- repository.git/ : a bare mirror with all branches, tags and merge request
-  heads (refs/merge-requests/<iid>/head), and Git LFS objects in lfs/objects/
+- repository.git/ : a bare mirror with all branches, tags and merge or pull
+  request heads (refs/merge-requests/<iid>/head, refs/pull/<n>/head), and Git LFS
+  objects in lfs/objects/
 - wiki.git/ : the project wiki, when it has one
+- _metadata/ : GitHub issues, pull requests, comments and releases as JSON, when
+  the job's metadata workload is on
 
-Issues, merge request discussions, CI/CD settings and other project data are not
-part of this backup.
+GitHub gists are under _gists/<owner>/<id>/. CI/CD settings and other project
+data are not part of this backup.
 
 ## Restore one project
 
@@ -233,8 +258,8 @@ part of this backup.
        sh restore.sh <project path> <empty remote URL> [<wiki remote URL>]
 
    This pushes all branches and tags, then the LFS objects (git-lfs required) and,
-   when given a wiki URL, the wiki. Merge request refs are read-only on GitLab and
-   are not pushed; they stay in the backup for reference.
+   when given a wiki URL, the wiki. Merge and pull request refs are read-only on
+   GitLab and GitHub and are not pushed; they stay in the backup for reference.
 
 ## Inspect without restoring to a server
 
@@ -266,7 +291,7 @@ if [ -d "$repo/lfs/objects" ]; then
     fi
 fi
 
-# Branches and tags. Merge request refs are read-only on GitLab and stay in the backup.
+# Branches and tags. Merge/pull request refs are read-only on the hosts and stay in the backup.
 git --git-dir="$repo" push "$2" '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*'
 
 if [ $# -ge 3 ]; then

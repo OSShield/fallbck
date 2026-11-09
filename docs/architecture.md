@@ -87,7 +87,7 @@ Retention is a PBS prune job. FallBCK never prunes or deletes on PBS. Restores u
 | `pkg/pvebackup`, `pkg/agent/pvebackup` | PVE job spec and manifest; collectors, restore runbook |
 | `pkg/dockerbackup`, `pkg/agent/dockerbackup` | Docker job spec and settings; Engine API client, collectors, volume reads, pause, runbook |
 | `pkg/m365`, `pkg/agent/m365` | M365 job spec, tenant model, Graph auth; Graph client, delta index, virtual tree, collectors |
-| `pkg/vcs`, `pkg/agent/vcs` | VCS job spec, connection model, agent credential profiles, GitLab connection test, manifest; git runner, mirrors, virtual tree, run loop, state sweep |
+| `pkg/vcs`, `pkg/agent/vcs` | VCS job spec, connection model, agent credential profiles, GitLab and GitHub API clients and connection tests, manifest; git runner, mirrors, virtual tree, run loop, state sweep |
 | `pkg/naming` | PBS group names and glob selection shared by M365 and VCS |
 | `pkg/inventory` | What agents report about their host (periodic summary and on-demand detail) |
 | `pkg/agenthealth` | The alerts on the agent status page |

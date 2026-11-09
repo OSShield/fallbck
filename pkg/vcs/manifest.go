@@ -55,7 +55,7 @@ type JobInfo struct {
 type SourceInfo struct {
 	Provider string `json:"provider"`
 	BaseURL  string `json:"base_url"`
-	// Version of the GitLab instance (empty for the git provider)
+	// Version of the GitLab instance (empty for the git and GitHub providers)
 	Version string `json:"version,omitempty"`
 	// Username the token belongs to and whether it is an administrator: a job with
 	// no groups is only complete with an admin token
@@ -85,6 +85,13 @@ type RepoResult struct {
 	Wiki     bool  `json:"wiki,omitempty"`
 	Archived bool  `json:"archived,omitempty"`
 	Fork     bool  `json:"fork,omitempty"`
+	// Kind is "gist" for GitHub gists (empty for repositories)
+	Kind string `json:"kind,omitempty"`
+	// Metadata counts what the metadata workload stored (GitHub)
+	Issues   int `json:"issues,omitempty"`
+	Pulls    int `json:"pulls,omitempty"`
+	Comments int `json:"comments,omitempty"`
+	Releases int `json:"releases,omitempty"`
 	// Warnings that did not fail the repository (wiki fetch, repack)
 	Warnings []string `json:"warnings,omitempty"`
 }

@@ -37,6 +37,10 @@ type ProjectIndex struct {
 	LFSPending bool `json:"lfs_pending,omitempty"`
 	// counts consecutive runs the project was not selected
 	Missing int `json:"missing,omitempty"`
+	// MetaSince is when the last complete metadata pass started (the next one fetches
+	// only what changed since); MetaFull when the last complete full pass did
+	MetaSince time.Time `json:"meta_since,omitzero"`
+	MetaFull  time.Time `json:"meta_full,omitzero"`
 }
 
 // State is a job's directory under the agent's VCS state directory
@@ -49,6 +53,9 @@ func (s State) indexPath() string { return filepath.Join(s.Dir, "index.json") }
 // RepoDir / WikiDir are the mirrors of a project
 func (s State) RepoDir(key string) string { return filepath.Join(s.Dir, "mirrors", key+".git") }
 func (s State) WikiDir(key string) string { return filepath.Join(s.Dir, "mirrors", key+".wiki.git") }
+
+// MetaDir holds a project's API metadata (JSON files; the metadata workload)
+func (s State) MetaDir(key string) string { return filepath.Join(s.Dir, "metadata", key) }
 
 // Load reads the index; a missing or outdated file is an empty index
 func (s State) Load() (*Index, error) {
@@ -89,6 +96,9 @@ func (s State) Save(idx *Index) error {
 // Forget deletes a project's mirrors
 func (s State) Forget(key string) error {
 	if err := os.RemoveAll(s.RepoDir(key)); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(s.MetaDir(key)); err != nil {
 		return err
 	}
 	return os.RemoveAll(s.WikiDir(key))

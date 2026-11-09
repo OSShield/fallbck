@@ -33,6 +33,9 @@ type Auth struct {
 	Token    string
 	// CAPEM is an optional CA bundle for the host (written to a private temp file for http.sslCAInfo)
 	CAPEM string
+	// ExtraURLs also get the header: hosts of the same provider outside BaseURL
+	// (gist.github.com for github.com connections)
+	ExtraURLs []string
 }
 
 // DefaultUsername is sent with the token when Auth.Username is empty
@@ -127,6 +130,9 @@ func (g *Git) env(headerScope string) []string {
 			scope = strings.TrimRight(headerScope, "/")
 		}
 		cfg = append(cfg, [2]string{"http." + scope + "/.extraHeader", "Authorization: Basic " + basicCredentials(g.auth.Username, g.auth.Token)})
+		for _, u := range g.auth.ExtraURLs {
+			cfg = append(cfg, [2]string{"http." + strings.TrimRight(u, "/") + "/.extraHeader", "Authorization: Basic " + basicCredentials(g.auth.Username, g.auth.Token)})
+		}
 	}
 	if g.caFile != "" && g.auth.BaseURL != "" {
 		cfg = append(cfg, [2]string{"http." + g.auth.BaseURL + "/.sslCAInfo", g.caFile})

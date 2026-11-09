@@ -209,6 +209,8 @@ nfpms:
     suggests:
       - postgresql-client
       - mariadb-client
+      - git
+      - git-lfs
     file_name_template: >-
       {{ .ProjectName }}_agent_
       {{- title .Os }}_

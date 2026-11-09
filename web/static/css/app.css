@@ -942,6 +942,8 @@ tr.job-row[hidden] {
 .vcs-gitlab-opts[hidden],
 .vcs-git-opts[hidden],
 .conn-gitlab-opts[hidden],
-.conn-git-opts[hidden] {
+.conn-git-opts[hidden],
+.conn-github-opts[hidden],
+[data-providers][hidden] {
   display: none !important;
 }

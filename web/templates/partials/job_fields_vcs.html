@@ -2,43 +2,65 @@
 {{define "job-fields-vcs"}}
 <fieldset id="job-vcs-fields" style="border: 0; padding: 0; margin: 0;" hidden disabled>
   <div style="background-color: var(--bg-subtle); padding: 14px; border-radius: var(--radius-sm); margin-bottom: 16px; font-size: 13px;">
-    The agent keeps a bare mirror of every repository in its VCS state directory and fetches only what changed; each run writes one snapshot with every mirror (branches, tags, merge request heads, LFS objects, GitLab wikis) and a restore script. Needs git 2.31 or newer on the agent, and git-lfs for LFS repositories.
+    The agent keeps a bare mirror of every repository in its VCS state directory and fetches only what changed; each run writes one snapshot with every mirror (branches, tags, merge and pull request heads, LFS objects, wikis, GitHub gists) and a restore script. Needs git 2.31 or newer on the agent, and git-lfs for LFS repositories.
   </div>
   <div class="form-group">
     <label>Connection</label>
     <div style="display: flex; gap: 8px; align-items: center;">
       <select name="vcs_connection_id" class="form-control" required onchange="updateVCSProvider(this.form)">
         <option value="">-- Choose connection --</option>
-        {{range .Connections}}<option value="{{.ID}}" data-provider="{{.Provider}}" data-name="{{.Name}}" data-url="{{.BaseURL}}" data-token="{{if .HasToken}}true{{else}}false{{end}}">{{.Name}} ({{if eq .Provider "gitlab"}}GitLab{{else}}git{{end}}, {{.BaseURL}})</option>{{end}}
+        {{range .Connections}}<option value="{{.ID}}" data-provider="{{.Provider}}" data-name="{{.Name}}" data-url="{{.BaseURL}}" data-token="{{if .HasToken}}true{{else}}false{{end}}">{{.Name}} ({{if eq .Provider "gitlab"}}GitLab{{else if eq .Provider "github"}}GitHub{{else}}git{{end}}, {{.BaseURL}})</option>{{end}}
       </select>
       <a href="/vcs" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">Manage connections</a>
     </div>
   </div>
 
-  <div class="vcs-gitlab-opts">
+  <div data-providers="gitlab github">
     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
       <div class="form-group">
-        <label>Groups (full paths, one per line)</label>
+        <label data-providers="gitlab">Groups (full paths, one per line)</label>
+        <label data-providers="github" hidden>Owners (organizations or users, one per line)</label>
         <textarea name="vcs_groups" class="form-control" rows="3" placeholder="platform&#10;data/pipelines"></textarea>
-        <span class="form-text">Empty: every project the token can see (an administrator's token sees all; not allowed on gitlab.com).</span>
+        <span class="form-text" data-providers="gitlab">Empty: every project the token can see (an administrator's token sees all; not allowed on gitlab.com).</span>
+        <span class="form-text" data-providers="github" hidden>The token's own login includes its private repositories; other users give their public ones.</span>
       </div>
       <div class="form-group">
         <label>Exclude (project or group path patterns, optional)</label>
         <textarea name="vcs_exclude" class="form-control" rows="3" placeholder="platform/sandbox&#10;*/playground-*"></textarea>
-        <span class="form-text">A match on a group leaves out everything below it.</span>
+        <span class="form-text" data-providers="gitlab">A match on a group leaves out everything below it.</span>
+        <span class="form-text" data-providers="github" hidden>Globs on owner/name; explicit repositories and gists are always kept.</span>
       </div>
     </div>
     <div style="display: flex; gap: 16px; margin-bottom: 16px; font-size: 13px; flex-wrap: wrap;">
-      <label style="display: flex; align-items: center; gap: 6px;"><input type="checkbox" name="vcs_include_subgroups" checked> Include subgroups</label>
+      <label data-providers="gitlab" style="display: flex; align-items: center; gap: 6px;"><input type="checkbox" name="vcs_include_subgroups" checked> Include subgroups</label>
       <label style="display: flex; align-items: center; gap: 6px;"><input type="checkbox" name="vcs_archived" checked> Include archived projects</label>
       <label style="display: flex; align-items: center; gap: 6px;"><input type="checkbox" name="vcs_forks" checked> Include forks</label>
+      <label data-providers="github" hidden style="display: flex; align-items: center; gap: 6px;"><input type="checkbox" name="vcs_starred"> Every repository the token's user has starred</label>
     </div>
   </div>
 
-  <div class="vcs-git-opts" hidden>
+  <div data-providers="git github" hidden>
     <div class="form-group">
-      <label>Repository URLs (HTTPS, one per line, below the connection URL)</label>
+      <label data-providers="git">Repository URLs (HTTPS, one per line, below the connection URL)</label>
+      <label data-providers="github" hidden>Repositories (optional, one URL per line, like https://github.com/owner/name)</label>
       <textarea name="vcs_repositories" class="form-control" rows="4" placeholder="https://git.example.com/team/app.git&#10;https://git.example.com/team/infra.git"></textarea>
+    </div>
+  </div>
+
+  <div data-providers="github" hidden>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+      <div class="form-group">
+        <label>Gists: users (their public gists)</label>
+        <textarea name="vcs_gist_users" class="form-control" rows="2" placeholder="octocat"></textarea>
+      </div>
+      <div class="form-group">
+        <label>Gists: ids or URLs</label>
+        <textarea name="vcs_gist_ids" class="form-control" rows="2" placeholder="https://gist.github.com/octocat/6cad326836d38bd3a7ae"></textarea>
+      </div>
+    </div>
+    <div style="display: flex; gap: 16px; margin-bottom: 16px; font-size: 13px; flex-wrap: wrap;">
+      <label style="display: flex; align-items: center; gap: 6px;"><input type="checkbox" name="vcs_gists_own"> Every gist of the token's user (secret ones included)</label>
+      <label style="display: flex; align-items: center; gap: 6px;"><input type="checkbox" name="vcs_gists_starred"> Starred gists</label>
     </div>
   </div>
 
@@ -46,15 +68,17 @@
     <label>Workloads</label>
     <div style="display: flex; flex-wrap: wrap; gap: 16px; font-size: 13px;">
       <label style="display: flex; align-items: center; gap: 6px;"><input type="checkbox" name="vcs_wl_lfs" checked> Git LFS objects</label>
-      <label class="vcs-gitlab-opts" style="display: flex; align-items: center; gap: 6px;"><input type="checkbox" name="vcs_wl_wiki" checked> Project wikis</label>
+      <label data-providers="gitlab github" style="display: flex; align-items: center; gap: 6px;"><input type="checkbox" name="vcs_wl_wiki" checked> Project wikis</label>
+      <label data-providers="github" hidden style="display: flex; align-items: center; gap: 6px;"><input type="checkbox" name="vcs_wl_metadata"> Issues, pull requests, comments and releases as JSON</label>
     </div>
   </div>
 
   <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
-    <div class="form-group vcs-gitlab-opts">
+    <div class="form-group" data-providers="gitlab github">
       <label>Skip repositories larger than (GB, optional)</label>
       <input type="number" name="vcs_max_repo_size_gb" class="form-control" min="0" step="0.1" placeholder="no limit">
-      <span class="form-text">LFS objects not counted; GitLab reports sizes to tokens with the Reporter role or higher.</span>
+      <span class="form-text" data-providers="gitlab">LFS objects not counted; GitLab reports sizes to tokens with the Reporter role or higher.</span>
+      <span class="form-text" data-providers="github" hidden>LFS objects not counted; explicit repositories are skipped too when larger.</span>
     </div>
     <div class="form-group">
       <label>Repositories fetched at once</label>

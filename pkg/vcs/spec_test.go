@@ -31,7 +31,6 @@ func TestSpecValidate(t *testing.T) {
 		{ConnectionID: conn, Repositories: []string{"https://user:pw@git.example.com/a.git"}},
 		{ConnectionID: conn, Repositories: []string{"https://git.example.com/"}},
 		{ConnectionID: conn, Repositories: []string{"https://git.example.com/a.git", "https://git.example.com/a"}},
-		{ConnectionID: conn, Groups: []string{"g"}, Repositories: []string{"https://git.example.com/a.git"}},
 		{ConnectionID: conn, MaxRepoSize: -1},
 		{ConnectionID: conn, Concurrency: MaxConcurrency + 1},
 		{ConnectionID: conn, BackupID: "no spaces"},
@@ -87,6 +86,13 @@ func TestValidateFor(t *testing.T) {
 	}
 	if err := outside.ValidateFor(git); err == nil {
 		t.Error("a repository outside the base URL must be refused (prefix must end on a segment)")
+	}
+	both := &Spec{ConnectionID: conn, Groups: []string{"g"}, Repositories: []string{"https://git.example.com/team/a.git"}}
+	if err := both.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if both.ValidateFor(gl) == nil || both.ValidateFor(git) == nil {
+		t.Error("groups and repositories together are for GitHub connections only")
 	}
 	if err := whole.ValidateFor(nil); err == nil {
 		t.Error("nil connection")
@@ -198,5 +204,67 @@ func TestGitVersionOK(t *testing.T) {
 	}
 	if !strings.Contains(ErrInvalidSpec.Error(), "VCS") {
 		t.Error("error text")
+	}
+}
+
+func TestGitHubSpec(t *testing.T) {
+	conn := uuid.New()
+	gh := &Connection{Provider: ProviderGitHub, BaseURL: "https://github.com", Token: "ghp_x"}
+	ghes := &Connection{Provider: ProviderGitHub, BaseURL: "https://ghe.example.com", Token: "ghp_x"}
+	id := "0123456789abcdef0123456789ABCDEF"
+	s := &Spec{ConnectionID: conn, Groups: []string{"acme", "1ARdotNO"}, Repositories: []string{"https://github.com/torvalds/linux.git"},
+		Starred: true, Gists: &Gists{Own: true, Users: []string{"octo", "OCTO"}, IDs: []string{id, "https://gist.github.com/octo/" + id + "#file-a"}},
+		Workloads: Workloads{Metadata: true}}
+	if err := s.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ValidateFor(gh); err != nil {
+		t.Fatalf("github job: %v", err)
+	}
+	if len(s.Gists.Users) != 1 || len(s.Gists.IDs) != 1 || s.Gists.IDs[0] != strings.ToLower(id) {
+		t.Errorf("gists not normalised: %+v", s.Gists)
+	}
+	if got := s.Summary(); got != "owners acme, 1ARdotNO, 1 repository, starred, own gists, gists of octo, 1 gists" {
+		t.Errorf("Summary = %q", got)
+	}
+	c := s.Clone()
+	c.Gists.Users[0] = "changed"
+	if s.Gists.Users[0] != "octo" || !c.Workloads.Metadata {
+		t.Error("Clone shares the gist lists or drops metadata")
+	}
+	if err := s.ValidateFor(ghes); err == nil {
+		t.Error("a github.com repository on an Enterprise connection must be refused")
+	}
+	for name, bad := range map[string]*Spec{
+		"nested owner":  {ConnectionID: conn, Groups: []string{"a/b"}},
+		"nothing":       {ConnectionID: conn},
+		"three segment": {ConnectionID: conn, Repositories: []string{"https://github.com/a/b/c"}},
+	} {
+		if err := bad.Validate(); err == nil {
+			if err := bad.ValidateFor(gh); err == nil {
+				t.Errorf("%s: accepted", name)
+			}
+		}
+	}
+	if err := (&Spec{ConnectionID: conn, Starred: true}).ValidateFor(&Connection{Provider: ProviderGitHub, BaseURL: "https://github.com"}); err == nil {
+		t.Error("a GitHub job needs a token or a profile")
+	}
+	if err := (&Spec{ConnectionID: conn, Starred: true, Repositories: []string{"https://git.example.com/team/a.git"}}).ValidateFor(&Connection{Provider: ProviderGit, BaseURL: "https://git.example.com/team"}); err == nil {
+		t.Error("starred on a git connection must be refused")
+	}
+	if (&Spec{Gists: &Gists{IDs: []string{"nope"}}, ConnectionID: conn}).Validate() == nil {
+		t.Error("a bad gist id must be refused")
+	}
+	if got := (&Spec{Groups: []string{"acme"}, Repositories: []string{"https://github.com/other/lib"}}).Summary(); got != "owners acme, 1 repository" {
+		t.Errorf("owners and repositories summary: %q", got)
+	}
+	if id, ok := GistID("https://gist.github.com/1234567"); !ok || id != "1234567" {
+		t.Error("legacy numeric gist ids must be accepted")
+	}
+	if GitHubAPIURL("https://github.com") != "https://api.github.com" || GitHubAPIURL("https://ghe.example.com") != "https://ghe.example.com/api/v3" {
+		t.Error("GitHubAPIURL")
+	}
+	if GistBaseURL("https://github.com") != "https://gist.github.com" || GistBaseURL("https://ghe.example.com") != "https://ghe.example.com/gist" {
+		t.Error("GistBaseURL")
 	}
 }

@@ -25,7 +25,7 @@ func TestConnectionValidate(t *testing.T) {
 
 	bad := []Connection{
 		{Provider: ProviderGitLab, BaseURL: "https://x", Token: "t"},
-		{Name: "n", Provider: "github", BaseURL: "https://x", Token: "t"},
+		{Name: "n", Provider: "bitbucket", BaseURL: "https://x", Token: "t"},
 		{Name: "n", Provider: ProviderGitLab, BaseURL: "http://x", Token: "t"},
 		{Name: "n", Provider: ProviderGitLab, BaseURL: "https://u:p@x", Token: "t"},
 		{Name: "n", Provider: ProviderGitLab, BaseURL: "https://x/?a=b", Token: "t"},

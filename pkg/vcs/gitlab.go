@@ -42,8 +42,11 @@ type Instance struct {
 // failed so an administrator can tell a wrong token from a blocked egress or a
 // missing scope; problems that do not stop a backup come back as warnings.
 func TestConnection(ctx context.Context, c Credentials, client *http.Client) (*Instance, error) {
+	if c.Provider == ProviderGitHub {
+		return TestGitHubConnection(ctx, c, client)
+	}
 	if c.Provider != ProviderGitLab {
-		return nil, fmt.Errorf("connection test is only available for GitLab connections")
+		return nil, fmt.Errorf("connection test is only available for GitLab and GitHub connections")
 	}
 	inst, err := Identify(ctx, c, client)
 	if err != nil {

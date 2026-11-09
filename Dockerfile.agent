@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # fallbck-agent: backup worker that talks to the FallBCK server (REST + Temporal gRPC via
 # the server's gateway) through a single server URL. Two targets:
-#   slim  (ghcr.io/fallbck/agent:latest) filesystem, Proxmox VE and Docker host jobs
+#   slim  (ghcr.io/fallbck/agent:latest) filesystem, Proxmox VE, Docker host and git repository jobs
 #   tools (ghcr.io/fallbck/agent:tools)  slim plus the PostgreSQL, MariaDB and MongoDB client
 #                                       tools, so the same agent runs database jobs
 # Built by GoReleaser (dockers_v2, one entry per target) from the prebuilt
@@ -16,7 +16,8 @@ RUN apk add --no-cache mariadb
 # ---- Runtime stage: slim -----------------------------------------------------
 FROM alpine:3.24 AS slim
 
-RUN apk add --no-cache ca-certificates tzdata
+# git and git-lfs mirror repositories for git repository (VCS) jobs
+RUN apk add --no-cache ca-certificates tzdata git git-lfs
 
 RUN addgroup -S fallbck && adduser -S -G fallbck -u 10002 fallbck && \
     mkdir -p /var/lib/fallbck/agent /backup-data && \

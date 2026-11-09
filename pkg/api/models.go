@@ -33,7 +33,7 @@ type EnrollRequest struct {
 	GitVersion string `json:"git_version,omitempty"`
 	GitLFS     bool   `json:"git_lfs,omitempty"`
 	// VCSProviders are the VCS providers a filesystem agent can list repositories
-	// of (git, gitlab); agents that predate the list only run git jobs
+	// of (git, gitlab, github); agents that predate the list only run git jobs
 	VCSProviders []string `json:"vcs_providers,omitempty"`
 }
 

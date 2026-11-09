@@ -1,15 +1,16 @@
 # Git repositories
 
-Backs up git repositories over HTTPS: every branch, tag and merge request head, plus Git LFS objects and GitLab wikis. Any `fallbck-agent` can run these jobs once it has git 2.31 or newer, and git-lfs for repositories that use LFS.
+Backs up git repositories over HTTPS: every branch, tag and merge or pull request head, plus Git LFS objects and wikis. Any `fallbck-agent` can run these jobs once it has git 2.31 or newer, and git-lfs for repositories that use LFS.
 
 There are two kinds of connection:
 
 - **GitLab** (`gitlab`): the agent lists the projects of the groups you name through the GitLab API, so new projects are picked up automatically. Works with gitlab.com and self-managed GitLab.
+- **GitHub** (`github`): the agent lists the repositories of the owners (organizations or users) you name, the token user's starred repositories and gists through the GitHub API. Works with github.com and GitHub Enterprise Server.
 - **Plain git** (`git`): any HTTPS git host; the job lists the repository URLs.
 
 This is a beta. Set it up in the web UI (**Git Connections**, then **Onboarding → Git repositories**) or through the [API](../reference/api.md#vcs-connections); both are shown below.
 
-**It currently backs up code, not projects**: issues, merge request discussions, CI/CD settings and releases are not included.
+**It backs up code, not projects**: issues, merge request discussions, CI/CD settings and releases are not included. The exception is GitHub's opt-in `metadata` workload, which stores issues, pull requests, comments and releases as JSON next to the mirror.
 
 ## 1. Prepare the agent
 
@@ -26,7 +27,7 @@ Install git and git-lfs on the agent host. The agent reports what it found with 
 
 A connection is the git host and, optionally, the token to read it with. Every repository of a job must be below the connection's URL: the token is only ever sent there.
 
-In the web UI: **Git Connections → Add Connection**. For GitLab, press **Test** on the list afterwards: it checks the token's scopes and records when it expires. Or through the API:
+In the web UI: **Git Connections → Add Connection**. For GitLab and GitHub, press **Test** on the list afterwards: it checks the token's scopes and records when it expires. Or through the API:
 
 ```bash
 curl -X POST https://fallbck.example.com/api/v1/vcs/connections \
@@ -34,7 +35,7 @@ curl -X POST https://fallbck.example.com/api/v1/vcs/connections \
   -d '{"name": "gitlab", "provider": "gitlab", "base_url": "https://gitlab.example.com", "token": "glpat-..."}'
 ```
 
-For a plain git host, use `"provider": "git"` and the URL every repository is below (`https://git.example.com/team`).
+For GitHub, use `"provider": "github"` and `"base_url": "https://github.com"` (or your GitHub Enterprise Server URL). For a plain git host, use `"provider": "git"` and the URL every repository is below (`https://git.example.com/team`).
 
 ### GitLab tokens
 
@@ -47,6 +48,12 @@ Which projects a job sees depends on the token:
 
 The token is sealed on the server and handed to the agent per run. It is sent as HTTP basic auth with the user name `oauth2`, which GitLab accepts. For hosts that want a specific user name, keep the token on the agent instead (next step). Add `ca_pem` for a host with a private CA. Leave out `token` for public repositories.
 
+### GitHub tokens
+
+A classic personal access token needs `repo` (private repositories), `read:org` (organization repositories) and `gist` (secret gists). A fine-grained token needs read access to *Contents*, *Metadata*, *Issues* and *Pull requests* on the repositories it should see. **Test** reads `/user` and reports the token's user, scopes and expiry. Starred repositories and "own gists" are those of the token's user.
+
+On github.com, gists live on `gist.github.com`, so the token is sent there as well, and only when the job backs up gists. GitHub Enterprise serves both below the connection URL.
+
 ## 3. Keep the token on the agent (optional)
 
 If the server shouldn't hold the token, create the connection without one and store the token in the agent's encrypted credential store:
@@ -54,10 +61,10 @@ If the server shouldn't hold the token, create the connection without one and st
 ```bash
 fallbck-agent vcs profile create --name git-internal --url https://git.example.com --ask-token
 fallbck-agent vcs profile list
-fallbck-agent vcs profile test --name git-internal   # GitLab: checks the token and records its expiry
+fallbck-agent vcs profile test --name git-internal   # GitLab or GitHub: checks the token and records its expiry
 ```
 
-The job then names the profile (`"profile": "git-internal"`). The agent only uses a profile for the URL it was created for, so the profile's `--url` must equal the connection's `base_url`. Use `--token-file` instead of `--ask-token` when a secret manager keeps the token in a file. `--username` sets the basic auth user name.
+The job then names the profile (`"profile": "git-internal"`). The agent only uses a profile for the URL it was created for, so the profile's `--url` must equal the connection's `base_url`. Use `--token-file` instead of `--ask-token` when a secret manager keeps the token in a file. `--username` sets the basic auth user name. `profile test` assumes GitHub for github.com and GitLab for everything else; add `--provider github` for GitHub Enterprise Server.
 
 ## 4. Create a job
 
@@ -95,6 +102,39 @@ Through the API, a GitLab job selects projects by group:
 | `max_repo_size` | no limit | Skip repositories larger than this many bytes (LFS objects not counted). GitLab only reports sizes to tokens with at least the Reporter role. |
 | `concurrency` | 4 | Repositories fetched at once. |
 
+A GitHub job names owners, explicit repositories, starred repositories and gists in any mix:
+
+```json
+{
+  "name": "github",
+  "agent_id": "<uuid>",
+  "target_id": "<uuid>",
+  "job_type": "vcs",
+  "schedule_cron": "0 3 * * *",
+  "vcs_config": {
+    "connection_id": "<uuid>",
+    "groups": ["acme", "octocat"],
+    "repositories": ["https://github.com/torvalds/linux"],
+    "starred": true,
+    "gists": {"own": true, "starred": true, "users": ["octocat"], "ids": ["https://gist.github.com/octocat/6cad326836d38bd3a7ae"]},
+    "exclude": ["acme/scratch-*"],
+    "forks": false,
+    "workloads": {"lfs": true, "wiki": true, "metadata": true}
+  }
+}
+```
+
+| Field | Default | |
+|---|---|---|
+| `groups` | none | Organization or user logins. For an organization, every repository the token can see; for the token's own login, its repositories including private ones; for another user, their public repositories. |
+| `repositories` | none | `https://github.com/<owner>/<name>` URLs. Always backed up: the filters don't apply. |
+| `starred` | `false` | Every repository the token's user has starred. |
+| `gists` | none | `own` (the token user's gists, secret ones included), `starred`, `users` (their public gists) and `ids` (ids or URLs). Gists are not filtered. |
+| `exclude`, `archived`, `forks`, `max_repo_size` | as for GitLab | Globs on `owner/name`; apply to listed repositories, not to explicit ones. |
+| `workloads.metadata` | `false` | Issues (with pull requests), issue comments, pull requests, review comments, releases, labels and milestones as JSON in `_metadata/`; for gists, the gist object and its comments. A list that fails is a warning and keeps its previous file. After the first run, issues, pull requests and comments only fetch what changed since the last run; once a week everything is listed again, which is when items deleted on GitHub drop out. |
+
+Mirrors are kept by GitHub's repository id, so a renamed or transferred repository carries on from its mirror. API rate limits are waited out (up to an hour per request) instead of failing the run.
+
 A plain git job lists its repositories instead:
 
 ```json
@@ -126,8 +166,10 @@ Each run writes **one snapshot** in the group `host/vcs-<connection name>`:
 
 | Path | Contents |
 |---|---|
-| `vcs.pxar` → `<path>/repository.git/` | Bare mirror: branches, tags, `refs/merge-requests/*/head`, LFS objects in `lfs/objects/`. `<path>` is the project's full path for GitLab (`platform/api`) and `<host>/<path>` for plain git. |
-| `vcs.pxar` → `<path>/wiki.git/` | The project wiki (GitLab, when it has pages) |
+| `vcs.pxar` → `<path>/repository.git/` | Bare mirror: branches, tags, `refs/merge-requests/*/head` (GitLab) or `refs/pull/*/head` (GitHub), LFS objects in `lfs/objects/`. `<path>` is the project's full path for GitLab (`platform/api`), `<owner>/<name>` for GitHub and `<host>/<path>` for plain git. |
+| `vcs.pxar` → `<path>/wiki.git/` | The project wiki (GitLab and GitHub, when it has pages) |
+| `vcs.pxar` → `<path>/_metadata/` | GitHub issues, pull requests, comments and releases as JSON (`metadata` workload) |
+| `vcs.pxar` → `_gists/<owner>/<id>/` | GitHub gists: `repository.git/`, and `_metadata/` with the gist and its comments |
 | `vcs.pxar` → `RESTORE.md`, `restore.sh` | How to restore, and a script that does it |
 | `fallbck-vcs.json.blob` | The run manifest: every repository and how its fetch went, plus the GitLab version and the token's user |
 
@@ -149,4 +191,4 @@ proxmox-backup-client restore host/vcs-git-internal/<time> vcs.pxar ./restore
 sh ./restore/restore.sh git.example.com/team/app https://git.example.com/team/app-restored.git
 ```
 
-This pushes all branches, tags and LFS objects. Merge request refs stay in the backup: GitLab doesn't accept pushes to them. To look at the code without a server, `git clone ./restore/git.example.com/team/app/repository.git`.
+This pushes all branches, tags and LFS objects. Merge and pull request refs stay in the backup: GitLab and GitHub don't accept pushes to them. For a gist, create a new gist and run `git --git-dir=_gists/<owner>/<id>/repository.git push --force <gist URL>.git HEAD:main`. To look at the code without a server, `git clone ./restore/git.example.com/team/app/repository.git`.
