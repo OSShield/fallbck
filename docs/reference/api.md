@@ -155,9 +155,9 @@ For certificate auth, use `"auth_method": "certificate"` with `certificate_pem` 
 | `POST` | `/vcs/connections` | Create. |
 | `GET` | `/vcs/connections` | |
 | `GET` | `/vcs/connections/{id}` | |
-| `PUT` | `/vcs/connections/{id}` | A blank `token` keeps the stored one; `"clear_token": true` removes it. The provider can't change while jobs use the connection. |
+| `PUT` | `/vcs/connections/{id}` | A blank `token` or `app_key` keeps the stored one; `"clear_token": true` removes the token. The provider can't change while jobs use the connection. |
 | `DELETE` | `/vcs/connections/{id}` | Refused while jobs still use it. |
-| `POST` | `/vcs/connections/{id}/test` | GitLab and GitHub: checks the token, its scopes and expiry. Answers `"tested": false` for git connections and connections without a token. |
+| `POST` | `/vcs/connections/{id}/test` | GitLab and GitHub: checks the token, its scopes and expiry, or a GitHub App's key and installation. Answers `"tested": false` for git connections and connections without a token. |
 
 ```json
 {
@@ -169,7 +169,7 @@ For certificate auth, use `"auth_method": "certificate"` with `certificate_pem` 
 }
 ```
 
-`provider` is `git` (a list of repository URLs below `base_url`), `gitlab` (projects listed through the GitLab API, selected by group) or `github` (owners, starred repositories and gists listed through the GitHub API; `base_url` is `https://github.com` or a GitHub Enterprise Server). A GitLab or GitHub job needs an agent that reports that provider: update older agents first. The token is optional and write-only: leave it out when the jobs use an agent credential profile. Needs the `connections:*` permissions. See [Git repositories](../agents/vcs.md).
+`provider` is `git` (a list of repository URLs below `base_url`), `gitlab` (projects listed through the GitLab API, selected by group) or `github` (owners, starred repositories and gists listed through the GitHub API; `base_url` is `https://github.com` or a GitHub Enterprise Server). A GitLab or GitHub job needs an agent that reports that provider: update older agents first. The token is optional and write-only: leave it out when the jobs use an agent credential profile. A GitHub connection can authenticate as a GitHub App instead: `"auth_type": "github_app"` with `app_id`, `installation_id` and the PEM `app_key` (write-only, `has_token` reports whether one is stored); the server then mints a token for every run. Needs the `connections:*` permissions. See [Git repositories](../agents/vcs.md).
 
 ## Jobs
 

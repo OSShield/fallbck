@@ -9,7 +9,7 @@
     <div style="display: flex; gap: 8px; align-items: center;">
       <select name="vcs_connection_id" class="form-control" required onchange="updateVCSProvider(this.form)">
         <option value="">-- Choose connection --</option>
-        {{range .Connections}}<option value="{{.ID}}" data-provider="{{.Provider}}" data-name="{{.Name}}" data-url="{{.BaseURL}}" data-token="{{if .HasToken}}true{{else}}false{{end}}">{{.Name}} ({{if eq .Provider "gitlab"}}GitLab{{else if eq .Provider "github"}}GitHub{{else}}git{{end}}, {{.BaseURL}})</option>{{end}}
+        {{range .Connections}}<option value="{{.ID}}" data-provider="{{.Provider}}" data-name="{{.Name}}" data-url="{{.BaseURL}}" data-token="{{if .HasToken}}true{{else}}false{{end}}" data-auth="{{.AuthType}}">{{.Name}} ({{if eq .Provider "gitlab"}}GitLab{{else if eq .Provider "github"}}GitHub{{else}}git{{end}}, {{.BaseURL}})</option>{{end}}
       </select>
       <a href="/vcs" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">Manage connections</a>
     </div>
@@ -35,7 +35,7 @@
       <label data-providers="gitlab" style="display: flex; align-items: center; gap: 6px;"><input type="checkbox" name="vcs_include_subgroups" checked> Include subgroups</label>
       <label style="display: flex; align-items: center; gap: 6px;"><input type="checkbox" name="vcs_archived" checked> Include archived projects</label>
       <label style="display: flex; align-items: center; gap: 6px;"><input type="checkbox" name="vcs_forks" checked> Include forks</label>
-      <label data-providers="github" hidden style="display: flex; align-items: center; gap: 6px;"><input type="checkbox" name="vcs_starred"> Every repository the token's user has starred</label>
+      <label data-providers="github" data-user-only hidden style="display: flex; align-items: center; gap: 6px;"><input type="checkbox" name="vcs_starred"> Every repository the token's user has starred</label>
     </div>
   </div>
 
@@ -47,7 +47,7 @@
     </div>
   </div>
 
-  <div data-providers="github" hidden>
+  <div data-providers="github" data-user-only hidden>
     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
       <div class="form-group">
         <label>Gists: users (their public gists)</label>

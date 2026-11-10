@@ -1,7 +1,11 @@
 package credstore
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"os"
 	"strings"
@@ -81,5 +85,28 @@ func TestVCSProfiles(t *testing.T) {
 	}
 	if err := s.DeleteVCS("gitlab-internal"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("deleting twice: %v", err)
+	}
+}
+
+// A GitHub App profile keeps its key encrypted and out of summaries
+func TestVCSGitHubAppProfile(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pemKey := string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}))
+	dir := t.TempDir()
+	s := Open(dir)
+	if err := s.PutVCS("gh-app", vcs.Profile{URL: "https://github.com", AuthType: vcs.AuthGitHubApp, AppID: 1, InstallationID: 2, AppKey: pemKey}); err != nil {
+		t.Fatal(err)
+	}
+	p, err := Open(dir).VCSProfile("gh-app")
+	if err != nil || p.AppKey != strings.TrimSpace(pemKey) || p.AuthType != vcs.AuthGitHubApp || p.InstallationID != 2 {
+		t.Fatalf("profile %+v %v", p, err)
+	}
+	all, _ := s.LoadVCS()
+	out, _ := json.Marshal(VCSSummaries(all))
+	if strings.Contains(string(out), "PRIVATE KEY") || !strings.Contains(string(out), `"auth_type":"github_app"`) {
+		t.Errorf("summary %s", out)
 	}
 }

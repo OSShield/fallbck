@@ -54,6 +54,25 @@ A classic personal access token needs `repo` (private repositories), `read:org` 
 
 On github.com, gists live on `gist.github.com`, so the token is sent there as well, and only when the job backs up gists. GitHub Enterprise serves both below the connection URL.
 
+### GitHub App
+
+Github app auth offers some improvements vs. Github tokens, mainly that it doesn't rely on a single user/account and has its own API rate limit (which grows with org size).
+
+1. Create a GitHub App (organization settings, **Developer settings → GitHub Apps**). It needs no webhook. Give it read access to **Contents** and **Metadata**, plus **Issues** and **Pull requests** if jobs should have the `metadata` workload enabled.
+2. Install it on the organization and pick the repositories it may read. The installation id is the number at the end of the installations settings URL.
+3. Generate a private key and create the connection with it:
+
+```bash
+curl -X POST https://fallbck.example.com/api/v1/vcs/connections \
+  -H "Authorization: Bearer $FBK_KEY" -H "Content-Type: application/json" \
+  -d "$(jq -n --rawfile key app.private-key.pem '{name: "github", provider: "github", base_url: "https://github.com",
+        auth_type: "github_app", app_id: 123456, installation_id: 7890123, app_key: $key}')"
+```
+
+The key is sealed like a token and never returned. For each run the server creates an installation token, limited to the read permissions the job needs, and hands it to the agent, which asks for a new one before it expires. That means the **server** needs outbound HTTPS to the GitHub API, not just the agent (unless you're using agent-side profiles, in that case the agent itself handles the process and the server is not involved). **Test** checks the key, the installation, and how many repositories it can read.
+
+An installation token belongs to no user, so a job on an App connection can't back up starred repositories or gists: name owners or repositories. An App installed on a personal account only sees that account's public repositories through the owner listing; list its private ones as repositories.
+
 ## 3. Keep the token on the agent (optional)
 
 If the server shouldn't hold the token, create the connection without one and store the token in the agent's encrypted credential store:
@@ -65,6 +84,16 @@ fallbck-agent vcs profile test --name git-internal   # GitLab or GitHub: checks 
 ```
 
 The job then names the profile (`"profile": "git-internal"`). The agent only uses a profile for the URL it was created for, so the profile's `--url` must equal the connection's `base_url`. Use `--token-file` instead of `--ask-token` when a secret manager keeps the token in a file. `--username` sets the basic auth user name. `profile test` assumes GitHub for github.com and GitLab for everything else; add `--provider github` for GitHub Enterprise Server.
+
+A profile can hold a [GitHub App](#github-app) too. The agent then mints the installation tokens itself and the key never leaves the host:
+
+```bash
+fallbck-agent vcs profile create --name gh-app --url https://github.com --auth github_app \
+  --app-id 123456 --installation-id 7890123 --app-key-file /etc/fallbck/github-app.pem
+fallbck-agent vcs profile test --name gh-app
+```
+
+The key file is read at every run, so you can rotate it in place. Add `--store-app-key` to copy it into the encrypted store instead. The agent signs the App's requests with its own clock, and GitHub refuses them when it's more than a minute or so off: keep NTP running. An App key reads every repository of the installation, so think twice before putting the same one on many agents; a separate App per agent or team keeps the blast radius small.
 
 ## 4. Create a job
 

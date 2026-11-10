@@ -25,10 +25,38 @@
 <div class="conn-gitlab-opts" style="background-color: var(--bg-subtle); padding: 14px; border-radius: var(--radius-sm); margin-bottom: 16px; font-size: 13px;">
   Use a group, project or personal access token with the <code>read_api</code> and <code>read_repository</code> scopes. With groups in the job it sees those groups' projects; a job without groups needs an administrator's token to see every project. <em>Test</em> on the connection list checks the token and records its expiry.
 </div>
-<div class="conn-github-opts" hidden style="background-color: var(--bg-subtle); padding: 14px; border-radius: var(--radius-sm); margin-bottom: 16px; font-size: 13px;">
+<div class="form-group conn-github-opts" hidden>
+  <label>Authentication</label>
+  <select name="conn_auth_type" class="form-control" onchange="updateConnectionProvider(this.closest('.connection-fields'))">
+    <option value="token" selected>Access token (a user's personal access token)</option>
+    <option value="github_app">GitHub App (not tied to a user, higher rate limit)</option>
+  </select>
+</div>
+<div class="conn-app-opts" hidden>
+  <div style="background-color: var(--bg-subtle); padding: 14px; border-radius: var(--radius-sm); margin-bottom: 16px; font-size: 13px;">
+    Create a GitHub App with read access to <em>Contents</em> and <em>Metadata</em> (plus <em>Issues</em> and <em>Pull requests</em> for the metadata workload), install it on the organizations to back up and generate a private key. The server mints a token for each run and hands it to the agent, so it needs outbound HTTPS to the GitHub API. Starred repositories and gists belong to a user and can't be backed up with an App.
+  </div>
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+    <div class="form-group">
+      <label>App ID</label>
+      <input type="number" name="conn_app_id" class="form-control" min="1">
+    </div>
+    <div class="form-group">
+      <label>Installation ID</label>
+      <input type="number" name="conn_installation_id" class="form-control" min="1">
+      <span class="form-text">The number at the end of the installation's settings URL.</span>
+    </div>
+  </div>
+  <div class="form-group">
+    <label>Private key (PEM)</label>
+    <textarea name="conn_app_key" class="form-control" rows="4" placeholder="-----BEGIN RSA PRIVATE KEY-----" style="font-family: var(--font-mono); font-size: 11px;" autocomplete="off"></textarea>
+    <span class="form-text">Sealed on the server and never shown again. Leave it out to keep the agent's key instead (<code>fallbck-agent vcs profile create --auth github_app</code>).</span>
+  </div>
+</div>
+<div class="conn-github-opts conn-token-opts" hidden style="background-color: var(--bg-subtle); padding: 14px; border-radius: var(--radius-sm); margin-bottom: 16px; font-size: 13px;">
   A classic token needs <code>repo</code> (private repositories), <code>read:org</code> and <code>gist</code> (secret gists); a fine-grained token needs read access to <em>Contents</em>, <em>Metadata</em>, <em>Issues</em> and <em>Pull requests</em>. Starred repositories and own gists are those of the token's user. <em>Test</em> on the connection list checks the token and records its expiry.
 </div>
-<div style="display: grid; grid-template-columns: 2fr 1fr; gap: 16px;">
+<div class="conn-token-opts" style="display: grid; grid-template-columns: 2fr 1fr; gap: 16px;">
   <div class="form-group">
     <label>Access token (optional)</label>
     <input type="password" name="conn_token" class="form-control" autocomplete="new-password">

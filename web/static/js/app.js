@@ -706,6 +706,10 @@ function updateVCSProvider(form) {
   const provider = vcsProvider(form) || 'gitlab';
   const box = form.querySelector('#job-vcs-fields') || form;
   box.querySelectorAll('[data-providers]').forEach(el => { el.hidden = !el.dataset.providers.split(' ').includes(provider); });
+  // A GitHub App has no user: no stars, no gists (the API refuses them too)
+  const sel = form.elements['vcs_connection_id'];
+  const app = !!(sel && sel.selectedOptions[0] && sel.selectedOptions[0].dataset.auth === 'github_app');
+  box.querySelectorAll('[data-user-only]').forEach(el => { if (app) el.hidden = true; });
   const typeEl = form.elements['job_type'];
   if ((typeEl ? typeEl.value : form.dataset.jobType) === 'vcs') filterJobAgents(form, 'vcs');
   if (typeof obVCSAgentNote === 'function') obVCSAgentNote(form);
@@ -2027,9 +2031,13 @@ function connField(form, name) { return form.querySelector(`[name="${name}"]`); 
 
 function updateConnectionProvider(form) {
   const provider = connField(form, 'conn_provider').value;
+  const app = provider === 'github' && connField(form, 'conn_auth_type').value === 'github_app';
   form.querySelectorAll('.conn-gitlab-opts').forEach(el => { el.hidden = provider !== 'gitlab'; });
   form.querySelectorAll('.conn-git-opts').forEach(el => { el.hidden = provider !== 'git'; });
   form.querySelectorAll('.conn-github-opts').forEach(el => { el.hidden = provider !== 'github'; });
+  // a GitHub App replaces the token fields (the GitHub token note included)
+  form.querySelectorAll('.conn-token-opts').forEach(el => { if (app) el.hidden = true; else if (!el.classList.contains('conn-github-opts')) el.hidden = false; });
+  form.querySelectorAll('.conn-app-opts').forEach(el => { el.hidden = !app; });
   connField(form, 'conn_base_url').placeholder = { git: 'https://git.example.com/team', github: 'https://github.com' }[provider] || 'https://gitlab.example.com';
 }
 
@@ -2037,6 +2045,7 @@ function resetConnectionFields(form) {
   form.reset();
   form.dataset.connectionId = '';
   connField(form, 'conn_token').placeholder = '';
+  connField(form, 'conn_app_key').placeholder = '-----BEGIN RSA PRIVATE KEY-----';
   form.querySelector('.conn-clear-token').hidden = true;
   connField(form, 'conn_provider').disabled = false;
   updateConnectionProvider(form);
@@ -2064,7 +2073,12 @@ async function editConnection(id) {
     connField(form, 'conn_base_url').value = c.base_url || '';
     connField(form, 'conn_ca_pem').value = c.ca_pem || '';
     if (c.token_expires) connField(form, 'conn_token_expires').value = c.token_expires.slice(0, 10);
-    if (c.has_token) {
+    connField(form, 'conn_auth_type').value = c.auth_type === 'github_app' ? 'github_app' : 'token';
+    if (c.app_id) connField(form, 'conn_app_id').value = c.app_id;
+    if (c.installation_id) connField(form, 'conn_installation_id').value = c.installation_id;
+    if (c.auth_type === 'github_app' && c.has_token) {
+      connField(form, 'conn_app_key').placeholder = 'leave blank to keep the stored key';
+    } else if (c.has_token) {
       connField(form, 'conn_token').placeholder = 'leave blank to keep the stored token';
       form.querySelector('.conn-clear-token').hidden = false;
     }
@@ -2079,12 +2093,20 @@ async function editConnection(id) {
 
 function buildConnectionPayload(form) {
   const v = (name) => (connField(form, name).value || '').trim();
+  const provider = connField(form, 'conn_provider').value;
+  const app = provider === 'github' && connField(form, 'conn_auth_type').value === 'github_app';
   const p = {
-    name: v('conn_name'), provider: connField(form, 'conn_provider').value, base_url: v('conn_base_url'),
-    token: connField(form, 'conn_token').value || '', ca_pem: v('conn_ca_pem'),
-    clear_token: connField(form, 'conn_clear_token').checked,
+    name: v('conn_name'), provider, base_url: v('conn_base_url'),
+    auth_type: app ? 'github_app' : 'token',
+    token: app ? '' : (connField(form, 'conn_token').value || ''), ca_pem: v('conn_ca_pem'),
+    clear_token: !app && connField(form, 'conn_clear_token').checked,
     labels: formLabels(form, 'conn_labels')
   };
+  if (app) {
+    p.app_id = parseInt(v('conn_app_id'), 10) || 0;
+    p.installation_id = parseInt(v('conn_installation_id'), 10) || 0;
+    p.app_key = v('conn_app_key');
+  }
   const exp = v('conn_token_expires');
   if (exp) p.token_expires = new Date(exp + 'T00:00:00Z').toISOString();
   return p;
@@ -2124,7 +2146,7 @@ async function testConnection(id, btn) {
     } else if (!data.tested) {
       showToast(data.message || 'Nothing to test', 'info');
     } else {
-      const who = inst.username ? `, token of ${inst.username}${inst.is_admin ? ' (administrator)' : ''}` : '';
+      const who = !inst.username ? '' : inst.username.startsWith('app ') ? `, GitHub ${inst.username}` : `, token of ${inst.username}${inst.is_admin ? ' (administrator)' : ''}`;
       const scopes = (inst.scopes || []).length ? `; scopes ${inst.scopes.join(', ')}` : '';
       showToast(inst.version ? `Connected: GitLab ${inst.version}${who}${scopes}` : `Connected${who}${scopes}`, 'success');
     }

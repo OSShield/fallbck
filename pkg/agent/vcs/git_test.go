@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -53,6 +54,13 @@ type gitHost struct {
 	fetches atomic.Int64
 	// requests counts every request
 	requests atomic.Int64
+	// accepted are the Authorization headers let in (the test tokens by default)
+	accepted sync.Map
+}
+
+// accept lets another user/token pair in (rotated tokens)
+func (h *gitHost) accept(user, token string) {
+	h.accepted.Store("Basic "+base64.StdEncoding.EncodeToString([]byte(user+":"+token)), true)
 }
 
 func newGitHost(t *testing.T) *gitHost {
@@ -67,10 +75,10 @@ func newGitHost(t *testing.T) *gitHost {
 	cgiHandler := &cgi.Handler{Path: backend, Root: "/",
 		Env:        []string{"GIT_PROJECT_ROOT=" + h.root, "GIT_HTTP_EXPORT_ALL=1", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=" + os.DevNull},
 		InheritEnv: []string{"PATH"}}
-	want := "Basic " + base64.StdEncoding.EncodeToString([]byte(DefaultUsername+":"+testToken))
+	h.accept(DefaultUsername, testToken)
 	h.srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h.requests.Add(1)
-		if r.Header.Get("Authorization") != want {
+		if _, ok := h.accepted.Load(r.Header.Get("Authorization")); !ok {
 			h.unauthenticated.Add(1)
 			w.Header().Set("WWW-Authenticate", `Basic realm="git"`)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
