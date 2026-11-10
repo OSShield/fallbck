@@ -202,6 +202,7 @@ func Run(ctx context.Context, o RunOptions) (*temporal.BackupExecutionResult, er
 		d.Describe(&manifest.Source)
 	}
 	sort.Slice(projects, func(i, j int) bool { return projects[i].Path < projects[j].Path })
+	invalid := invalidPaths(projects, meta != nil)
 
 	state := State{Dir: o.StateDir}
 	idx, err := state.Load()
@@ -240,7 +241,7 @@ func Run(ctx context.Context, o RunOptions) (*temporal.BackupExecutionResult, er
 			mu.Lock()
 			prev := idx.Projects[p.Key]
 			mu.Unlock()
-			out := backupProject(ctx, g, state, s, o, p, prev, lfs, meta, activity, now)
+			out := backupProject(ctx, g, state, s, o, p, invalid[i], prev, lfs, meta, activity, now)
 			mu.Lock()
 			outcomes[i] = out
 			done++
@@ -376,12 +377,17 @@ const metadataFullEvery = 7 * 24 * time.Hour
 
 // brings one project's mirrors up to date; never returns an error,
 // the outcome says what went into the snapshot (one failing repository must not fail the run)
-func backupProject(ctx context.Context, g *Git, state State, s *spec.Spec, o RunOptions, p Project, prev *ProjectIndex, lfs bool, meta MetadataProvider, activity func(string), now func() time.Time) projectOutcome {
+func backupProject(ctx context.Context, g *Git, state State, s *spec.Spec, o RunOptions, p Project, invalid string, prev *ProjectIndex, lfs bool, meta MetadataProvider, activity func(string), now func() time.Time) projectOutcome {
 	out := projectOutcome{project: p, result: spec.RepoResult{ProjectID: p.ID, Path: p.Path, URL: p.URL, Archived: p.Archived, Fork: p.Fork, Kind: p.Kind}}
 	r := &out.result
 	if prev != nil && !prev.LastFetched.IsZero() {
 		t := prev.LastFetched
 		r.LastFetched = &t
+	}
+	if invalid != "" {
+		// Not fetched: BuildTree would refuse the path
+		r.Status, r.Error = spec.RepoFailed, invalid
+		return out
 	}
 	if s.MaxRepoSize > 0 && p.Size > s.MaxRepoSize {
 		r.Status = spec.RepoSkipped

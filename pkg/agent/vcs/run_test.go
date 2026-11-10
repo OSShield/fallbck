@@ -194,6 +194,23 @@ func TestRunPartialAndStale(t *testing.T) {
 	}
 }
 
+// A repository whose archive path is reserved fails alone; the other repos are backed up
+func TestRunReservedPathFailsAlone(t *testing.T) {
+	e := newRunEnv(t)
+	e.h.repo(t, "team/app.git")
+	e.h.repo(t, "team/wiki.git.git") // archive path <host>/team/wiki.git
+	res, err := Run(ctx(t), e.opts(t, "team/app.git", "team/wiki.git.git"))
+	if err != nil || res.Status != "partial" {
+		t.Fatalf("result %+v %v", res, err)
+	}
+	if r := e.rec.repo(e.dir(t, "team/wiki.git.git")); r.Status != spec.RepoFailed || !strings.Contains(r.Error, "reserved") {
+		t.Errorf("reserved result %+v", r)
+	}
+	if e.h.fetches.Load() != 1 || !e.rec.has(e.dir(t, "team/app.git")+"/repository.git/HEAD") {
+		t.Errorf("%d fetches; app in snapshot: %v", e.h.fetches.Load(), e.rec.has(e.dir(t, "team/app.git")+"/repository.git/HEAD"))
+	}
+}
+
 func TestRunAllFailed(t *testing.T) {
 	e := newRunEnv(t)
 	res, err := Run(ctx(t), e.opts(t, "team/nope.git", "team/gone.git"))

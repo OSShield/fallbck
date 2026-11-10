@@ -187,3 +187,19 @@ func TestRestoreScript(t *testing.T) {
 		t.Errorf("missing arguments: %v %s", err, out)
 	}
 }
+
+// Paths BuildTree would refuse are caught per project before fetching
+func TestInvalidPaths(t *testing.T) {
+	projects := []Project{
+		{Path: "a/b"}, {Path: "a/wiki.git"}, {Path: "a/b/"}, {Path: "a/b/" + MetadataDir + "/c"}, {Path: "restore.sh"}, {Path: "c/d"},
+	}
+	bad := invalidPaths(projects, false)
+	for i, want := range []string{"", "reserved", "another project", "", "collides", ""} {
+		if (want == "") != (bad[i] == "") || !strings.Contains(bad[i], want) {
+			t.Errorf("%s: %q, want %q", projects[i].Path, bad[i], want)
+		}
+	}
+	if bad := invalidPaths(projects, true); !strings.Contains(bad[3], MetadataDir) || bad[0] != "" {
+		t.Errorf("metadata collision: %q", bad)
+	}
+}
