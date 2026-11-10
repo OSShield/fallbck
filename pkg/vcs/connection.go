@@ -25,9 +25,17 @@ type Connection struct {
 	// or with a relative URL root) or, for the git provider, the URL every
 	// repository of its jobs must be below. Git sends the token to this URL only.
 	BaseURL string `json:"base_url"`
+	// AuthType is how the server authenticates: AuthToken (Token) or AuthGitHubApp
+	// (AppID, InstallationID, AppKey; GitHub only)
+	AuthType string `json:"auth_type"`
 	// Token is optional: without it, every job of the connection names an agent
 	// credential profile (Spec.Profile)
 	Token string `json:"-"`
+	// AppID / InstallationID / AppKey are the GitHub App (AuthGitHubApp); the key is
+	// sealed like the token and never returned
+	AppID          int64  `json:"app_id,omitempty"`
+	InstallationID int64  `json:"installation_id,omitempty"`
+	AppKey         string `json:"-"`
 	// TokenExpires is when the token stops working (the health page warns 30 days
 	// before). Read from GitLab by the connection test, or entered by the
 	// administrator.
@@ -37,7 +45,8 @@ type Connection struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 
-	// To check for token presence without including the token in the API response
+	// HasToken: the server holds a credential (a token, or a GitHub App key), so jobs
+	// need no agent credential profile. Never the credential itself.
 	HasToken bool `json:"has_token"`
 	Jobs     int  `json:"jobs"`
 	// Labels place the connection in access scopes (db.Labels; a plain map here
@@ -59,6 +68,7 @@ func (c *Connection) Validate() error {
 	c.Name = strings.TrimSpace(c.Name)
 	c.Provider = strings.ToLower(strings.TrimSpace(c.Provider))
 	c.Token = strings.TrimSpace(c.Token)
+	c.AppKey = strings.TrimSpace(c.AppKey)
 	c.CAPEM = strings.TrimSpace(c.CAPEM)
 	if c.Name == "" {
 		return connErr("name is required")
@@ -67,6 +77,28 @@ func (c *Connection) Validate() error {
 	case ProviderGitLab, ProviderGit, ProviderGitHub:
 	default:
 		return connErr("provider must be %s, %s or %s", ProviderGitLab, ProviderGitHub, ProviderGit)
+	}
+	authType, err := normalizeAuthType(c.AuthType)
+	if err != nil {
+		return connErr("%v", err)
+	}
+	c.AuthType = authType
+	if c.AuthType == AuthGitHubApp {
+		if c.Provider != ProviderGitHub {
+			return connErr("a GitHub App only authenticates GitHub connections")
+		}
+		if c.Token != "" {
+			return connErr("a GitHub App connection takes no token")
+		}
+		app := c.App()
+		if err := app.validate(); err != nil {
+			return connErr("%v", err)
+		}
+		// Installation tokens expire within the hour; nothing to warn about
+		c.TokenExpires = nil
+	} else {
+		// The other type's secret does not outlive a switch
+		c.AppID, c.InstallationID, c.AppKey = 0, 0, ""
 	}
 	base, err := NormalizeBaseURL(c.BaseURL)
 	if err != nil {
@@ -158,21 +190,43 @@ func CertPool(caPEM string) (*x509.CertPool, error) {
 
 // Sanitize fills the derived fields
 func (c *Connection) Sanitize() *Connection {
-	c.HasToken = c.Token != ""
+	c.HasToken = c.HasCredential()
 	return c
+}
+
+// HasCredential reports whether the server holds what jobs authenticate with
+func (c *Connection) HasCredential() bool {
+	// an App connection on the agent carries the minted token instead of the key
+	return c.Token != "" || (c.AuthType == AuthGitHubApp && c.AppKey != "")
+}
+
+// App is the connection's GitHub App (AuthGitHubApp)
+func (c *Connection) App() GitHubApp {
+	return GitHubApp{AppID: c.AppID, InstallationID: c.InstallationID, PrivateKey: c.AppKey}
 }
 
 // Credentials is what an agent fetches for a run (GET /api/v1/agents/vcs-credentials)
 type Credentials struct {
 	Provider string `json:"provider"`
 	BaseURL  string `json:"base_url"`
+	// AuthType is AuthGitHubApp when Token is an installation token (the agent then
+	// refuses user-bound sources such as stars)
+	AuthType string `json:"auth_type,omitempty"`
 	Token    string `json:"token,omitempty"`
-	CAPEM    string `json:"ca_pem,omitempty"`
+	// Username for basic auth ("" = the agent's default)
+	Username string `json:"username,omitempty"`
+	// ExpiresAt is set for a short-lived token: the agent fetches a new one before
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	CAPEM     string     `json:"ca_pem,omitempty"`
+	// Tokens, when set, supersedes Token with a token that stays valid (agent side
+	// only, never sent)
+	Tokens TokenSource `json:"-"`
 }
 
-// Credentials extracts the agent's view of the connection
+// Credentials extracts the agent's view of the connection; a GitHub App's token is
+// minted by the caller
 func (c *Connection) Credentials() Credentials {
-	return Credentials{Provider: c.Provider, BaseURL: c.BaseURL, Token: c.Token, CAPEM: c.CAPEM}
+	return Credentials{Provider: c.Provider, BaseURL: c.BaseURL, AuthType: c.AuthType, Token: c.Token, CAPEM: c.CAPEM}
 }
 
 // HTTPClient is a client for the connection's API: the CA bundle on top of the

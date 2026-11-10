@@ -890,7 +890,7 @@ function obRenderReview() {
     if (vc.repositories) rows.push(['Repositories', vc.repositories.join(', ') || 'none']);
     else rows.push(['Groups', (vc.groups || []).length ? vc.groups.join(', ') + (vc.include_subgroups ? ' and subgroups' : '') : 'every project the token can see'],
       ['Excludes', (vc.exclude || []).join(', ') || '-']);
-    rows.push(['Token', vc.profile ? `agent credential profile ${vc.profile}` : (opt && opt.dataset.token === 'true' ? 'the connection token' : 'none (public repositories)')]);
+    rows.push(['Token', vc.profile ? `agent credential profile ${vc.profile}` : (opt && opt.dataset.token === 'true' ? (opt.dataset.auth === 'github_app' ? "the connection's GitHub App" : 'the connection token') : 'none (public repositories)')]);
   }
   if (p.job_type === 'kubernetes') rows.push(['Volumes', p.k8s_config.volumes.mode], ['Namespaces', (p.k8s_config.namespaces.include || []).join(', ') || 'all']);
   rows.push(['Schedule', p.schedule_cron ? `${p.schedule_cron} (${document.getElementById('onboarding').dataset.timezone})` : 'manual only'],

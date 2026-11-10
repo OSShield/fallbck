@@ -16,6 +16,7 @@ var ErrConnectionInUse = errors.New("connection is referenced by backup jobs")
 
 const connectionSelect = `
 	SELECT c.id, c.name, c.provider, c.base_url, c.token_sealed, c.token_expires, c.ca_pem,
+	       c.auth_type, c.app_id, c.installation_id, c.app_key_sealed,
 	       c.created_at, c.updated_at,
 	       (SELECT count(*) FROM backup_jobs j WHERE j.vcs_connection_id = c.id), c.labels
 	FROM vcs_connections c`
@@ -23,12 +24,16 @@ const connectionSelect = `
 func (d *DB) scanConnection(row pgx.Row) (*vcs.Connection, error) {
 	var c vcs.Connection
 	if err := row.Scan(&c.ID, &c.Name, &c.Provider, &c.BaseURL, &c.Token, &c.TokenExpires, &c.CAPEM,
+		&c.AuthType, &c.AppID, &c.InstallationID, &c.AppKey,
 		&c.CreatedAt, &c.UpdatedAt, &c.Jobs, &c.Labels); err != nil {
 		return nil, err
 	}
 	var err error
 	if c.Token, err = d.open(c.Token); err != nil {
 		return nil, fmt.Errorf("connection %s token: %w", c.Name, err)
+	}
+	if c.AppKey, err = d.open(c.AppKey); err != nil {
+		return nil, fmt.Errorf("connection %s App key: %w", c.Name, err)
 	}
 	return c.Sanitize(), nil
 }
@@ -41,9 +46,11 @@ func (d *DB) CreateConnection(ctx context.Context, c *vcs.Connection) error {
 	now := time.Now().UTC()
 	c.CreatedAt, c.UpdatedAt = now, now
 	_, err := d.Pool.Exec(ctx, `
-		INSERT INTO vcs_connections (id, name, provider, base_url, token_sealed, token_expires, ca_pem, labels, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-		c.ID, c.Name, c.Provider, c.BaseURL, d.seal(c.Token), c.TokenExpires, c.CAPEM, Labels(c.Labels).JSON(), c.CreatedAt, c.UpdatedAt)
+		INSERT INTO vcs_connections (id, name, provider, base_url, token_sealed, token_expires, ca_pem,
+		                             auth_type, app_id, installation_id, app_key_sealed, labels, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+		c.ID, c.Name, c.Provider, c.BaseURL, d.seal(c.Token), c.TokenExpires, c.CAPEM,
+		authTypeOrToken(c.AuthType), c.AppID, c.InstallationID, d.seal(c.AppKey), Labels(c.Labels).JSON(), c.CreatedAt, c.UpdatedAt)
 	return err
 }
 
@@ -54,9 +61,11 @@ func (d *DB) UpdateConnection(ctx context.Context, c *vcs.Connection) error {
 	tag, err := d.Pool.Exec(ctx, `
 		UPDATE vcs_connections
 		SET name = $2, provider = $3, base_url = $4, token_sealed = $5, token_expires = $6, ca_pem = $7,
-		    labels = $8, updated_at = $9
+		    auth_type = $8, app_id = $9, installation_id = $10, app_key_sealed = $11,
+		    labels = $12, updated_at = $13
 		WHERE id = $1`,
-		c.ID, c.Name, c.Provider, c.BaseURL, d.seal(c.Token), c.TokenExpires, c.CAPEM, Labels(c.Labels).JSON(), c.UpdatedAt)
+		c.ID, c.Name, c.Provider, c.BaseURL, d.seal(c.Token), c.TokenExpires, c.CAPEM,
+		authTypeOrToken(c.AuthType), c.AppID, c.InstallationID, d.seal(c.AppKey), Labels(c.Labels).JSON(), c.UpdatedAt)
 	if err != nil {
 		return err
 	}
@@ -145,4 +154,13 @@ func (d *DB) VCSJobIDsForAgent(ctx context.Context, agentID uuid.UUID) ([]uuid.U
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+// authTypeOrToken stores an unset auth type as the default (callers validate first;
+// this keeps a direct insert from writing an empty one)
+func authTypeOrToken(t string) string {
+	if t == "" {
+		return vcs.AuthToken
+	}
+	return t
 }

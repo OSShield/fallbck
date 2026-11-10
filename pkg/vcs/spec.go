@@ -229,7 +229,7 @@ func (s *Spec) ValidateFor(c *Connection) error {
 		if len(s.Groups) == 0 && IsGitLabCom(c.BaseURL) {
 			return specErr("gitlab.com cannot be backed up as a whole; list the groups to back up")
 		}
-		if s.Profile == "" && c.Token == "" {
+		if s.Profile == "" && !c.HasCredential() {
 			return specErr("the connection stores no token; name the agent credential profile that holds it")
 		}
 	case ProviderGit:

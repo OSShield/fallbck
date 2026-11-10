@@ -3,7 +3,11 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -297,5 +301,125 @@ func TestLiveHeartbeatListsVCSJobs(t *testing.T) {
 	}
 	if got := beat(f.agentB.ID); got == nil || len(*got) != 0 {
 		t.Errorf("agent B must get an empty list, got %v", got)
+	}
+}
+
+// TestLiveVCSGitHubApp: an App connection keeps its key sealed, mints a token per run
+// limited to what the job reads, and refuses what an App can't back up
+func TestLiveVCSGitHubApp(t *testing.T) {
+	d := liveDB(t)
+	sealer, err := secrets.New(bytes.Repeat([]byte{7}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.Sealer = sealer
+	f := seed(t, d)
+	ctx := context.Background()
+	h := liveRouter(d, &auth.Principal{Kind: auth.PrincipalSession, Email: "root@example.com", Bindings: auth.AdminBindings()})
+
+	var perms map[string]string
+	gh := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v3/app":
+			_, _ = w.Write([]byte(`{"slug":"fallbck-backup"}`))
+		case "/api/v3/app/installations/9/access_tokens":
+			var body struct{ Permissions map[string]string }
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			perms = body.Permissions
+			_, _ = w.Write([]byte(`{"token":"ghs_minted","expires_at":"` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339) + `"}`))
+		case "/api/v3/installation/repositories":
+			_, _ = w.Write([]byte(`{"total_count":3}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer gh.Close()
+	caPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: gh.Certificate().Raw}))
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pemKey := string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}))
+
+	code, body := call(t, h, http.MethodPost, "/api/v1/vcs/connections", map[string]any{"name": "gh-app", "provider": "github", "base_url": gh.URL,
+		"auth_type": "github_app", "app_id": 5, "installation_id": 9, "app_key": pemKey, "ca_pem": caPEM})
+	if code != http.StatusCreated {
+		t.Fatalf("create App connection: %d %s", code, body)
+	}
+	if bytes.Contains(body, []byte("PRIVATE KEY")) {
+		t.Fatal("App key returned by the API")
+	}
+	var app vcs.Connection
+	_ = json.Unmarshal(body, &app)
+	if app.AuthType != vcs.AuthGitHubApp || !app.HasToken || app.AppID != 5 || app.InstallationID != 9 {
+		t.Errorf("created %+v", app)
+	}
+	var stored string
+	if err := d.Pool.QueryRow(ctx, `SELECT app_key_sealed FROM vcs_connections WHERE id = $1`, app.ID).Scan(&stored); err != nil || !secrets.IsSealed(stored) {
+		t.Fatalf("App key not sealed at rest: %v", err)
+	}
+	// A blank key on update keeps the stored one
+	if code, body := call(t, h, http.MethodPut, "/api/v1/vcs/connections/"+app.ID.String(), map[string]any{"name": "gh-app", "provider": "github", "base_url": gh.URL,
+		"auth_type": "github_app", "app_id": 5, "installation_id": 9, "ca_pem": caPEM}); code != http.StatusOK {
+		t.Fatalf("update without key: %d %s", code, body)
+	}
+	if again, err := d.GetConnectionByID(ctx, app.ID, db.Unscoped); err != nil || again.AppKey != strings.TrimSpace(pemKey) {
+		t.Fatalf("key lost on update: %v", err)
+	}
+
+	code, body = call(t, h, http.MethodPost, "/api/v1/vcs/connections/"+app.ID.String()+"/test", nil)
+	if code != http.StatusOK || !strings.Contains(string(body), `"tested":true`) || !strings.Contains(string(body), "app fallbck-backup") {
+		t.Errorf("App connection test: %d %s", code, body)
+	}
+
+	// Stars and gists need a user: refused on job creation
+	if _, err := d.UpdateAgentHeartbeat(ctx, f.agentA.ID, db.AgentStatusOnline, db.AgentCapabilities{GitVersion: "2.43.0", VCSProviders: vcs.AgentProviders}); err != nil {
+		t.Fatal(err)
+	}
+	starred := map[string]any{"name": "stars", "agent_id": f.agentA.ID, "target_id": f.targetA.ID, "job_type": "vcs",
+		"vcs_config": map[string]any{"connection_id": app.ID, "starred": true}}
+	if code, body := call(t, h, http.MethodPost, "/api/v1/jobs", starred); code != http.StatusBadRequest || !strings.Contains(string(body), "GitHub App") {
+		t.Errorf("starred job on an App connection: %d %s", code, body)
+	}
+
+	// The agent gets a fresh token, limited to the job's reads, never the key
+	job := &db.BackupJob{Name: "acme", AgentID: f.agentA.ID, TargetID: f.targetA.ID, JobType: db.JobTypeVCS,
+		VCSConfig: &vcs.Spec{ConnectionID: app.ID, Groups: []string{"acme"}, Workloads: vcs.Workloads{Metadata: true}}}
+	if err := d.CreateJob(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	tm := auth.NewTokenManager("test-secret-key-must-be-very-long-123456")
+	ticket, _ := tm.CreateBackupTicket(auth.BackupTicketClaims{JobID: job.ID, AgentID: f.agentA.ID, TargetID: f.targetA.ID, BackupType: "host", BackupID: "vcs-gh-app", BackupTime: time.Now().Unix()}, time.Hour)
+	api := NewServerAPI(d, nil, config.DefaultServerConfig(), tm, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/agents/vcs-credentials", nil)
+	req.Header.Set(BackupTicketHeader, ticket)
+	req = req.WithContext(auth.WithAgent(req.Context(), &auth.AgentClaims{AgentID: f.agentA.ID}))
+	rr := httptest.NewRecorder()
+	api.HandleVCSCredentials(rr, req)
+	var creds vcs.Credentials
+	if rr.Code != http.StatusOK || json.Unmarshal(rr.Body.Bytes(), &creds) != nil || strings.Contains(rr.Body.String(), "PRIVATE KEY") {
+		t.Fatalf("credentials: %d %s", rr.Code, rr.Body.String())
+	}
+	if creds.Token != "ghs_minted" || creds.Username != vcs.GitHubAppUsername || creds.ExpiresAt == nil || creds.AuthType != vcs.AuthGitHubApp {
+		t.Errorf("credentials %+v", creds)
+	}
+	if perms["contents"] != "read" || perms["issues"] != "read" || len(perms) != 4 {
+		t.Errorf("token permissions %v", perms)
+	}
+
+	// A token connection whose job backs up stars can't switch to an App
+	code, body = call(t, h, http.MethodPost, "/api/v1/vcs/connections", map[string]any{"name": "gh-token", "provider": "github", "base_url": "https://github.com", "token": "ghp_x"})
+	if code != http.StatusCreated {
+		t.Fatalf("token connection: %d %s", code, body)
+	}
+	var tok vcs.Connection
+	_ = json.Unmarshal(body, &tok)
+	if err := d.CreateJob(ctx, &db.BackupJob{Name: "stars", AgentID: f.agentA.ID, TargetID: f.targetA.ID, JobType: db.JobTypeVCS,
+		VCSConfig: &vcs.Spec{ConnectionID: tok.ID, Starred: true}}); err != nil {
+		t.Fatal(err)
+	}
+	if code, body := call(t, h, http.MethodPut, "/api/v1/vcs/connections/"+tok.ID.String(), map[string]any{"name": "gh-token", "provider": "github", "base_url": "https://github.com",
+		"auth_type": "github_app", "app_id": 5, "installation_id": 9, "app_key": pemKey}); code != http.StatusConflict || !strings.Contains(string(body), "stars") {
+		t.Errorf("switch to an App under a starred job: %d %s", code, body)
 	}
 }

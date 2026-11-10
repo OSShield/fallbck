@@ -116,8 +116,12 @@ func (s *Spec) validateGitHub(c *Connection) error {
 	if len(s.Groups) == 0 && len(s.Repositories) == 0 && !s.Starred && !s.Gists.Any() {
 		return specErr("choose owners, repositories, starred repositories or gists")
 	}
-	if s.Profile == "" && c.Token == "" {
+	if s.Profile == "" && !c.HasCredential() {
 		return specErr("the connection stores no token; name the agent credential profile that holds it")
+	}
+	// An installation token belongs to no user: nothing it could have starred, no gists
+	if c.AuthType == AuthGitHubApp && (s.Starred || s.Gists.Any()) {
+		return specErr("starred repositories and gists belong to a user; a GitHub App can't back them up (use a token)")
 	}
 	return nil
 }
@@ -205,6 +209,9 @@ func GistBaseURL(baseURL string) string {
 type GitHubClient struct {
 	APIURL string
 	Token  string
+	// Tokens, when set, is asked for the token of every request (GitHub App tokens
+	// expire within the hour)
+	Tokens TokenSource
 	HTTP   *http.Client
 	// MaxRateWait caps one rate-limit pause (default 1h)
 	MaxRateWait time.Duration
@@ -214,7 +221,7 @@ type GitHubClient struct {
 
 // NewGitHubClient builds the client of a github connection
 func NewGitHubClient(c Credentials, client *http.Client) *GitHubClient {
-	return &GitHubClient{APIURL: GitHubAPIURL(c.BaseURL), Token: c.Token, HTTP: client}
+	return &GitHubClient{APIURL: GitHubAPIURL(c.BaseURL), Token: c.Token, Tokens: c.Tokens, HTTP: client}
 }
 
 // GitHubError is a non-2xx answer
@@ -269,7 +276,13 @@ func (c *GitHubClient) do(ctx context.Context, rawURL string) (*http.Response, e
 		if err != nil {
 			return nil, err
 		}
-		req.Header.Set("Authorization", "Bearer "+c.Token)
+		token := c.Token
+		if c.Tokens != nil {
+			if token, err = c.Tokens(ctx); err != nil {
+				return nil, err
+			}
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
 		req.Header.Set("Accept", "application/vnd.github+json")
 		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 		req.Header.Set("User-Agent", "fallbck-agent")

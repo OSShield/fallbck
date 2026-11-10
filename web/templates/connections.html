@@ -28,8 +28,8 @@
             <td><strong>{{.Name}}</strong><br>{{template "label-chips" .Labels}}</td>
             <td>{{if eq .Provider "gitlab"}}<span class="badge badge-info">GitLab</span>{{else if eq .Provider "github"}}<span class="badge badge-info">GitHub</span>{{else}}<span class="badge badge-neutral">git</span>{{end}}</td>
             <td><code style="font-size: 12px;">{{.BaseURL}}</code>{{if .CAPEM}} <span class="badge badge-neutral" title="Uses its own CA bundle">private CA</span>{{end}}</td>
-            <td>{{if .HasToken}}<span class="badge badge-success">stored</span>{{else}}<span class="badge badge-neutral" title="Jobs use an agent credential profile, or the repositories are public">on the agent</span>{{end}}</td>
-            <td>{{if .TokenExpires}}<span class="badge {{if .Expired}}badge-danger{{else if .ExpiringSoon}}badge-warning{{else}}badge-success{{end}}">{{.TokenExpires.Format "2006-01-02"}}</span>{{else}}<span style="color: var(--text-dim);">unknown</span>{{end}}</td>
+            <td>{{if and .HasToken (eq .AuthType "github_app")}}<span class="badge badge-success" title="App {{.AppID}}, installation {{.InstallationID}}">GitHub App</span>{{else if .HasToken}}<span class="badge badge-success">stored</span>{{else}}<span class="badge badge-neutral" title="Jobs use an agent credential profile, or the repositories are public">on the agent</span>{{end}}</td>
+            <td>{{if eq .AuthType "github_app"}}<span style="color: var(--text-dim);" title="Installation tokens are minted per run and last an hour">per run</span>{{else if .TokenExpires}}<span class="badge {{if .Expired}}badge-danger{{else if .ExpiringSoon}}badge-warning{{else}}badge-success{{end}}">{{.TokenExpires.Format "2006-01-02"}}</span>{{else}}<span style="color: var(--text-dim);">unknown</span>{{end}}</td>
             <td>{{.Jobs}}</td>
             <td style="text-align: right; display: flex; justify-content: flex-end; gap: 8px;">
               {{if and (or (eq .Provider "gitlab") (eq .Provider "github")) .HasToken}}<button class="btn btn-secondary btn-sm" data-perm="connections:write" onclick="testConnection('{{.ID}}', this)">Test</button>{{end}}

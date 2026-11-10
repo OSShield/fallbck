@@ -18,18 +18,26 @@ import (
 )
 
 // VCS connections: a GitLab instance or git host with the token FallBCK reads it
-// with. The token is sealed at rest, never returned by the API, and handed to the
-// agent per run with its backup ticket (HandleVCSCredentials). It is now optional: a job
-// can name an agent credential profile instead, and then the token never reaches the
-// server at all.
+// with, or a GitHub App the server mints installation tokens with. Token and App key
+// are sealed at rest, never returned by the API, and the token (or a freshly minted
+// one) is handed to the agent per run with its backup ticket (HandleVCSCredentials).
+// Both are optional: a job can name an agent credential profile instead, and then the
+// credential never reaches the server at all.
 
 // ConnectionRequest creates or updates a connection (POST /vcs/connections, PUT
-// /vcs/connections/{id}). On update a blank token keeps the stored one; ClearToken
-// removes it (agent-side profiles only, or public git repositories).
+// /vcs/connections/{id}). On update a blank token or App key keeps the stored one;
+// ClearToken removes the token (agent-side profiles only, or public git repositories).
 type ConnectionRequest struct {
 	vcs.Connection
 	Token      string `json:"token"`
 	ClearToken bool   `json:"clear_token"`
+	AppKey     string `json:"app_key"`
+}
+
+// isAppAuth reports whether a request's auth type names a GitHub App (before Validate
+// normalises it)
+func isAppAuth(authType string) bool {
+	return strings.EqualFold(strings.TrimSpace(authType), vcs.AuthGitHubApp)
 }
 
 // vcsMinGit names the oldest git a VCS job runs with, for error messages
@@ -96,7 +104,7 @@ func (s *ServerAPI) HandleCreateConnection(w http.ResponseWriter, r *http.Reques
 	}
 	c := req.Connection
 	c.ID = uuid.Nil
-	c.Token = req.Token
+	c.Token, c.AppKey = req.Token, req.AppKey
 	c.Labels = db.Labels(c.Labels).OrEmpty()
 	if !s.validLabels(w, c.Labels) || !s.allow(w, r, auth.PermConnectionsWrite, c.Labels) {
 		return
@@ -110,8 +118,8 @@ func (s *ServerAPI) HandleCreateConnection(w http.ResponseWriter, r *http.Reques
 		s.writeError(w, http.StatusInternalServerError, "Failed to create connection (is the name unique?)")
 		return
 	}
-	slog.Info("VCS connection created", "connection", c.Name, "provider", c.Provider, "base_url", c.BaseURL)
-	s.audit(r, "connection.create", "connection", c.ID.String(), c.Name, c.Labels, map[string]any{"provider": c.Provider, "base_url": c.BaseURL})
+	slog.Info("VCS connection created", "connection", c.Name, "provider", c.Provider, "base_url", c.BaseURL, "auth_type", c.AuthType)
+	s.audit(r, "connection.create", "connection", c.ID.String(), c.Name, c.Labels, map[string]any{"provider": c.Provider, "base_url": c.BaseURL, "auth_type": c.AuthType})
 	s.writeJSON(w, http.StatusCreated, c.Sanitize())
 }
 
@@ -136,10 +144,16 @@ func (s *ServerAPI) HandleUpdateConnection(w http.ResponseWriter, r *http.Reques
 	c := req.Connection
 	c.Labels = labels
 	c.ID, c.CreatedAt = existing.ID, existing.CreatedAt
-	c.Token = req.Token
+	c.Token, c.AppKey = req.Token, req.AppKey
 	tokenChanged := req.Token != "" || req.ClearToken
-	if !tokenChanged {
+	appAuth := isAppAuth(c.AuthType)
+	// A switch to a GitHub App drops the token; the key is kept like the token
+	if !tokenChanged && !appAuth {
 		c.Token = existing.Token
+	}
+	keyChanged := req.AppKey != ""
+	if appAuth && !keyChanged {
+		c.AppKey = existing.AppKey
 	}
 	if c.TokenExpires == nil && !tokenChanged {
 		c.TokenExpires = existing.TokenExpires
@@ -159,8 +173,9 @@ func (s *ServerAPI) HandleUpdateConnection(w http.ResponseWriter, r *http.Reques
 		s.writeError(w, http.StatusInternalServerError, "Failed to update connection (is the name unique?)")
 		return
 	}
-	slog.Info("VCS connection updated", "connection", c.Name, "provider", c.Provider, "token_changed", tokenChanged)
-	s.audit(r, "connection.update", "connection", c.ID.String(), c.Name, c.Labels, map[string]any{"old_labels": existing.Labels, "base_url": c.BaseURL, "token_changed": tokenChanged})
+	slog.Info("VCS connection updated", "connection", c.Name, "provider", c.Provider, "auth_type", c.AuthType, "token_changed", tokenChanged, "app_key_changed", keyChanged)
+	s.audit(r, "connection.update", "connection", c.ID.String(), c.Name, c.Labels, map[string]any{"old_labels": existing.Labels, "base_url": c.BaseURL,
+		"auth_type": c.AuthType, "token_changed": tokenChanged, "app_key_changed": keyChanged})
 	s.writeJSON(w, http.StatusOK, c.Sanitize())
 }
 
@@ -171,8 +186,9 @@ func (s *ServerAPI) connectionChangeConflict(ctx context.Context, old, updated *
 		return "The connection is used by backup jobs; its provider cannot change"
 	}
 	urlChanged := updated.Provider == vcs.ProviderGit && updated.BaseURL != old.BaseURL
-	tokenRemoved := updated.Provider != vcs.ProviderGit && old.Token != "" && updated.Token == ""
-	if !urlChanged && !tokenRemoved {
+	tokenRemoved := updated.Provider != vcs.ProviderGit && old.HasCredential() && !updated.HasCredential()
+	toApp := updated.AuthType == vcs.AuthGitHubApp && old.AuthType != vcs.AuthGitHubApp
+	if !urlChanged && !tokenRemoved && !toApp {
 		return ""
 	}
 	jobs, err := s.DB.ListJobs(ctx, db.Unscoped)
@@ -185,6 +201,9 @@ func (s *ServerAPI) connectionChangeConflict(ctx context.Context, old, updated *
 		}
 		if tokenRemoved && j.VCSConfig.Profile == "" {
 			return "Job " + j.Name + " uses the connection's token; name an agent credential profile on the job first"
+		}
+		if toApp && (j.VCSConfig.Starred || j.VCSConfig.Gists.Any()) {
+			return "Job " + j.Name + " backs up starred repositories or gists, which a GitHub App can't read; change the job first"
 		}
 		if !urlChanged {
 			continue
@@ -232,7 +251,7 @@ func (s *ServerAPI) HandleTestConnection(w http.ResponseWriter, r *http.Request)
 		s.writeJSON(w, http.StatusOK, map[string]any{"ok": true, "tested": false, "message": "Git connections have no API to test; the agent checks access when a job runs"})
 		return
 	}
-	if c.Token == "" {
+	if !c.HasCredential() {
 		s.writeJSON(w, http.StatusOK, map[string]any{"ok": true, "tested": false, "message": "The connection stores no token; the agent checks its credential profile when a job runs"})
 		return
 	}
@@ -244,7 +263,12 @@ func (s *ServerAPI) HandleTestConnection(w http.ResponseWriter, r *http.Request)
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), connectionTestTimeout)
 	defer cancel()
-	inst, err := vcs.TestConnection(ctx, creds, client)
+	var inst *vcs.Instance
+	if c.AuthType == vcs.AuthGitHubApp {
+		inst, err = vcs.TestGitHubApp(ctx, c.BaseURL, c.App(), client)
+	} else {
+		inst, err = vcs.TestConnection(ctx, creds, client)
+	}
 	if inst != nil && inst.TokenExpires != nil && (c.TokenExpires == nil || !c.TokenExpires.Equal(*inst.TokenExpires)) {
 		if err := s.DB.SetConnectionTokenExpiry(r.Context(), c.ID, inst.TokenExpires); err != nil {
 			slog.Warn("Failed to store the token expiry of a VCS connection", "connection", c.Name, "error", err)
@@ -282,8 +306,24 @@ func (s *ServerAPI) HandleVCSCredentials(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	creds := c.Credentials()
-	if job.VCSConfig.Profile != "" {
+	switch {
+	case job.VCSConfig.Profile != "":
 		creds.Token = ""
+	case c.AuthType == vcs.AuthGitHubApp:
+		// A fresh installation token, limited to what the job reads; the agent asks
+		// again before it expires
+		client, err := creds.HTTPClient(connectionTestTimeout)
+		if err != nil {
+			s.writeError(w, http.StatusInternalServerError, "the connection's CA bundle: "+err.Error())
+			return
+		}
+		token, expires, err := c.App().InstallationToken(r.Context(), vcs.GitHubAPIURL(c.BaseURL), client, vcs.GitHubAppPermissions(job.VCSConfig))
+		if err != nil {
+			slog.Error("Failed to mint a GitHub App installation token", "connection", c.Name, "job_id", job.ID, "error", err)
+			s.writeError(w, http.StatusBadGateway, "minting a GitHub App token for "+c.Name+": "+err.Error())
+			return
+		}
+		creds.Token, creds.Username, creds.ExpiresAt = token, vcs.GitHubAppUsername, &expires
 	}
 	slog.Info("Handing VCS credentials to agent", "agent_id", agent.AgentID, "job_id", job.ID, "connection", c.Name, "agent_profile", job.VCSConfig.Profile)
 	s.writeJSON(w, http.StatusOK, creds)
