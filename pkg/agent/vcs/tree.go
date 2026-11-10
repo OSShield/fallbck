@@ -135,6 +135,39 @@ func projectPath(p string) (string, error) {
 	return strings.Join(segs, "/"), nil
 }
 
+// invalidPaths returns, per project, why its path can't go into the archive ("" = fine).
+// BuildTree would refuse such a path and fail the whole run; checked before fetching,
+// only that project fails. withMeta also catches a project nested in another's
+// _metadata directory (refused even when that one ends up without metadata).
+func invalidPaths(projects []Project, withMeta bool) []string {
+	bad := make([]string, len(projects))
+	clean := make([]string, len(projects))
+	seen := map[string]bool{}
+	for i, p := range projects {
+		c, err := projectPath(p.Path)
+		switch {
+		case err != nil:
+			bad[i] = err.Error()
+		case seen[c]:
+			bad[i] = "another project has the archive path " + c
+		default:
+			seen[c], clean[i] = true, c
+		}
+	}
+	if withMeta {
+		for i, c := range clean {
+			segs := strings.Split(c, "/")
+			for j := 1; c != "" && j < len(segs); j++ {
+				if parent := strings.Join(segs[:j], "/"); segs[j] == MetadataDir && seen[parent] {
+					bad[i] = fmt.Sprintf("project path %q collides with the %s directory of %s", c, MetadataDir, parent)
+					break
+				}
+			}
+		}
+	}
+	return bad
+}
+
 // skipFile reports mirror files that are left out of the archive: transient state
 // git rewrites on every fetch, and lock files of an interrupted git
 func skipFile(name string) bool {

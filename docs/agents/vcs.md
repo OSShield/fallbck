@@ -202,6 +202,8 @@ Each run writes **one snapshot** in the group `host/vcs-<connection name>`:
 | `vcs.pxar` → `RESTORE.md`, `restore.sh` | How to restore, and a script that does it |
 | `fallbck-vcs.json.blob` | The run manifest: every repository and how its fetch went, plus the GitLab version and the token's user |
 
+A repository whose path can't go into the archive isn't fetched and shows as failed in the manifest; the rest of the run carries on. That's a path with a `repository.git` or `wiki.git` segment, `RESTORE.md` or `restore.sh` at the top, a second repository with the same path, or one nested in another's `_metadata/`.
+
 Use a pxar v2 target: files of a mirror that did not change since the last run are referenced from the previous snapshot instead of being read again. An encrypted target is a good idea too, since source code has a tendency to contain some (semi-)secrets.
 
 ## When something fails
