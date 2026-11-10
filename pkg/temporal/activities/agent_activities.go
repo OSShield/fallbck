@@ -404,6 +404,9 @@ func (a *AgentActivities) ExecuteVCSBackup(ctx context.Context, session *tempora
 			reportItems(a.ReportProgress, ctx, session.Ticket, session.BackupRunID, items)
 		},
 		Hostname: a.Hostname, Version: a.Version,
+
+		// GitHub App connections: a new installation token before the current one expires
+		RefreshCredentials: func(ctx context.Context) (*vcs.Credentials, error) { return a.VCSCredentials(ctx, session.Ticket) },
 	})
 	if err != nil {
 		if dbrun.IsPrecheck(err) {
