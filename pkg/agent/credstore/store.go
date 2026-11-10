@@ -64,7 +64,8 @@ type contents struct {
 
 type storedVCSProfile struct {
 	vcs.Profile
-	Token string `json:"token,omitempty"`
+	Token  string `json:"token,omitempty"`
+	AppKey string `json:"app_key,omitempty"`
 }
 
 type storedProfile struct {
@@ -101,7 +102,7 @@ func (s *Store) LoadVCS() (map[string]vcs.Profile, error) {
 	out := make(map[string]vcs.Profile, len(c.VCS))
 	for name, sp := range c.VCS {
 		p := sp.Profile
-		p.Token = sp.Token
+		p.Token, p.AppKey = sp.Token, sp.AppKey
 		out[name] = p
 	}
 	return out, nil
@@ -124,7 +125,7 @@ func (s *Store) VCSProfile(name string) (*vcs.Profile, error) {
 func VCSSummaries(profiles map[string]vcs.Profile) []vcs.ProfileSummary {
 	out := make([]vcs.ProfileSummary, 0, len(profiles))
 	for name, p := range profiles {
-		out = append(out, vcs.ProfileSummary{Name: name, URL: p.URL, TokenFile: p.TokenFile != "", TokenExpires: p.TokenExpires})
+		out = append(out, vcs.ProfileSummary{Name: name, URL: p.URL, AuthType: p.AuthType, TokenFile: p.TokenFile != "", TokenExpires: p.TokenExpires})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
@@ -146,8 +147,8 @@ func (s *Store) PutVCS(name string, p vcs.Profile) error {
 	if c.VCS == nil {
 		c.VCS = map[string]storedVCSProfile{}
 	}
-	sp := storedVCSProfile{Profile: p, Token: p.Token}
-	sp.Profile.Token = ""
+	sp := storedVCSProfile{Profile: p, Token: p.Token, AppKey: p.AppKey}
+	sp.Profile.Token, sp.Profile.AppKey = "", ""
 	c.VCS[name] = sp
 	return s.write(c)
 }

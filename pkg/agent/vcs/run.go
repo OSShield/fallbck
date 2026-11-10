@@ -40,7 +40,10 @@ type RunOptions struct {
 	// looks up an agent credential profile by name (the job's Spec.Profile); nil
 	// means the agent has no credential store
 	Profile func(name string) (*spec.Profile, error)
-	Upload  UploadFunc
+	// RefreshCredentials fetches the connection credentials again; used when they
+	// carry a short-lived token (Credentials.ExpiresAt, a GitHub App connection)
+	RefreshCredentials func(ctx context.Context) (*spec.Credentials, error)
+	Upload             UploadFunc
 	// Progress names the current step (reported to the server right away); Activity
 	// is frequent detail such as git's progress lines (shown with the next report)
 	Progress func(phase string)
@@ -96,13 +99,31 @@ func Run(ctx context.Context, o RunOptions) (*temporal.BackupExecutionResult, er
 	if err := s.Validate(); err != nil {
 		return nil, &dbrun.PrecheckError{Msg: "invalid job configuration", Err: err}
 	}
-	auth := Auth{BaseURL: o.Credentials.BaseURL, Token: o.Credentials.Token, CAPEM: o.Credentials.CAPEM}
+	auth := Auth{BaseURL: o.Credentials.BaseURL, Token: o.Credentials.Token, Username: o.Credentials.Username, CAPEM: o.Credentials.CAPEM}
+	authType := o.Credentials.AuthType
+	if exp := o.Credentials.ExpiresAt; exp != nil && o.RefreshCredentials != nil && s.Profile == "" {
+		// ponytail: renewed with the run's backup ticket, which lasts 2h; the upload
+		// needs that ticket too, so no run that can finish outlives it
+		rt := &spec.RefreshingToken{Fetch: func(ctx context.Context) (string, time.Time, error) {
+			c, err := o.RefreshCredentials(ctx)
+			if err != nil {
+				return "", time.Time{}, err
+			}
+			if c.Token == "" || c.ExpiresAt == nil {
+				return "", time.Time{}, errors.New("the server sent no short-lived token")
+			}
+			return c.Token, *c.ExpiresAt, nil
+		}}
+		rt.Seed(auth.Token, *exp)
+		auth.Tokens = rt.Token
+	}
 	if s.Profile != "" {
-		if err := applyProfile(&auth, s.Profile, o.Profile); err != nil {
+		var err error
+		if authType, err = applyProfile(ctx, &auth, s, o.Credentials, o.Profile); err != nil {
 			return nil, err
 		}
 	}
-	conn := &spec.Connection{Provider: o.Credentials.Provider, BaseURL: o.Credentials.BaseURL, Token: auth.Token}
+	conn := &spec.Connection{Provider: o.Credentials.Provider, BaseURL: o.Credentials.BaseURL, Token: auth.Token, AuthType: authType}
 	if err := s.ValidateFor(conn); err != nil {
 		return nil, &dbrun.PrecheckError{Msg: "the job does not match its connection", Err: err}
 	}
@@ -112,7 +133,8 @@ func Run(ctx context.Context, o RunOptions) (*temporal.BackupExecutionResult, er
 		case spec.ProviderGit:
 			provider = GitProvider{Spec: s}
 		case spec.ProviderGitLab, spec.ProviderGitHub:
-			creds := spec.Credentials{Provider: o.Credentials.Provider, BaseURL: o.Credentials.BaseURL, Token: auth.Token, CAPEM: o.Credentials.CAPEM}
+			creds := spec.Credentials{Provider: o.Credentials.Provider, BaseURL: o.Credentials.BaseURL, AuthType: authType,
+				Token: auth.Token, Tokens: auth.Tokens, CAPEM: o.Credentials.CAPEM}
 			client, err := creds.HTTPClient(gitlabAPITimeout)
 			if err != nil {
 				return nil, &dbrun.PrecheckError{Msg: "the connection's CA bundle", Err: err}
@@ -295,28 +317,57 @@ func Run(ctx context.Context, o RunOptions) (*temporal.BackupExecutionResult, er
 	return res, nil
 }
 
-// puts the token of the job's agent credential profile into auth. The profile is
-// only used for the URL it was created for: the server decides the connection URL,
-// and must not be able to send an agent-held token anywhere else.
-func applyProfile(auth *Auth, name string, lookup func(string) (*spec.Profile, error)) error {
+// puts the token of the job's agent credential profile into auth and returns the
+// auth type. The profile is only used for the URL it was created for: the server
+// decides the connection URL, and must not be able to send an agent-held token
+// anywhere else. A GitHub App profile mints its first installation token here, so a
+// wrong key or id fails the precheck.
+func applyProfile(ctx context.Context, auth *Auth, s *spec.Spec, creds spec.Credentials, lookup func(string) (*spec.Profile, error)) (string, error) {
+	name := s.Profile
 	if lookup == nil {
-		return &dbrun.PrecheckError{Msg: "the job names the agent credential profile " + name, Hint: "this agent has no credential store"}
+		return "", &dbrun.PrecheckError{Msg: "the job names the agent credential profile " + name, Hint: "this agent has no credential store"}
 	}
 	p, err := lookup(name)
 	if err != nil {
-		return &dbrun.PrecheckError{Msg: "agent credential profile " + name, Err: err,
+		return "", &dbrun.PrecheckError{Msg: "agent credential profile " + name, Err: err,
 			Hint: "create it on the agent: fallbck-agent vcs profile create --name " + name + " --url " + auth.BaseURL + " --ask-token"}
 	}
 	if p.URL != auth.BaseURL {
-		return &dbrun.PrecheckError{Msg: fmt.Sprintf("agent credential profile %s is for %s, but the job's connection is %s", name, p.URL, auth.BaseURL),
+		return "", &dbrun.PrecheckError{Msg: fmt.Sprintf("agent credential profile %s is for %s, but the job's connection is %s", name, p.URL, auth.BaseURL),
 			Hint: "the agent only sends a profile's token to the URL it was created for; recreate the profile or fix the connection"}
 	}
-	token, err := p.ResolveToken()
-	if err != nil {
-		return &dbrun.PrecheckError{Msg: "agent credential profile " + name, Err: err}
+	auth.Tokens = nil
+	if p.AuthType != spec.AuthGitHubApp {
+		token, err := p.ResolveToken()
+		if err != nil {
+			return "", &dbrun.PrecheckError{Msg: "agent credential profile " + name, Err: err}
+		}
+		auth.Token, auth.Username = token, p.Username
+		return spec.AuthToken, nil
 	}
-	auth.Token, auth.Username = token, p.Username
-	return nil
+	if creds.Provider != spec.ProviderGitHub {
+		return "", &dbrun.PrecheckError{Msg: "agent credential profile " + name + " is a GitHub App, but the job's connection is " + creds.Provider}
+	}
+	client, err := creds.HTTPClient(gitlabAPITimeout)
+	if err != nil {
+		return "", &dbrun.PrecheckError{Msg: "the connection's CA bundle", Err: err}
+	}
+	api, perms := spec.GitHubAPIURL(auth.BaseURL), spec.GitHubAppPermissions(s)
+	rt := &spec.RefreshingToken{Fetch: func(ctx context.Context) (string, time.Time, error) {
+		// the key file is read again for every token, so a rotated key is picked up
+		app, err := p.App()
+		if err != nil {
+			return "", time.Time{}, err
+		}
+		return app.InstallationToken(ctx, api, client, perms)
+	}}
+	token, err := rt.Token(ctx)
+	if err != nil {
+		return "", &dbrun.PrecheckError{Msg: "agent credential profile " + name, Err: err,
+			Hint: "check it with: fallbck-agent vcs profile test --name " + name}
+	}
+	auth.Token, auth.Username, auth.Tokens = token, spec.GitHubAppUsername, rt.Token
+	return spec.AuthGitHubApp, nil
 }
 
 // metadataFullEvery is how often metadata is listed whole instead of since the last

@@ -44,11 +44,18 @@ func (p *GitHubProvider) api() *spec.GitHubClient {
 // cannot be listed is a warning unless none can be.
 func (p *GitHubProvider) Projects(ctx context.Context) ([]Project, []string, error) {
 	api := p.api()
-	v, err := api.Viewer(ctx)
-	if err != nil {
-		return nil, nil, err
+	// An installation token has no user (GET /user refuses it); only owners and
+	// explicit repositories apply, which the precheck enforces
+	v := &spec.GitHubViewer{}
+	if p.Credentials.AuthType == spec.AuthGitHubApp {
+		p.viewer = "GitHub App"
+	} else {
+		var err error
+		if v, err = api.Viewer(ctx); err != nil {
+			return nil, nil, err
+		}
+		p.viewer = v.Login
 	}
-	p.viewer = v.Login
 	s := p.Spec
 	base := strings.TrimRight(p.Credentials.BaseURL, "/")
 

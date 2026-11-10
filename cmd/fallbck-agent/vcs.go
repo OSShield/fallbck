@@ -31,6 +31,7 @@ func vcsCommand(args []string) error {
 
 const vcsUsage = `Usage:
   fallbck-agent vcs profile create --name <name> --url <connection URL> (--ask-token | --token-file <path>) [--username <u>]
+  fallbck-agent vcs profile create --name <name> --url <GitHub URL> --auth github_app --app-id <id> --installation-id <id> --app-key-file <pem> [--store-app-key]
   fallbck-agent vcs profile list
   fallbck-agent vcs profile delete --name <name>
   fallbck-agent vcs profile test --name <name> [--provider gitlab|github] [--ca-file <pem>]   # check the token, record its expiry
@@ -38,7 +39,9 @@ Every command takes --config <agent.yaml> (default: the enrolled agent's file). 
 profile by naming it; the agent sends its token only to the profile's URL, which must equal the
 job's connection URL. Tokens are encrypted under <data dir>/credentials.key; only names, URLs
 and expiry dates are reported to the server. --ask-token reads from the terminal without echo,
-or one line from standard input when piped.
+or one line from standard input when piped. A GitHub App profile mints short-lived installation
+tokens on this host: the key file is read at every run, or copied into the encrypted store with
+--store-app-key.
 `
 
 func vcsProfileCommand(args []string) error {
@@ -55,6 +58,11 @@ func vcsProfileCommand(args []string) error {
 	askToken := fs.Bool("ask-token", false, "Prompt for the token without echo (or read one line from standard input)")
 	caFile := fs.String("ca-file", "", "test: CA bundle for an instance with a private CA")
 	provider := fs.String("provider", "", "test: gitlab or github (default: github for github.com, else gitlab; GitHub Enterprise Server needs github)")
+	authType := fs.String("auth", "", "token (default) or github_app")
+	appID := fs.Int64("app-id", 0, "github_app: the App's id (App settings, About)")
+	installationID := fs.Int64("installation-id", 0, "github_app: the installation id (the number at the end of the installation's settings URL)")
+	appKeyFile := fs.String("app-key-file", "", "github_app: the App's private key (PEM), read at every run")
+	storeAppKey := fs.Bool("store-app-key", false, "github_app: copy the key from --app-key-file into the encrypted store instead")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -73,7 +81,18 @@ func vcsProfileCommand(args []string) error {
 		if *name == "" || *url == "" {
 			return errors.New("--name and --url are required")
 		}
-		p := vcs.Profile{URL: *url, Username: *username, TokenFile: *tokenFile}
+		p := vcs.Profile{URL: *url, Username: *username, TokenFile: *tokenFile,
+			AuthType: *authType, AppID: *appID, InstallationID: *installationID, AppKeyFile: *appKeyFile}
+		if *storeAppKey {
+			if p.AppKeyFile == "" {
+				return errors.New("--store-app-key needs --app-key-file")
+			}
+			data, err := os.ReadFile(p.AppKeyFile)
+			if err != nil {
+				return err
+			}
+			p.AppKey, p.AppKeyFile = string(data), ""
+		}
 		if *askToken {
 			if p.TokenFile != "" {
 				return errors.New("use either --ask-token or --token-file")
@@ -88,7 +107,7 @@ func vcsProfileCommand(args []string) error {
 			return err
 		}
 		fmt.Printf("VCS profile %q saved to %s (encrypted). The agent reports it with its next inventory summary.\n", vcs.NormalizeProfileName(*name), store.Path())
-		fmt.Println("For GitLab, check the token and record its expiry with: fallbck-agent vcs profile test --name " + vcs.NormalizeProfileName(*name))
+		fmt.Println("Check it (and record a token's expiry) with: fallbck-agent vcs profile test --name " + vcs.NormalizeProfileName(*name))
 		return nil
 	case "list", "ls":
 		profiles, err := store.LoadVCS()
@@ -105,6 +124,12 @@ func vcsProfileCommand(args []string) error {
 			source, expires := "stored", "-"
 			if s.TokenFile {
 				source = "file " + profiles[s.Name].TokenFile
+			}
+			if p := profiles[s.Name]; p.AuthType == vcs.AuthGitHubApp {
+				source = fmt.Sprintf("GitHub App %d, installation %d, key stored", p.AppID, p.InstallationID)
+				if p.AppKeyFile != "" {
+					source = fmt.Sprintf("GitHub App %d, installation %d, key file %s", p.AppID, p.InstallationID, p.AppKeyFile)
+				}
 			}
 			if s.TokenExpires != nil {
 				expires = s.TokenExpires.Format(time.DateOnly)
@@ -137,6 +162,9 @@ func testVCSProfile(store *credstore.Store, name, provider, caFile string) error
 	p, err := store.VCSProfile(name)
 	if err != nil {
 		return err
+	}
+	if p.AuthType == vcs.AuthGitHubApp {
+		return testGitHubAppProfile(p, caFile)
 	}
 	token, err := p.ResolveToken()
 	if err != nil {
@@ -195,5 +223,38 @@ func testVCSProfile(store *credstore.Store, name, provider, caFile string) error
 		return err
 	}
 	fmt.Println("The token works.")
+	return nil
+}
+
+// testGitHubAppProfile checks an App profile from this host: the App, a token for the
+// installation and the repositories it can read
+func testGitHubAppProfile(p *vcs.Profile, caFile string) error {
+	app, err := p.App()
+	if err != nil {
+		return err
+	}
+	creds := vcs.Credentials{Provider: vcs.ProviderGitHub, BaseURL: p.URL}
+	if caFile != "" {
+		data, err := os.ReadFile(caFile)
+		if err != nil {
+			return err
+		}
+		creds.CAPEM = string(data)
+	}
+	client, err := creds.HTTPClient(30 * time.Second)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	inst, err := vcs.TestGitHubApp(ctx, p.URL, app, client)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("GitHub, %s, installation %d\n", inst.Username, p.InstallationID)
+	for _, w := range inst.Warnings {
+		fmt.Println("Warning:", w)
+	}
+	fmt.Println("The App works.")
 	return nil
 }

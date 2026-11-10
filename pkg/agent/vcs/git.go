@@ -14,11 +14,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	spec "github.com/osshield/fallbck/pkg/vcs"
 )
 
 // Auth for the connection. The token is sent as a HTTP header scoped to
@@ -31,6 +34,9 @@ type Auth struct {
 	// Username for HTTP basic authentication; gitlab accepts any name with an access token ("oauth2" by convention)
 	Username string
 	Token    string
+	// Tokens, when set, is asked before every git process for the token to send
+	// (GitHub App tokens expire within the hour); Token is the first one
+	Tokens spec.TokenSource
 	// CAPEM is an optional CA bundle for the host (written to a private temp file for http.sslCAInfo)
 	CAPEM string
 	// ExtraURLs also get the header: hosts of the same provider outside BaseURL
@@ -47,7 +53,9 @@ type Git struct {
 	Path string
 	auth Auth
 	// caFile is the CA bundle written for this run ("" when none)
-	caFile  string
+	caFile string
+	// mu guards the token and secrets, which change when Auth.Tokens renews the token
+	mu      sync.Mutex
 	secrets []string
 	// KillGrace is how long a cancelled git gets before it is killed
 	KillGrace time.Duration
@@ -69,7 +77,7 @@ func NewGit(gitPath string, auth Auth, tempDir string) (*Git, error) {
 	auth.BaseURL = strings.TrimRight(auth.BaseURL, "/")
 	g := &Git{Path: gitPath, auth: auth, KillGrace: 20 * time.Second}
 	if auth.Token != "" {
-		g.secrets = []string{auth.Token, basicCredentials(auth.Username, auth.Token)}
+		g.addSecret(auth.Token)
 	}
 	if auth.CAPEM != "" {
 		f, err := os.CreateTemp(tempDir, "vcs-ca-*.pem")
@@ -97,6 +105,31 @@ func (g *Git) Close() error {
 	return os.Remove(g.caFile)
 }
 
+// addSecret redacts a token and its basic auth form from git's output (caller holds
+// mu, or no git runs yet)
+func (g *Git) addSecret(token string) {
+	g.secrets = append(g.secrets, token, basicCredentials(g.auth.Username, token))
+}
+
+// renewToken asks Auth.Tokens for the token of the next git process; every token a
+// run used stays redacted
+func (g *Git) renewToken(ctx context.Context) error {
+	if g.auth.Tokens == nil {
+		return nil
+	}
+	token, err := g.auth.Tokens(ctx)
+	if err != nil {
+		return err
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if token != g.auth.Token {
+		g.auth.Token = token
+		g.addSecret(token)
+	}
+	return nil
+}
+
 func basicCredentials(user, token string) string {
 	return base64.StdEncoding.EncodeToString([]byte(user + ":" + token))
 }
@@ -107,6 +140,9 @@ func basicCredentials(user, token string) string {
 // connection's header and CA bundle scoped to its URL. headerScope narrows the
 // header to a URL below the connection's ("" = the whole connection URL).
 func (g *Git) env(headerScope string) []string {
+	g.mu.Lock()
+	token := g.auth.Token
+	g.mu.Unlock()
 	env := []string{"LANG=C", "LC_ALL=C", "TZ=UTC",
 		"GIT_TERMINAL_PROMPT=0", "GCM_INTERACTIVE=never", "GIT_ASKPASS=", "SSH_ASKPASS=",
 		"GIT_ALLOW_PROTOCOL=https",
@@ -124,14 +160,14 @@ func (g *Git) env(headerScope string) []string {
 		{"credential.helper", ""},
 		{"lfs.locksverify", "false"},
 	}
-	if g.auth.Token != "" && g.auth.BaseURL != "" {
+	if token != "" && g.auth.BaseURL != "" {
 		scope := g.auth.BaseURL
 		if strings.HasPrefix(headerScope, g.auth.BaseURL+"/") {
 			scope = strings.TrimRight(headerScope, "/")
 		}
-		cfg = append(cfg, [2]string{"http." + scope + "/.extraHeader", "Authorization: Basic " + basicCredentials(g.auth.Username, g.auth.Token)})
+		cfg = append(cfg, [2]string{"http." + scope + "/.extraHeader", "Authorization: Basic " + basicCredentials(g.auth.Username, token)})
 		for _, u := range g.auth.ExtraURLs {
-			cfg = append(cfg, [2]string{"http." + strings.TrimRight(u, "/") + "/.extraHeader", "Authorization: Basic " + basicCredentials(g.auth.Username, g.auth.Token)})
+			cfg = append(cfg, [2]string{"http." + strings.TrimRight(u, "/") + "/.extraHeader", "Authorization: Basic " + basicCredentials(g.auth.Username, token)})
 		}
 	}
 	if g.caFile != "" && g.auth.BaseURL != "" {
@@ -198,15 +234,21 @@ func (g *Git) run(ctx context.Context, dir string, stdout io.Writer, progress fu
 
 // runScoped is run with the token header limited to headerScope (see env)
 func (g *Git) runScoped(ctx context.Context, dir, headerScope string, stdout io.Writer, progress func(string), args ...string) error {
+	name := args[0]
+	if err := g.renewToken(ctx); err != nil {
+		return fmt.Errorf("git %s: %w", name, err)
+	}
 	cmd := exec.CommandContext(ctx, g.Path, args...)
 	cmd.Dir = dir
 	cmd.Env = g.env(headerScope)
 	cmd.Stdout = stdout
-	stderr := &lineWriter{limit: 64 << 10, secrets: g.secrets, onLine: progress}
+	g.mu.Lock()
+	secrets := slices.Clone(g.secrets)
+	g.mu.Unlock()
+	stderr := &lineWriter{limit: 64 << 10, secrets: secrets, onLine: progress}
 	cmd.Stderr = stderr
 	configureKill(cmd)
 	cmd.WaitDelay = g.KillGrace
-	name := args[0]
 	slog.Debug("Running git", "args", args, "dir", dir)
 	err := cmd.Run()
 	if ctx.Err() != nil {
