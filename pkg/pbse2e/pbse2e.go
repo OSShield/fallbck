@@ -78,7 +78,11 @@ func Start() (*PBS, error) {
 		return nil, err
 	}
 	p := &PBS{container: "fallbck-pbse2e-" + uuid.NewString()[:8], configDir: dir}
-	if _, err := docker(nil, "run", "-d", "--name", p.container, "--tmpfs", "/run", "-e", "POSTFIX=N",
+	// PBS makes its certificate's CN from <hostname>.<search domain>; the search domain
+	// of the host (GitHub's Azure runners have long ones) pushes it past 64 characters
+	// and proxmox-backup-api dies at startup
+	if _, err := docker(nil, "run", "-d", "--name", p.container, "--hostname", "pbs", "--dns-search", ".",
+		"--tmpfs", "/run", "-e", "POSTFIX=N",
 		"-v", cfg+":/etc/pbs-config.yml:ro", "-p", "127.0.0.1::8007", image); err != nil {
 		p.Stop()
 		return nil, err
