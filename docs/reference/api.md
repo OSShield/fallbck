@@ -41,7 +41,7 @@ POST /api/v1/tokens
 { "name": "web-01", "max_uses": 1, "expires_at": "2026-12-31T00:00:00Z", "labels": {"team": "web"} }
 ```
 
-`max_uses: 0` means unlimited, and it defaults to 1. Agents enrolled with the token get its labels.
+`max_uses` defaults to 1 (0 counts as 1, there are no unlimited tokens), and `expires_at` to 24 hours from now. Agents enrolled with the token get its labels.
 
 ## API keys
 

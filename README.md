@@ -50,6 +50,22 @@ All below features are free and open source. There is no enterprise plan, there 
   - Secure client-side credential storage (databases, kubernetes, ms365) as an option so database credentials never touch the server side
 
 
+## Security
+While we keep FallBCK as secure as possible, we built the entire software on the assumption that the backup server could get popped someday, so a compromised instance should not be able to take your backups with it. The short version:
+
+- **PBS stays in charge of finished backups.** FallBCK only uses `DatastoreBackup`. It can write new snapshots and read back its own backups, but it can't delete, prune or touch anything it didn't write. It checks your token and warns if it has more than that. Retention is handled by a PBS prune job.
+- **Agents (optionally) never see PBS credentials.** Backups go through a tunnel on the server, with a short-lived ticket per run that pins the datastore, namespace and snapshot. Direct PBS access is an opt-in you set per job on the server.
+- **Agents only dial out.** You don't open any ports towards your hosts. Agents call out to FallBCK , are limited to their own job queue, and they only install updates from signed releases (Sigstore).
+- **Client-side encryption.** Data is encrypted on the agent before it leaves the host, so PBS and anything in between only ever see ciphertext. The key is a symmetric AES-256 key on a key ring: one key per ring, shared by every target and job on it, so they dedup against each other. The server keeps it sealed and hands it to the agent for each run, and the agent only holds it in memory for that run. You get it out as a passphrase-protected key file for restores. That means whoever owns the server *and* its master key can decrypt, so protect those. An optional RSA master key is a recovery net, not a lock: FallBCK only ever stores its public half, wraps each snapshot's key with it, and the private half stays with you, offline.
+- **Secrets are sealed.** PBS tokens, encryption keys and source credentials are sealed with a master key that's kept outside the database. API keys and enrollment tokens are stored as hashes.
+- **Credentials can stay on the agent.** Database, Git and Ms365** credential profiles live in the agent's encrypted store, and the server only learns their names when defined agent-side.
+- **Access control.** SSO only (OIDC), RBAC with label-scoped bindings and no implicit admin. API keys can't reach further than whoever made them, and sessions can be revoked within 30 seconds.
+- **Append-only audit log.** The database refuses updates and deletes on it, even from the server's own database user.
+
+The details, including the trade-offs, are in [Security](https://docs.fallbck.eu/operations/security/). To report a vulnerability, see [SECURITY.md](SECURITY.md).
+
+** Agent-side credential storage for Microsoft 365 is planned for the next upcoming release
+
 ## Backup Sources
 
 | Kind | Type | Description | Restore Workflow |

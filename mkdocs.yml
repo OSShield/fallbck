@@ -64,6 +64,7 @@ nav:
   - Running it:
       - Access control: operations/access.md
       - Encryption: operations/encryption.md
+      - Security: operations/security.md
       - Scheduling: operations/scheduling.md
       - Agent status and updates: operations/agent-status.md
       - CLI: operations/cli.md
