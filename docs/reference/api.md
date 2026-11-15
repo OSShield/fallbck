@@ -132,9 +132,9 @@ See [Encryption](../operations/encryption.md) for what all of this means.
 | `POST` | `/m365/tenants` | Create. |
 | `GET` | `/m365/tenants` | |
 | `GET` | `/m365/tenants/{id}` | |
-| `PUT` | `/m365/tenants/{id}` | |
+| `PUT` | `/m365/tenants/{id}` | A blank `secret` or `key_pem` keeps the stored one. Switching to `"auth_method": "agent"` is refused while a job on the tenant has no `profile`. |
 | `DELETE` | `/m365/tenants/{id}` | Refused while jobs still use it. |
-| `POST` | `/m365/tenants/{id}/test` | Gets a token and reads `/organization`. |
+| `POST` | `/m365/tenants/{id}/test` | Gets a token and reads `/organization`. Answers `"ok": false` for `agent` tenants: test the profile on the agent. |
 
 ```json
 {
@@ -147,6 +147,8 @@ See [Encryption](../operations/encryption.md) for what all of this means.
 ```
 
 For certificate auth, use `"auth_method": "certificate"` with `certificate_pem` and `key_pem`. Secrets are write-only.
+
+With `"auth_method": "agent"` the server keeps no credential at all. Every job on the tenant then has to name an agent credential profile in `m365_config.profile`. Any M365 job can name one, and the server then hands that job the tenant's IDs only. See [Microsoft 365](../agents/m365.md#keep-the-credential-on-the-agent).
 
 ## VCS connections
 

@@ -58,13 +58,11 @@ While we keep FallBCK as secure as possible, we built the entire software on the
 - **Agents only dial out.** You don't open any ports towards your hosts. Agents call out to FallBCK , are limited to their own job queue, and they only install updates from signed releases (Sigstore).
 - **Client-side encryption.** Data is encrypted on the agent before it leaves the host, so PBS and anything in between only ever see ciphertext. The key is a symmetric AES-256 key on a key ring: one key per ring, shared by every target and job on it, so they dedup against each other. The server keeps it sealed and hands it to the agent for each run, and the agent only holds it in memory for that run. You get it out as a passphrase-protected key file for restores. That means whoever owns the server *and* its master key can decrypt, so protect those. An optional RSA master key is a recovery net, not a lock: FallBCK only ever stores its public half, wraps each snapshot's key with it, and the private half stays with you, offline.
 - **Secrets are sealed.** PBS tokens, encryption keys and source credentials are sealed with a master key that's kept outside the database. API keys and enrollment tokens are stored as hashes.
-- **Credentials can stay on the agent.** Database, Git and Ms365** credential profiles live in the agent's encrypted store, and the server only learns their names when defined agent-side.
+- **Credentials can stay on the agent.** Database, Git and Microsoft 365 credential profiles live in the agent's encrypted store, and the server only learns their names when defined agent-side.
 - **Access control.** SSO only (OIDC), RBAC with label-scoped bindings and no implicit admin. API keys can't reach further than whoever made them, and sessions can be revoked within 30 seconds.
 - **Append-only audit log.** The database refuses updates and deletes on it, even from the server's own database user.
 
 The details, including the trade-offs, are in [Security](https://docs.fallbck.eu/operations/security/). To report a vulnerability, see [SECURITY.md](SECURITY.md).
-
-** Agent-side credential storage for Microsoft 365 is planned for the next upcoming release
 
 ## Backup Sources
 
