@@ -9,7 +9,7 @@
     <div style="display: flex; gap: 8px; align-items: center;">
       <select name="m365_tenant_id" class="form-control" required>
         <option value="">-- Choose tenant --</option>
-        {{range .Tenants}}<option value="{{.ID}}" data-name="{{.Name}}">{{.Name}} ({{.TenantID}}, {{.AuthMethod}})</option>{{end}}
+        {{range .Tenants}}<option value="{{.ID}}" data-name="{{.Name}}">{{.Name}} ({{.TenantID}}, {{if eq .AuthMethod "agent"}}credentials on agent{{else}}{{.AuthMethod}}{{end}})</option>{{end}}
       </select>
       <a href="/tenants" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">Manage tenants</a>
     </div>
@@ -83,6 +83,11 @@
       <label>Snapshot group prefix (optional, default m365-&lt;tenant name&gt;)</label>
       <input type="text" name="m365_backup_id" class="form-control" placeholder="m365-contoso">
     </div>
+  </div>
+  <div class="form-group">
+    <label>Agent credential profile (optional; required for tenants with credentials on the agents)</label>
+    <input type="text" name="m365_profile" class="form-control" placeholder="contoso">
+    <span class="form-text">Use a secret or certificate kept on the agent (<code>fallbck-agent m365 profile create</code>) instead of the tenant's; the server never hands out its credential for such a job.</span>
   </div>
 </fieldset>
 {{end}}
