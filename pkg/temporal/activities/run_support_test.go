@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/osshield/fallbck/pkg/agent/backup"
+	dbrun "github.com/osshield/fallbck/pkg/agent/dbbackup"
+	"github.com/osshield/fallbck/pkg/m365"
 	"github.com/osshield/fallbck/pkg/temporal"
 	sdktemporal "go.temporal.io/sdk/temporal"
 	"google.golang.org/grpc"
@@ -114,5 +116,41 @@ func TestOpenTransportEncrypted(t *testing.T) {
 		return nil, nil
 	}, nil); err != nil || tr.crypt != nil {
 		t.Errorf("plaintext: %v %+v", err, tr)
+	}
+}
+
+// A job's Microsoft 365 profile replaces the server's ids-only credentials, but only
+// when it was made for that tenant and app
+func TestApplyM365Profile(t *testing.T) {
+	const tenant, client = "72f988bf-86f1-41af-91ab-2d7cd011db47", "11111111-2222-3333-4444-555555555555"
+	profile := &m365.Profile{TenantID: tenant, ClientID: client, AuthMethod: m365.AuthSecret, Secret: "agent-secret"}
+	lookup := func(name string) (*m365.Profile, error) {
+		if name != "contoso" {
+			return nil, errors.New("profile not found")
+		}
+		return profile, nil
+	}
+	fromServer := func() *m365.Credentials {
+		return &m365.Credentials{TenantID: tenant, ClientID: client, AuthMethod: m365.AuthAgent}
+	}
+
+	creds := fromServer()
+	if err := applyM365Profile(creds, "", lookup); err != nil || creds.Secret != "" {
+		t.Fatalf("no profile must leave the server's credentials: %+v %v", creds, err)
+	}
+	if err := applyM365Profile(creds, "contoso", lookup); err != nil || creds.Secret != "agent-secret" || creds.AuthMethod != m365.AuthSecret {
+		t.Fatalf("profile not applied: %+v %v", creds, err)
+	}
+
+	creds = fromServer()
+	creds.TenantID = "fabrikam.onmicrosoft.com"
+	if err := applyM365Profile(creds, "contoso", lookup); !dbrun.IsPrecheck(err) || !strings.Contains(err.Error(), "fabrikam") || creds.Secret != "" {
+		t.Errorf("profile used for another tenant: %v", err)
+	}
+	if err := applyM365Profile(fromServer(), "missing", lookup); !dbrun.IsPrecheck(err) || !strings.Contains(err.Error(), "m365 profile create") {
+		t.Errorf("missing profile: %v", err)
+	}
+	if err := applyM365Profile(fromServer(), "contoso", nil); !dbrun.IsPrecheck(err) {
+		t.Errorf("no store: %v", err)
 	}
 }
