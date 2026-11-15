@@ -143,6 +143,5 @@ With `auth.insecure_disable` (only under `--dev`), every request is the global a
 ## Known gaps
 
 - The Temporal UI isn't scoped, which is why `temporal:ui` is global only. It's also read-only by default (`temporal.ui.read_only`). Turn that off and whoever can open it can terminate or cancel any workflow.
-- A key ring's list of attached targets shows every target name on the ring, scoped or not.
 - Groups and claims come from the sign-in and live in the session. Someone removed from a group at your IdP keeps that group's access until their session ends (12 hours by default), unless you sign them out everywhere. Removing the *binding* takes effect within 30 seconds.
 - There's no directory sync (SCIM or Graph). Suggestions only know what sign-ins have shown.

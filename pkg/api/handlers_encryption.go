@@ -373,6 +373,7 @@ func (s *ServerAPI) writeRing(w http.ResponseWriter, r *http.Request, ring *db.K
 		s.writeError(w, http.StatusInternalServerError, "Failed to load encryption keys")
 		return
 	}
+	fresh.ScopeTargets(scope(r, auth.PermTargetsRead))
 	s.writeJSON(w, status, KeyRingResponse{KeyRing: fresh, Keys: keys})
 }
 
@@ -570,6 +571,10 @@ func (s *ServerAPI) HandleListKeyRings(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, "Failed to list key rings")
 		return
 	}
+	targets := scope(r, auth.PermTargetsRead)
+	for _, ring := range rings {
+		ring.ScopeTargets(targets)
+	}
 	s.writeJSON(w, http.StatusOK, rings)
 }
 
@@ -668,16 +673,28 @@ func (s *ServerAPI) HandleDeleteKeyRing(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	if err := s.DB.DeleteKeyRing(r.Context(), ring.ID); err != nil {
-		if errors.Is(err, db.ErrInUse) {
-			s.writeError(w, http.StatusConflict, "Key ring is attached to targets: "+strings.Join(ring.Targets, ", "))
+	force := r.URL.Query().Get("force") == "true"
+	if err := s.DB.DeleteKeyRing(r.Context(), ring.ID, force); err != nil {
+		var used *db.KeysUsedError
+		switch {
+		case errors.Is(err, db.ErrInUse):
+			ring.ScopeTargets(scope(r, auth.PermTargetsRead))
+			msg := fmt.Sprintf("Key ring is attached to %d target(s)", ring.TargetCount)
+			if len(ring.Targets) > 0 {
+				msg += ": " + strings.Join(ring.Targets, ", ")
+			}
+			s.writeError(w, http.StatusConflict, msg)
+			return
+		case errors.As(err, &used):
+			s.writeJSON(w, http.StatusConflict, map[string]any{"runs": used.Runs,
+				"error": fmt.Sprintf("%d run(s) were written with this ring's keys and can't be read without them. Export the keys first, then delete with force=true.", used.Runs)})
 			return
 		}
 		s.writeError(w, http.StatusInternalServerError, "Failed to delete key ring")
 		return
 	}
-	slog.Warn("Backup encryption key ring deleted with its keys", "key_ring", ring.Name, "ring_id", ring.ID, "principal", principalName(r))
-	s.audit(r, "keyring.delete", "keyring", ring.ID.String(), ring.Name, ring.Labels, nil)
+	slog.Warn("Backup encryption key ring deleted with its keys", "key_ring", ring.Name, "ring_id", ring.ID, "force", force, "principal", principalName(r))
+	s.audit(r, "keyring.delete", "keyring", ring.ID.String(), ring.Name, ring.Labels, map[string]any{"force": force})
 	s.writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 

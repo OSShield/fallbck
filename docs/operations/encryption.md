@@ -42,7 +42,7 @@ All of these act on the ring, so they apply to every target attached to it.
 - **Rotate key** makes a new key. The old one is retired, not deleted, because the snapshots written with it still need it. It stays exportable by fingerprint. New snapshots won't dedup against old ones.
 - **Import key file** adopts a key from `proxmox-backup-client` or another ring. To make two existing targets share a key, attach one to the other's ring instead; it's the same thing without the file.
 - **Disabling** encryption on a target keeps it attached to its ring, for the same reason. Re-enabling picks up where it left off.
-- **Deleting a ring** only works once no target uses it. It takes the ring's keys with it, so export first.
+- **Deleting a ring** only works once no target uses it. It takes the ring's keys with it, so export first. While runs were written with its keys, FallBCK refuses and tells you how many. The UI then asks you to type the ring's name to delete it anyway, and the API needs `?force=true`.
 
 The *Key rings* table on the Targets page lists every ring with its fingerprint and targets.
 

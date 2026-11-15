@@ -83,8 +83,8 @@ func TestResolveCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 	profiles := map[string]CredentialProfile{
-		"postgres": {Engine: "postgresql", User: "backup", PasswordFile: pwFile, TLS: TLSSpec{Mode: TLSRequire}},
-		"maria":    {Engine: "mysql", User: "root", Password: "rootpw", Port: 3307},
+		"postgres": {Engine: "postgresql", User: "backup", PasswordFile: pwFile, Host: "DB01", TLS: TLSSpec{Mode: TLSRequire}},
+		"maria":    {Engine: "mysql", User: "root", Password: "rootpw", Host: "db02", Port: 3307},
 	}
 	spec := &Spec{Engine: EnginePostgres, Host: "db01"}
 	c, err := ResolveCredentials(spec, "", profiles)
@@ -105,10 +105,10 @@ func TestResolveCredentials(t *testing.T) {
 	if _, err := ResolveCredentials(&Spec{Engine: EngineMySQL, Host: "db02", Profile: "nope"}, "", profiles); !errors.Is(err, ErrNoCredentials) {
 		t.Errorf("missing named profile must fail with ErrNoCredentials: %v", err)
 	}
-	if _, err := ResolveCredentials(&Spec{Engine: EnginePostgres, Host: "db02", Profile: "postgres"}, "", map[string]CredentialProfile{"postgres": {Engine: EnginePostgres}}); !errors.Is(err, ErrNoCredentials) {
+	if _, err := ResolveCredentials(&Spec{Engine: EnginePostgres, Host: "db02", Profile: "postgres"}, "", map[string]CredentialProfile{"postgres": {Engine: EnginePostgres, Host: "db02"}}); !errors.Is(err, ErrNoCredentials) {
 		t.Errorf("profile without user must fail with ErrNoCredentials: %v", err)
 	}
-	if _, err := ResolveCredentials(&Spec{Engine: EnginePostgres, Host: "db02", User: "app", Profile: "postgres"}, "", map[string]CredentialProfile{"postgres": {Engine: EnginePostgres}}); !errors.Is(err, ErrNoCredentials) {
+	if _, err := ResolveCredentials(&Spec{Engine: EnginePostgres, Host: "db02", User: "app", Profile: "postgres"}, "", map[string]CredentialProfile{"postgres": {Engine: EnginePostgres, Host: "db02"}}); !errors.Is(err, ErrNoCredentials) {
 		t.Errorf("tcp without password must fail with ErrNoCredentials: %v", err)
 	}
 	if _, err := ResolveCredentials(&Spec{Engine: EngineMySQL, Host: "db02", Profile: "postgres"}, "", profiles); err == nil || errors.Is(err, ErrNoCredentials) {
@@ -116,6 +116,29 @@ func TestResolveCredentials(t *testing.T) {
 	}
 	if _, err := ResolveCredentials(&Spec{Engine: EnginePostgres, Host: "/var/run/postgresql", User: "postgres"}, "", nil); err != nil {
 		t.Errorf("socket without password should pass: %v", err)
+	}
+
+	// A profile's password only goes where the profile says
+	if _, err := ResolveCredentials(&Spec{Engine: EnginePostgres, Host: "evil.example.com"}, "", profiles); err == nil || errors.Is(err, ErrNoCredentials) {
+		t.Errorf("profile sent to another host: %v", err)
+	}
+	if _, err := ResolveCredentials(&Spec{Engine: EngineMySQL, Host: "db02", Port: 3306, Profile: "maria"}, "", profiles); err == nil {
+		t.Error("profile sent to another port")
+	}
+	local := map[string]CredentialProfile{"mysql": {Engine: EngineMySQL, User: "root", Password: "pw"}}
+	for _, h := range []string{"", "localhost", "127.0.0.1", "::1", "[::1]", "/run/mysqld/mysqld.sock"} {
+		if _, err := ResolveCredentials(&Spec{Engine: EngineMySQL, Host: h}, "", local); err != nil {
+			t.Errorf("host-less profile on %q: %v", h, err)
+		}
+	}
+	for _, h := range []string{"db02", "127.example.com", "10.0.0.1"} {
+		if _, err := ResolveCredentials(&Spec{Engine: EngineMySQL, Host: h}, "", local); err == nil {
+			t.Errorf("host-less profile accepted for %q", h)
+		}
+	}
+	mssql := map[string]CredentialProfile{"mssql": {Engine: EngineMSSQL, User: "sa", Password: "pw"}}
+	if _, err := ResolveCredentials(&Spec{Engine: EngineMSSQL, Host: `.\SQLEXPRESS`, User: "sa"}, "", mssql); err != nil {
+		t.Errorf("local named instance: %v", err)
 	}
 }
 

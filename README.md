@@ -47,7 +47,7 @@ All below features are free and open source. There is no enterprise plan, there 
   - Deployment via Docker Compose, Kubernetes, Package repositories (APK, DEB, RPM, WinGet) or as a standalone binary
   - The agent connects to the server to receive and execute backup jobs, no firewalls have to be opened from server to client
   - Can back up directly to PBS, or through a tunnel via FallBCK to a PBS instance
-  - Secure client-side credential storage (databases, kubernetes, ms365) as an option so database credentials never touch the server side
+  - Secure client-side credential storage (databases, Git, Microsoft 365) as an option, so those credentials never touch the server side
 
 
 ## Security

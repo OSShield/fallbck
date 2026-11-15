@@ -66,16 +66,20 @@ func TestOfflineStaleAndNever(t *testing.T) {
 }
 
 func TestJobsTheAgentCannotRun(t *testing.T) {
-	a := agentWith(t, &inventory.Summary{Profiles: []dbspecProfile{{Name: "pg", Engine: "postgresql"}}})
+	a := agentWith(t, &inventory.Summary{Profiles: []dbspecProfile{{Name: "pg", Engine: "postgresql"}, {Name: "remote", Engine: "postgresql", Host: "db01", Port: 5433}}})
 	jobs := []*db.BackupJob{
 		{ID: uuid.New(), AgentID: a.ID, Name: "missing-profile", Enabled: true, JobType: db.JobTypeDatabase, DBConfig: &dbbackup.Spec{Engine: "postgresql", Profile: "nope"}},
 		{ID: uuid.New(), AgentID: a.ID, Name: "wrong-engine", Enabled: true, JobType: db.JobTypeDatabase, DBConfig: &dbbackup.Spec{Engine: "mysql", Profile: "pg"}},
+		{ID: uuid.New(), AgentID: a.ID, Name: "local-profile-remote-host", Enabled: true, JobType: db.JobTypeDatabase, DBConfig: &dbbackup.Spec{Engine: "postgresql", Host: "db02", Profile: "pg"}},
+		{ID: uuid.New(), AgentID: a.ID, Name: "wrong-port", Enabled: true, JobType: db.JobTypeDatabase, DBConfig: &dbbackup.Spec{Engine: "postgresql", Host: "DB01", Port: 5432, Profile: "remote"}},
 		{ID: uuid.New(), AgentID: a.ID, Name: "no-pve", Enabled: true, JobType: db.JobTypePVE},
 		{ID: uuid.New(), AgentID: a.ID, Name: "disabled", Enabled: false, JobType: db.JobTypeDocker},
 		{ID: uuid.New(), AgentID: uuid.New(), Name: "other-agent", Enabled: true, JobType: db.JobTypeDocker},
+		// Fine: the profile's host and port fill in what the job leaves blank
+		{ID: uuid.New(), AgentID: a.ID, Name: "bound-ok", Enabled: true, JobType: db.JobTypeDatabase, DBConfig: &dbbackup.Spec{Engine: "postgresql", Profile: "remote"}},
 	}
 	got := Evaluate(Input{Agent: a, Jobs: jobs})
-	want := []string{"missing-profile", "wrong-engine", "no-pve"}
+	want := []string{"missing-profile", "wrong-engine", "local-profile-remote-host", "wrong-port", "no-pve"}
 	if len(got) != len(want) {
 		t.Fatalf("want %d alerts, got:\n%s", len(want), titles(got))
 	}
