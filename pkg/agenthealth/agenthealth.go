@@ -264,6 +264,20 @@ func cannotRun(a *db.Agent, summary *inventory.Summary, j *db.BackupJob, connect
 				if pe != "" && engine != "" && pe != engine {
 					return fmt.Sprintf("Credential profile %q is for %s, but the job backs up %s.", name, p.Engine, engine)
 				}
+				if j.DBConfig.Kubernetes == nil && j.DBConfig.Password == "" && !j.DBConfig.HasPassword {
+					host, port := j.DBConfig.EffectiveHost(), j.DBConfig.Port
+					if host == "" {
+						host = p.Host
+					}
+					if port == 0 {
+						if port = p.Port; port == 0 {
+							port = dbbackup.DefaultPort(engine)
+						}
+					}
+					if err := (dbbackup.CredentialProfile{Host: p.Host, Port: p.Port}).Allows(host, port); err != nil {
+						return fmt.Sprintf("Credential profile %q won't be used for this job: %v.", name, err)
+					}
+				}
 				break
 			}
 		}

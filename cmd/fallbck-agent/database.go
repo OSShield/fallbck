@@ -43,7 +43,9 @@ const databaseUsage = `Usage:
   fallbck-agent database profile import          # move plain-text profiles from agent.yaml into the encrypted store
   fallbck-agent database config <key> [<value>]  # keys: spool_dir, state_dir, min_free_bytes, keep_failed_spool, postgres_bindir, mysql_bindir, mongo_bindir
 Every command takes --config <agent.yaml> (default: the enrolled agent's file). Profiles are
-encrypted under <data dir>/credentials.key; only their names and engines are reported to the server.`
+encrypted under <data dir>/credentials.key; only their names and engines are reported to the server.
+A profile with --host only works for that host (and --port); one without only for local
+connections (socket, localhost, loopback), so a job can't send its password elsewhere.`
 
 // agentConfigPath resolves --config or the enrolled default
 func agentConfigPath(flagValue string) (string, error) {
@@ -81,8 +83,8 @@ func profileCommand(args []string) error {
 	password := fs.String("password", "", "Password (prefer --ask-password: this one lands in the shell history)")
 	passwordFile := fs.String("password-file", "", "File holding the password (read at run time)")
 	askPassword := fs.Bool("ask-password", false, "Prompt for the password without echo")
-	host := fs.String("host", "", "Host the profile connects to when the job leaves it blank")
-	port := fs.Int("port", 0, "Port when the job leaves it blank")
+	host := fs.String("host", "", "The only host the profile works for (and the job's default); without it, local connections only")
+	port := fs.Int("port", 0, "The only port the profile works for (and the job's default)")
 	tlsMode := fs.String("tls-mode", "", "disable, prefer, require, verify-ca or verify-full")
 	tlsCA := fs.String("tls-ca", "", "CA bundle for verify-ca / verify-full")
 	if err := fs.Parse(args[1:]); err != nil {
