@@ -12,6 +12,7 @@ import (
 	"github.com/osshield/fallbck/pkg/db"
 	"github.com/osshield/fallbck/pkg/dbbackup"
 	"github.com/osshield/fallbck/pkg/dockerbackup"
+	"github.com/osshield/fallbck/pkg/m365"
 	"github.com/osshield/fallbck/pkg/pvebackup"
 )
 
@@ -82,8 +83,12 @@ func (s *ServerAPI) validateJob(ctx context.Context, job *db.BackupJob, existing
 			return err.Error(), err
 		}
 		if s.DB != nil {
-			if _, err := s.DB.GetTenantByID(ctx, job.M365Config.TenantID, p.Scope(auth.PermTenantsRead)); err != nil {
+			t, err := s.DB.GetTenantByID(ctx, job.M365Config.TenantID, p.Scope(auth.PermTenantsRead))
+			if err != nil {
 				return "Microsoft 365 tenant not found", err
+			}
+			if t.AuthMethod == m365.AuthAgent && job.M365Config.Profile == "" {
+				return "The tenant's credentials live on the agents; name the agent credential profile", errors.New("m365 job without profile on agent tenant")
 			}
 		}
 	case db.JobTypeVCS:

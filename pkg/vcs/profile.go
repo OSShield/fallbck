@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/osshield/fallbck/pkg/naming"
 )
 
 // Profile is an agent credential profile for VCS jobs: a token (or a GitHub App) that
@@ -47,10 +49,10 @@ type ProfileSummary struct {
 
 // ValidProfileName reports whether name is usable for a profile (letters, digits,
 // '.', '_' and '-', at most 64, starting with a letter or digit)
-func ValidProfileName(name string) bool { return profileNameRe.MatchString(name) }
+func ValidProfileName(name string) bool { return naming.ValidProfileName(name) }
 
 // NormalizeProfileName returns the stored form of a profile name (lower case)
-func NormalizeProfileName(name string) string { return strings.ToLower(strings.TrimSpace(name)) }
+func NormalizeProfileName(name string) string { return naming.NormalizeProfileName(name) }
 
 // Validate normalizes the URL and checks that exactly one token (or App key) source
 // is set

@@ -16,6 +16,15 @@ var groupIDRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]*$`)
 // ValidGroupID reports whether s is a usable PBS backup id
 func ValidGroupID(s string) bool { return groupIDRe.MatchString(s) }
 
+var profileNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+
+// ValidProfileName reports whether name is usable for an agent credential profile
+// (letters, digits, '.', '_' and '-', at most 64, starting with a letter or digit)
+func ValidProfileName(name string) bool { return profileNameRe.MatchString(name) }
+
+// NormalizeProfileName returns the stored form of a profile name (lower case)
+func NormalizeProfileName(name string) string { return strings.ToLower(strings.TrimSpace(name)) }
+
 var unsafeRe = regexp.MustCompile(`[^a-z0-9._-]+`)
 
 // SafeName maps an external name (UPN, site, connection name) into the PBS backup-id

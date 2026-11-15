@@ -600,7 +600,16 @@ func (u *UIHandler) HandleAgentDetail(w http.ResponseWriter, r *http.Request) {
 			connectionURLs[c.ID], connectionProviders[c.ID] = c.BaseURL, c.Provider
 		}
 	}
-	alerts := agenthealth.Evaluate(agenthealth.Input{Agent: agent, Jobs: jobs, LastRuns: last, ConnectionURLs: connectionURLs, ConnectionProviders: connectionProviders, ServerVersion: u.deps.Version, Now: now})
+	// and Microsoft 365 jobs with a profile against their tenant's ids
+	tenants := map[uuid.UUID]*m365.Tenant{}
+	for _, j := range jobs {
+		if j.IsM365() && j.M365Config != nil && j.M365Config.Profile != "" && tenants[j.M365Config.TenantID] == nil {
+			if t, err := u.DB.GetTenantByID(ctx, j.M365Config.TenantID, db.Unscoped); err == nil {
+				tenants[t.ID] = t
+			}
+		}
+	}
+	alerts := agenthealth.Evaluate(agenthealth.Input{Agent: agent, Jobs: jobs, LastRuns: last, ConnectionURLs: connectionURLs, ConnectionProviders: connectionProviders, Tenants: tenants, ServerVersion: u.deps.Version, Now: now})
 
 	behind, bok := agenthealth.VersionBehind(agent.Version, u.deps.Version)
 	u.renderPage(w, r, "agent_detail.html", map[string]interface{}{

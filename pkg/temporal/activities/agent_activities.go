@@ -61,6 +61,9 @@ type AgentActivities struct {
 	SubTicket func(ctx context.Context, sessionTicket, group string) (ticket string, backupTime int64, err error)
 	// M365StateDir holds the per-job unit indexes of Microsoft 365 jobs (<data dir>/m365-state)
 	M365StateDir string
+	// M365Profile looks up an agent credential profile of a Microsoft 365 job in
+	// the encrypted store (nil: no store)
+	M365Profile func(name string) (*m365.Profile, error)
 	// VCSCredentials fetches the connection credentials of a VCS job
 	// (GET /api/v1/agents/vcs-credentials with the run's ticket)
 	VCSCredentials func(ctx context.Context, ticket string) (*vcs.Credentials, error)
@@ -299,6 +302,9 @@ func (a *AgentActivities) ExecuteM365Backup(ctx context.Context, session *tempor
 	if err != nil {
 		return failed(nil, fmt.Errorf("fetching tenant credentials: %w", err))
 	}
+	if err := applyM365Profile(creds, session.M365Config.Profile, a.M365Profile); err != nil {
+		return precheckFailed("Microsoft 365 backup", err, pt, a.LogTail)
+	}
 
 	upload := func(ctx context.Context, unit *m365run.Unit, tree *scan.Node, blobs []gopbs.Blob) (*temporal.BackupExecutionResult, error) {
 		us := *session
@@ -418,4 +424,30 @@ func (a *AgentActivities) ExecuteVCSBackup(ctx context.Context, session *tempora
 		return failed(result, err)
 	}
 	return result, nil
+}
+
+// applyM365Profile replaces the server's credentials with the job's agent credential
+// profile. The server sent the tenant's ids only; the profile must be for exactly
+// that tenant and app, so a changed tenant can't make the agent use it elsewhere.
+func applyM365Profile(creds *m365.Credentials, name string, lookup func(string) (*m365.Profile, error)) error {
+	if name == "" {
+		return nil
+	}
+	if lookup == nil {
+		return &dbrun.PrecheckError{Msg: "the job names the agent credential profile " + name, Hint: "this agent has no credential store"}
+	}
+	p, err := lookup(name)
+	if err != nil {
+		return &dbrun.PrecheckError{Msg: "Microsoft 365 credential profile " + name, Err: err,
+			Hint: "create it on the agent: fallbck-agent m365 profile create --name " + name + " --tenant-id " + creds.TenantID + " --client-id " + creds.ClientID + " --ask-secret"}
+	}
+	if err := p.Matches(creds.TenantID, creds.ClientID); err != nil {
+		return &dbrun.PrecheckError{Msg: "Microsoft 365 credential profile " + name, Err: err}
+	}
+	c, err := p.Credentials()
+	if err != nil {
+		return &dbrun.PrecheckError{Msg: "Microsoft 365 credential profile " + name, Err: err}
+	}
+	*creds = c
+	return nil
 }
