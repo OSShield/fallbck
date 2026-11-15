@@ -9,6 +9,7 @@ import (
 	"github.com/osshield/fallbck/pkg/agent/credstore"
 	"github.com/osshield/fallbck/pkg/config"
 	dbspec "github.com/osshield/fallbck/pkg/dbbackup"
+	"github.com/osshield/fallbck/pkg/m365"
 	"github.com/osshield/fallbck/pkg/vcs"
 )
 
@@ -70,4 +71,26 @@ func VCSProfileSummaries(cfg *config.AgentConfig) []vcs.ProfileSummary {
 		return nil
 	}
 	return credstore.VCSSummaries(profiles)
+}
+
+// M365ProfileLookup returns a Microsoft 365 credential profile from the encrypted
+// store, read on every call like VCSProfileLookup
+func M365ProfileLookup(cfg *config.AgentConfig) func(name string) (*m365.Profile, error) {
+	return func(name string) (*m365.Profile, error) {
+		return credstore.Open(cfg.DataDir).M365Profile(name)
+	}
+}
+
+// M365ProfileSummaries lists the Microsoft 365 profiles an agent reports to the
+// server: names, ids and expiry, never secrets or keys
+func M365ProfileSummaries(cfg *config.AgentConfig) []m365.ProfileSummary {
+	if cfg == nil {
+		return nil
+	}
+	profiles, err := credstore.Open(cfg.DataDir).LoadM365()
+	if err != nil {
+		slog.Warn("Could not read the Microsoft 365 credential profiles", "error", err)
+		return nil
+	}
+	return credstore.M365Summaries(profiles)
 }

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	dbspec "github.com/osshield/fallbck/pkg/dbbackup"
+	"github.com/osshield/fallbck/pkg/m365"
 	"github.com/osshield/fallbck/pkg/vcs"
 )
 
@@ -23,6 +24,8 @@ type Summary struct {
 	Profiles []dbspec.ProfileSummary `json:"profiles,omitempty"`
 	// VCSProfiles are the VCS token profiles the agent holds (names, URLs, expiry)
 	VCSProfiles []vcs.ProfileSummary `json:"vcs_profiles,omitempty"`
+	// M365Profiles are the Microsoft 365 app credential profiles (ids, expiry)
+	M365Profiles []m365.ProfileSummary `json:"m365_profiles,omitempty"`
 	// Tools are the database client tools by engine ("" when not found)
 	Tools map[string][]Tool `json:"tools,omitempty"`
 	// Spool is the spool directory and its free space

@@ -141,6 +141,12 @@ func (s *ServerAPI) HandleUpdateTenant(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if t.AuthMethod == m365.AuthAgent && existing.AuthMethod != m365.AuthAgent {
+		if msg := s.tenantToAgentConflict(r.Context(), t.ID); msg != "" {
+			s.writeError(w, http.StatusConflict, msg)
+			return
+		}
+	}
 	if err := s.DB.UpdateTenant(r.Context(), &t); err != nil {
 		slog.Error("Failed to update Microsoft 365 tenant", "error", err, "id", id)
 		s.writeError(w, http.StatusInternalServerError, "Failed to update tenant (is the name unique?)")
@@ -149,6 +155,21 @@ func (s *ServerAPI) HandleUpdateTenant(w http.ResponseWriter, r *http.Request) {
 	slog.Info("Microsoft 365 tenant updated", "tenant", t.Name, "auth", t.AuthMethod, "credential_changed", req.Secret != "" || req.KeyPEM != "")
 	s.audit(r, "tenant.update", "tenant", t.ID.String(), t.Name, t.Labels, map[string]any{"old_labels": existing.Labels, "credential_changed": req.Secret != "" || req.KeyPEM != ""})
 	s.writeJSON(w, http.StatusOK, t.Sanitize())
+}
+
+// tenantToAgentConflict refuses moving a tenant's credential to the agents while a
+// job on it still uses the server's
+func (s *ServerAPI) tenantToAgentConflict(ctx context.Context, id uuid.UUID) string {
+	jobs, err := s.DB.ListJobs(ctx, db.Unscoped)
+	if err != nil {
+		return "Failed to check the jobs using the tenant"
+	}
+	for _, j := range jobs {
+		if j.IsM365() && j.M365Config != nil && j.M365Config.TenantID == id && j.M365Config.Profile == "" {
+			return "Job " + j.Name + " uses the tenant's credential on the server; name an agent credential profile on the job first"
+		}
+	}
+	return ""
 }
 
 // HandleDeleteTenant removes a tenant no job references
@@ -176,6 +197,10 @@ func (s *ServerAPI) HandleDeleteTenant(w http.ResponseWriter, r *http.Request) {
 func (s *ServerAPI) HandleTestTenant(w http.ResponseWriter, r *http.Request) {
 	t, ok := s.tenantFromPath(w, r, auth.PermTenantsWrite)
 	if !ok {
+		return
+	}
+	if t.AuthMethod == m365.AuthAgent {
+		s.writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "The credentials of this tenant live on the agents; test them there with fallbck-agent m365 profile test <name>"})
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), tenantTestTimeout)
@@ -226,6 +251,12 @@ func (s *ServerAPI) HandleM365Credentials(w http.ResponseWriter, r *http.Request
 		s.writeError(w, http.StatusNotFound, "the job's tenant no longer exists")
 		return
 	}
-	slog.Info("Handing Microsoft 365 credentials to agent", "agent_id", agent.AgentID, "job_id", job.ID, "tenant", t.Name)
-	s.writeJSON(w, http.StatusOK, t.Credentials())
+	creds := t.Credentials()
+	if job.M365Config.Profile != "" {
+		// The agent's profile holds the credential; the ids let it check that the
+		// profile belongs to this tenant
+		creds.Secret, creds.CertificatePEM, creds.KeyPEM = "", "", ""
+	}
+	slog.Info("Handing Microsoft 365 credentials to agent", "agent_id", agent.AgentID, "job_id", job.ID, "tenant", t.Name, "agent_profile", job.M365Config.Profile)
+	s.writeJSON(w, http.StatusOK, creds)
 }

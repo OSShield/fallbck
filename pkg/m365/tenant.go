@@ -26,6 +26,9 @@ const (
 const (
 	AuthSecret      = "secret"
 	AuthCertificate = "certificate"
+	// AuthAgent means the server holds no credential: every job on the tenant names
+	// an agent credential profile (Profile)
+	AuthAgent = "agent"
 )
 
 // Tenant is a Microsoft 365 tenant with the Entra app registration FallBCK uses to
@@ -85,11 +88,8 @@ func (t *Tenant) Validate() error {
 	if t.Name == "" {
 		return tenantErr("name is required")
 	}
-	if !guidRe.MatchString(t.TenantID) && !domainRe.MatchString(t.TenantID) {
-		return tenantErr("tenant_id must be the directory id (GUID) or a verified domain")
-	}
-	if !guidRe.MatchString(t.ClientID) {
-		return tenantErr("client_id must be the application (client) id GUID")
+	if err := checkIDs(t.TenantID, t.ClientID); err != nil {
+		return tenantErr("%v", err)
 	}
 	switch t.AuthMethod {
 	case "", AuthSecret:
@@ -106,8 +106,22 @@ func (t *Tenant) Validate() error {
 		exp := cert.NotAfter
 		t.SecretExpires = &exp
 		t.Secret = ""
+	case AuthAgent:
+		// expiry is per profile, reported by the agents
+		t.Secret, t.CertificatePEM, t.KeyPEM, t.SecretExpires = "", "", "", nil
 	default:
-		return tenantErr("auth_method must be %s or %s", AuthSecret, AuthCertificate)
+		return tenantErr("auth_method must be %s, %s or %s", AuthSecret, AuthCertificate, AuthAgent)
+	}
+	return nil
+}
+
+// checkIDs checks normalised tenant and client ids
+func checkIDs(tenantID, clientID string) error {
+	if !guidRe.MatchString(tenantID) && !domainRe.MatchString(tenantID) {
+		return errors.New("tenant_id must be the directory id (GUID) or a verified domain")
+	}
+	if !guidRe.MatchString(clientID) {
+		return errors.New("client_id must be the application (client) id GUID")
 	}
 	return nil
 }

@@ -1,5 +1,5 @@
 // Package credstore is the agent's encrypted store for credential profiles (database
-// passwords and VCS tokens).
+// passwords, VCS tokens and Microsoft 365 app credentials).
 // Profiles live in <data dir>/credentials.json, encrypted with AES-256-GCM under a
 // random key kept in <data dir>/credentials.key (0600, so only the agent's user can
 // read it; on Windows the key is additionally wrapped with DPAPI for the service
@@ -21,6 +21,8 @@ import (
 	"time"
 
 	dbspec "github.com/osshield/fallbck/pkg/dbbackup"
+	"github.com/osshield/fallbck/pkg/m365"
+	"github.com/osshield/fallbck/pkg/naming"
 	"github.com/osshield/fallbck/pkg/vcs"
 )
 
@@ -60,6 +62,14 @@ type contents struct {
 	// the VCS token profiles (stored the same way: the shared Profile hides
 	// its token from JSON)
 	VCS map[string]storedVCSProfile `json:"vcs,omitempty"`
+	// the Microsoft 365 app credential profiles
+	M365 map[string]storedM365Profile `json:"m365,omitempty"`
+}
+
+type storedM365Profile struct {
+	m365.Profile
+	Secret string `json:"secret,omitempty"`
+	KeyPEM string `json:"key_pem,omitempty"`
 }
 
 type storedVCSProfile struct {
@@ -164,6 +174,80 @@ func (s *Store) DeleteVCS(name string) error {
 		return ErrNotFound
 	}
 	delete(c.VCS, name)
+	return s.write(c)
+}
+
+// LoadM365 returns the Microsoft 365 profiles (an empty map when there are none)
+func (s *Store) LoadM365() (map[string]m365.Profile, error) {
+	c, err := s.read()
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]m365.Profile, len(c.M365))
+	for name, sp := range c.M365 {
+		p := sp.Profile
+		p.Secret, p.KeyPEM = sp.Secret, sp.KeyPEM
+		out[name] = p
+	}
+	return out, nil
+}
+
+// M365Profile returns one Microsoft 365 profile (ErrNotFound when there is none)
+func (s *Store) M365Profile(name string) (*m365.Profile, error) {
+	profiles, err := s.LoadM365()
+	if err != nil {
+		return nil, err
+	}
+	p, ok := profiles[naming.NormalizeProfileName(name)]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return &p, nil
+}
+
+// M365Summaries lists a Microsoft 365 profile set without credentials
+func M365Summaries(profiles map[string]m365.Profile) []m365.ProfileSummary {
+	out := make([]m365.ProfileSummary, 0, len(profiles))
+	for name, p := range profiles {
+		out = append(out, p.Summary(name))
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// PutM365 creates or replaces a Microsoft 365 profile
+func (s *Store) PutM365(name string, p m365.Profile) error {
+	name = naming.NormalizeProfileName(name)
+	if !naming.ValidProfileName(name) {
+		return errors.New("profile names may contain letters, digits, '.', '_' and '-' (at most 64)")
+	}
+	if err := p.Validate(); err != nil {
+		return err
+	}
+	c, err := s.read()
+	if err != nil {
+		return err
+	}
+	if c.M365 == nil {
+		c.M365 = map[string]storedM365Profile{}
+	}
+	sp := storedM365Profile{Profile: p, Secret: p.Secret, KeyPEM: p.KeyPEM}
+	sp.Profile.Secret, sp.Profile.KeyPEM = "", ""
+	c.M365[name] = sp
+	return s.write(c)
+}
+
+// DeleteM365 removes a Microsoft 365 profile
+func (s *Store) DeleteM365(name string) error {
+	c, err := s.read()
+	if err != nil {
+		return err
+	}
+	name = naming.NormalizeProfileName(name)
+	if _, ok := c.M365[name]; !ok {
+		return ErrNotFound
+	}
+	delete(c.M365, name)
 	return s.write(c)
 }
 

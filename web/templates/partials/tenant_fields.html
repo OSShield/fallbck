@@ -30,8 +30,12 @@ Files.Read.All  Sites.Read.All  ChannelMessage.Read.All  Team.ReadBasic.All  Cha
     <select name="tenant_auth_method" class="form-control" onchange="updateTenantAuth(this.closest('.tenant-fields'))">
       <option value="secret" selected>Client secret</option>
       <option value="certificate">Certificate (recommended by Microsoft)</option>
+      <option value="agent">Kept on the agents (credential profiles)</option>
     </select>
   </div>
+</div>
+<div class="tenant-agent-opts" hidden style="background-color: var(--bg-subtle); padding: 14px; border-radius: var(--radius-sm); margin-bottom: 16px; font-size: 13px;">
+  The server holds no secret or key for this tenant. Every job on it names an agent credential profile, created on the agent with <code>fallbck-agent m365 profile create --name &lt;name&gt; --tenant-id &lt;tenant id&gt; --client-id &lt;client id&gt; --ask-secret</code> (or <code>--auth certificate --cert-file … --key-file …</code>). The profile's tenant and client IDs have to match the ones above. Test it on the agent with <code>fallbck-agent m365 profile test</code>.
 </div>
 <div class="tenant-secret-opts">
   <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 16px;">

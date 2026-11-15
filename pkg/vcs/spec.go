@@ -131,9 +131,6 @@ func specErr(format string, args ...any) error {
 	return fmt.Errorf("%w: %s", ErrInvalidSpec, fmt.Sprintf(format, args...))
 }
 
-// An agent credential profile
-var profileNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
-
 // fullPathRe is a GitLab namespace or project full path: segments of letters,
 // digits, '_', '-' and '.', not starting with '-'
 var fullPathRe = regexp.MustCompile(`^[A-Za-z0-9_.][A-Za-z0-9_.-]*(/[A-Za-z0-9_.][A-Za-z0-9_.-]*)*$`)
@@ -201,7 +198,7 @@ func (s *Spec) Validate() error {
 		return specErr("backup_id may contain letters, digits, '.', '_' and '-' only")
 	}
 	s.Profile = NormalizeProfileName(s.Profile)
-	if s.Profile != "" && !profileNameRe.MatchString(s.Profile) {
+	if s.Profile != "" && !ValidProfileName(s.Profile) {
 		return specErr("profile may contain letters, digits, '.', '_' and '-' (at most 64)")
 	}
 	return nil

@@ -115,6 +115,9 @@ type Spec struct {
 	// BackupID overrides the job's PBS group, the prefix of every unit group
 	// (default m365-<tenant short name>)
 	BackupID string `json:"backup_id,omitempty"`
+	// Profile names the agent credential profile holding the app credential; the
+	// server then never hands out the tenant's own (required on AuthAgent tenants)
+	Profile string `json:"profile,omitempty"`
 }
 
 // ErrInvalidSpec wraps every validation failure
@@ -155,6 +158,10 @@ func (s *Spec) Validate() error {
 	}
 	if s.Concurrency < 0 || s.Concurrency > MaxConcurrency {
 		return specErr("concurrency must be between 1 and %d", MaxConcurrency)
+	}
+	s.Profile = naming.NormalizeProfileName(s.Profile)
+	if s.Profile != "" && !naming.ValidProfileName(s.Profile) {
+		return specErr("profile may contain letters, digits, '.', '_' and '-' (at most 64)")
 	}
 	s.BackupID = strings.TrimSpace(s.BackupID)
 	if s.BackupID != "" && !naming.ValidGroupID(s.BackupID) {

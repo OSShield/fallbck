@@ -15,6 +15,7 @@ import (
 	"github.com/osshield/fallbck/pkg/db"
 	"github.com/osshield/fallbck/pkg/dbbackup"
 	"github.com/osshield/fallbck/pkg/inventory"
+	"github.com/osshield/fallbck/pkg/m365"
 	"github.com/osshield/fallbck/pkg/vcs"
 )
 
@@ -53,6 +54,9 @@ type Input struct {
 	// ConnectionProviders maps VCS connection id → provider, to check that the agent
 	// supports it (nil skips that check)
 	ConnectionProviders map[uuid.UUID]string
+	// Tenants maps Microsoft 365 tenant id → tenant, to check that a job's agent
+	// credential profile is for its tenant (nil skips that check)
+	Tenants map[uuid.UUID]*m365.Tenant
 	// ServerVersion is compared with the agent's version ("dev" disables the check)
 	ServerVersion string
 	Now           time.Time
@@ -150,11 +154,14 @@ func Evaluate(in Input) []Alert {
 		if !j.Enabled {
 			continue
 		}
-		if reason := cannotRun(a, summary, j, in.ConnectionURLs, in.ConnectionProviders); reason != "" {
+		if reason := cannotRun(a, summary, j, in.ConnectionURLs, in.ConnectionProviders, in.Tenants); reason != "" {
 			add(LevelDanger, fmt.Sprintf("Job %q cannot run on this agent", j.Name), reason, j)
 		} else if p := vcsProfileOf(summary, j); p != nil && p.TokenExpires != nil && p.TokenExpires.Sub(in.Now) < vcs.ExpiryWarning {
 			add(LevelWarning, fmt.Sprintf("The token of VCS profile %q expires soon", p.Name),
 				fmt.Sprintf("It expires %s. Replace it on the agent with fallbck-agent vcs profile create, then run vcs profile test.", p.TokenExpires.Format("2006-01-02")), j)
+		} else if p := m365ProfileOf(summary, j); p != nil && p.Expires != nil && p.Expires.Sub(in.Now) < m365.ExpiryWarning {
+			add(LevelWarning, fmt.Sprintf("The credential of Microsoft 365 profile %q expires soon", p.Name),
+				fmt.Sprintf("It expires %s. Renew it in Entra ID, replace it on the agent with fallbck-agent m365 profile create, then run m365 profile test.", p.Expires.Format("2006-01-02")), j)
 		}
 		if lr := in.LastRuns[j.ID]; lr != nil {
 			switch lr.Status {
@@ -181,7 +188,7 @@ func rank(l Level) int {
 }
 
 // cannotRun explains why the agent cannot execute the job, or "" when it can
-func cannotRun(a *db.Agent, summary *inventory.Summary, j *db.BackupJob, connectionURLs, connectionProviders map[uuid.UUID]string) string {
+func cannotRun(a *db.Agent, summary *inventory.Summary, j *db.BackupJob, connectionURLs, connectionProviders map[uuid.UUID]string, tenants map[uuid.UUID]*m365.Tenant) string {
 	jobType, _ := db.NormalizeJobType(j.JobType)
 	if !a.CanRunJob(jobType) {
 		switch jobType {
@@ -203,6 +210,22 @@ func cannotRun(a *db.Agent, summary *inventory.Summary, j *db.BackupJob, connect
 		if provider, ok := connectionProviders[j.VCSConfig.ConnectionID]; ok && !a.CanRunVCSProvider(provider) {
 			return fmt.Sprintf("The agent does not support %s connections yet; update it.", provider)
 		}
+	}
+	if jobType == db.JobTypeM365 && j.M365Config != nil && j.M365Config.Profile != "" && summary != nil {
+		name := j.M365Config.Profile
+		p := m365ProfileOf(summary, j)
+		t := tenants[j.M365Config.TenantID]
+		switch {
+		case p == nil:
+			ids := "--tenant-id <tenant id> --client-id <client id>"
+			if t != nil {
+				ids = "--tenant-id " + t.TenantID + " --client-id " + t.ClientID
+			}
+			return fmt.Sprintf("Microsoft 365 credential profile %q is not configured on the agent (fallbck-agent m365 profile create --name %s %s --ask-secret).", name, name, ids)
+		case t != nil && (p.TenantID != t.TenantID || p.ClientID != t.ClientID):
+			return fmt.Sprintf("Microsoft 365 credential profile %q is for tenant %s, app %s, but the job's tenant is %s, app %s; the agent will not use it.", name, p.TenantID, p.ClientID, t.TenantID, t.ClientID)
+		}
+		return ""
 	}
 	if jobType == db.JobTypeVCS && j.VCSConfig != nil && j.VCSConfig.Profile != "" && summary != nil {
 		name := j.VCSConfig.Profile
@@ -260,6 +283,20 @@ func vcsProfileOf(summary *inventory.Summary, j *db.BackupJob) *vcs.ProfileSumma
 	for i := range summary.VCSProfiles {
 		if summary.VCSProfiles[i].Name == j.VCSConfig.Profile {
 			return &summary.VCSProfiles[i]
+		}
+	}
+	return nil
+}
+
+// finds the agent credential profile a Microsoft 365 job names in the agent's
+// inventory (nil when the job names none or the agent does not report it)
+func m365ProfileOf(summary *inventory.Summary, j *db.BackupJob) *m365.ProfileSummary {
+	if summary == nil || j.M365Config == nil || j.M365Config.Profile == "" {
+		return nil
+	}
+	for i := range summary.M365Profiles {
+		if summary.M365Profiles[i].Name == j.M365Config.Profile {
+			return &summary.M365Profiles[i]
 		}
 	}
 	return nil

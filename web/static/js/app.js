@@ -903,6 +903,7 @@ function loadJobIntoForm(form, job) {
     form.elements['m365_exclude_paths'].value = (mc.exclude_paths || []).join('\n');
     form.elements['m365_concurrency'].value = mc.concurrency || '';
     form.elements['m365_backup_id'].value = mc.backup_id || '';
+    form.elements['m365_profile'].value = mc.profile || '';
   }
   if (jobType === 'vcs') loadVCSIntoForm(form, job.vcs_config || {});
   if (jobType === 'database' && job.db_config) {
@@ -1016,7 +1017,8 @@ function buildJobPayload(form) {
       exclude_types: formLines(fd, 'm365_exclude_types'),
       exclude_paths: formLines(fd, 'm365_exclude_paths'),
       concurrency: parseInt(fd.get('m365_concurrency') || '0') || 0,
-      backup_id: (fd.get('m365_backup_id') || '').trim()
+      backup_id: (fd.get('m365_backup_id') || '').trim(),
+      profile: (fd.get('m365_profile') || '').trim()
     };
   }
 
@@ -1917,9 +1919,10 @@ function tenantField(box, name) { return box.querySelector(`[name="${name}"]`); 
 
 function updateTenantAuth(box) {
   if (!box) return;
-  const cert = tenantField(box, 'tenant_auth_method').value === 'certificate';
-  box.querySelector('.tenant-secret-opts').hidden = cert;
-  box.querySelector('.tenant-certificate-opts').hidden = !cert;
+  const method = tenantField(box, 'tenant_auth_method').value;
+  box.querySelector('.tenant-secret-opts').hidden = method !== 'secret';
+  box.querySelector('.tenant-certificate-opts').hidden = method !== 'certificate';
+  box.querySelector('.tenant-agent-opts').hidden = method !== 'agent';
 }
 
 function buildTenantPayload(box) {

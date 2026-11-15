@@ -10,6 +10,7 @@ import (
 	"github.com/osshield/fallbck/pkg/db"
 	"github.com/osshield/fallbck/pkg/dbbackup"
 	"github.com/osshield/fallbck/pkg/inventory"
+	"github.com/osshield/fallbck/pkg/m365"
 	"github.com/osshield/fallbck/pkg/vcs"
 )
 
@@ -175,5 +176,44 @@ func TestVCSProfileAlerts(t *testing.T) {
 	got = Evaluate(Input{Agent: a, Jobs: []*db.BackupJob{job("ok", "gitlab")}, ServerVersion: a.Version, Now: time.Now()})
 	if len(got) != 1 || !strings.Contains(got[0].Detail, "no git") {
 		t.Errorf("missing git: %s", titles(got))
+	}
+}
+
+func TestM365ProfileAlerts(t *testing.T) {
+	const tenantGUID, clientGUID = "72f988bf-86f1-41af-91ab-2d7cd011db47", "11111111-2222-3333-4444-555555555555"
+	soon := time.Now().Add(10 * 24 * time.Hour)
+	later := time.Now().Add(200 * 24 * time.Hour)
+	a := agentWith(t, &inventory.Summary{M365Profiles: []m365.ProfileSummary{
+		{Name: "contoso", TenantID: tenantGUID, ClientID: clientGUID, AuthMethod: m365.AuthSecret, Expires: &later},
+		{Name: "expiring", TenantID: tenantGUID, ClientID: clientGUID, AuthMethod: m365.AuthCertificate, Expires: &soon},
+		{Name: "fabrikam", TenantID: "fabrikam.onmicrosoft.com", ClientID: clientGUID, AuthMethod: m365.AuthSecret},
+	}})
+	tn := &m365.Tenant{ID: uuid.New(), TenantID: tenantGUID, ClientID: clientGUID, AuthMethod: m365.AuthAgent}
+	job := func(name, profile string) *db.BackupJob {
+		return &db.BackupJob{ID: uuid.New(), AgentID: a.ID, Name: name, Enabled: true, JobType: db.JobTypeM365,
+			M365Config: &m365.Spec{TenantID: tn.ID, Profile: profile}}
+	}
+	got := Evaluate(Input{Agent: a, Jobs: []*db.BackupJob{
+		job("ok", "contoso"), job("missing", "nope"), job("expiring", "expiring"), job("wrong-tenant", "fabrikam"), job("server-secret", ""),
+	}, Tenants: map[uuid.UUID]*m365.Tenant{tn.ID: tn}, ServerVersion: a.Version, Now: time.Now()})
+	s := titles(got)
+	for _, want := range []string{
+		`danger:Job "missing" cannot run on this agent`,
+		`danger:Job "wrong-tenant" cannot run on this agent`,
+		`warning:The credential of Microsoft 365 profile "expiring" expires soon`,
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("missing %q in:\n%s", want, s)
+		}
+	}
+	for _, unwanted := range []string{`"ok"`, `"server-secret"`} {
+		if strings.Contains(s, unwanted) {
+			t.Errorf("unexpected alert for %s in:\n%s", unwanted, s)
+		}
+	}
+	for _, al := range got {
+		if strings.Contains(al.Title, "missing") && !strings.Contains(al.Detail, "--tenant-id "+tenantGUID) {
+			t.Errorf("the hint should name the tenant's ids: %s", al.Detail)
+		}
 	}
 }
