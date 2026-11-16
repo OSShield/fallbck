@@ -82,6 +82,7 @@ func (s *ServerAPI) RegisterRoutes(r chi.Router, admin, agent Middleware) {
 			r.Get("/agents/db-credentials", s.HandleDBCredentials)
 			r.Get("/agents/m365-credentials", s.HandleM365Credentials)
 			r.Get("/agents/vcs-credentials", s.HandleVCSCredentials)
+			r.Get("/agents/remote-credentials", s.HandleRemoteCredentials)
 			r.Post("/agents/ticket/refresh", s.HandleRefreshTicket)
 			r.Post("/agents/sub-ticket", s.HandleSubTicket)
 			// older kubernetes agents post here

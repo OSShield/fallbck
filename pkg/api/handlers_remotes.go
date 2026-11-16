@@ -173,3 +173,42 @@ func (s *ServerAPI) HandleDeleteRemote(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, "Failed to delete remote")
 	}
 }
+
+// RemoteCredentials is what a remote job's run gets: the remote's settings and, when
+// the job names no agent profile, its stored credential
+type RemoteCredentials struct {
+	Remote  *remote.Remote `json:"remote"`
+	Secrets remote.Secrets `json:"secrets"`
+}
+
+// HandleRemoteCredentials hands an agent the remote of the job named by its backup
+// ticket (agent token + ticket, like vcs-credentials). A job that names an agent
+// credential profile gets the settings without the stored credential: the agent's
+// own profile is the only secret that run may use, and the settings let it check the
+// profile belongs to this remote.
+func (s *ServerAPI) HandleRemoteCredentials(w http.ResponseWriter, r *http.Request) {
+	agent, claims, _, ok := s.ticketContext(w, r)
+	if !ok {
+		return
+	}
+	job, err := s.DB.GetJobByID(r.Context(), claims.JobID, db.Unscoped)
+	if err != nil {
+		s.writeError(w, http.StatusNotFound, "job not found")
+		return
+	}
+	if !job.IsRemote() || job.RemoteConfig == nil {
+		s.writeError(w, http.StatusForbidden, "job is not a remote job")
+		return
+	}
+	rem, err := s.DB.GetRemoteByID(r.Context(), job.RemoteConfig.RemoteID, db.Unscoped)
+	if err != nil {
+		s.writeError(w, http.StatusNotFound, "the job's remote no longer exists")
+		return
+	}
+	creds := RemoteCredentials{Remote: rem}
+	if job.RemoteConfig.Profile == "" {
+		creds.Secrets = rem.Secrets
+	}
+	slog.Info("Handing remote credentials to agent", "agent_id", agent.AgentID, "job_id", job.ID, "remote", rem.Name, "identity", rem.Identity(), "agent_profile", job.RemoteConfig.Profile)
+	s.writeJSON(w, http.StatusOK, creds)
+}
