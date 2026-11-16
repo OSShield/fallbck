@@ -54,6 +54,7 @@ func (d *DB) HasSealedSecrets(ctx context.Context) (bool, error) {
 		(SELECT count(*) FROM target_keys WHERE key_sealed LIKE 'v1:%') +
 		(SELECT count(*) FROM m365_tenants WHERE secret_sealed LIKE 'v1:%') +
 		(SELECT count(*) FROM vcs_connections WHERE token_sealed LIKE 'v1:%') +
+		(SELECT count(*) FROM remotes WHERE secrets_sealed LIKE 'v1:%') +
 		(SELECT count(*) FROM backup_jobs WHERE db_config->>'password' LIKE 'v1:%')`).Scan(&n)
 	return n > 0, err
 }
