@@ -42,6 +42,15 @@ fallbck-agent database profile list            # never shows passwords
 fallbck-agent database profile delete --name shop
 ```
 
+A profile only sends its password where it's meant to go:
+
+- **With `--host`**, it only works for that host, and with `--port` only for that port too. A job that leaves the host blank gets the profile's.
+- **Without `--host`**, it only works for local connections: a unix socket, `localhost`, `127.0.0.1` or `::1` (and `.` or `(local)` for SQL Server). The machine's own hostname doesn't count, so give the profile `--host` if your jobs use that.
+
+That way a job, or a compromised server that rewrites one, can't point a profile at another host and collect the password. A job that doesn't match its profile fails its precheck, and the agent page flags it before the run.
+
+If you're upgrading, profiles without a host that were used for remote databases stop working until you recreate them with `--host`.
+
 Old-style plain-text profiles in `agent.yaml` (`db_backup.profiles`) and `FALLBCK_AGENT_DB_PROFILE_<NAME>_PASSWORD` env vars still work. The agent nags about them at startup, and `fallbck-agent database profile import` moves them into the store. If both exist, the stored profile wins.
 
 ### 3. No credentials at all

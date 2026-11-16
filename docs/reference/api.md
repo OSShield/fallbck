@@ -110,7 +110,7 @@ The token is stored sealed and is never returned. Pin a self-signed PBS with `fi
 | `POST` | `/targets/{id}/encryption/export` | `{"passphrase", "hint", "key_id"}`, passphrase at least 12 characters. Returns a `proxmox-backup-client` key file. Leave `key_id` empty for the active key. |
 | `POST` | `/targets/{id}/encryption/import` | `{"keyfile", "passphrase"}`, onto the target's ring. |
 
-Key rings hold the keys; targets attach to a ring and share its key (and PBS dedup) with every other target on it. `key_ring_id` is also accepted on `POST /targets` and `PUT /targets/{id}`.
+Key rings hold the keys; targets attach to a ring and share its key (and PBS dedup) with every other target on it. `key_ring_id` is also accepted on `POST /targets` and `PUT /targets/{id}`. A ring's `target_count` counts every attached target, and `targets` only names the ones you can read.
 
 | Method | Path | Notes |
 |---|---|---|
@@ -118,7 +118,7 @@ Key rings hold the keys; targets attach to a ring and share its key (and PBS ded
 | `POST` | `/keyrings` | `{"name", "master_public_key"}`. Generates the first key. |
 | `GET` | `/keyrings/{id}` | Ring plus key history. |
 | `PUT` | `/keyrings/{id}` | `{"name", "master_public_key"}` |
-| `DELETE` | `/keyrings/{id}` | Only when no target uses it. Deletes its keys. |
+| `DELETE` | `/keyrings/{id}` | Only when no target uses it. Deletes its keys. Refused with 409 and a `runs` count while runs were written with one of them, unless you pass `?force=true` (export the keys first). |
 | `POST` | `/keyrings/{id}/rotate` | |
 | `POST` | `/keyrings/{id}/export` | As for targets. |
 | `POST` | `/keyrings/{id}/import` | As for targets. |

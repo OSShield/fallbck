@@ -281,7 +281,7 @@ func (s *Store) Names() ([]dbspec.ProfileSummary, error) {
 func Summaries(profiles map[string]dbspec.CredentialProfile) []dbspec.ProfileSummary {
 	out := make([]dbspec.ProfileSummary, 0, len(profiles))
 	for name, p := range profiles {
-		out = append(out, dbspec.ProfileSummary{Name: name, Engine: p.Engine, User: p.User, Host: p.Host})
+		out = append(out, dbspec.ProfileSummary{Name: name, Engine: p.Engine, User: p.User, Host: p.Host, Port: p.Port})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out

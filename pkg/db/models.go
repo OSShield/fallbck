@@ -338,12 +338,32 @@ type KeyRing struct {
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       time.Time  `json:"updated_at"`
 	CreatedBy       string     `json:"created_by,omitempty"`
-	// KeyFingerprint / KeyCreatedAt describe the active key, Targets names the targets
-	// attached to the ring (joined on read)
+	// KeyFingerprint / KeyCreatedAt describe the active key. TargetCount is how many
+	// targets are attached to the ring; Targets names the ones the reader may see
+	// (ScopeTargets), all of them until it's called. Both are joined on read.
 	KeyFingerprint string     `json:"key_fingerprint,omitempty"`
 	KeyCreatedAt   *time.Time `json:"key_created_at,omitempty"`
+	TargetCount    int        `json:"target_count"`
 	Targets        []string   `json:"targets"`
 	Labels         Labels     `json:"labels"`
+
+	attached []ringTarget
+}
+
+type ringTarget struct {
+	Name   string `json:"name"`
+	Labels Labels `json:"labels"`
+}
+
+// ScopeTargets limits Targets to the attached targets in scope (targets:read), so a
+// ring shared across scopes doesn't name targets the reader can't otherwise see
+func (r *KeyRing) ScopeTargets(s Scope) {
+	r.Targets = []string{}
+	for _, t := range r.attached {
+		if s.Matches(t.Labels) {
+			r.Targets = append(r.Targets, t.Name)
+		}
+	}
 }
 
 // TargetKey is one encryption key of a key ring. Key is in clear in memory only; the

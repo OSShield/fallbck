@@ -222,7 +222,7 @@ async function loadKeyRingOptions(form, t) {
       const opt = document.createElement('option');
       opt.value = ring.id;
       const fp = ring.key_fingerprint ? ring.key_fingerprint.replace(/:/g, '').slice(0, 8) : 'no key';
-      opt.textContent = `${ring.name} (${fp}, ${ring.targets.length} target${ring.targets.length === 1 ? '' : 's'})`;
+      opt.textContent = `${ring.name} (${fp}, ${ring.target_count} target${ring.target_count === 1 ? '' : 's'})`;
       sel.appendChild(opt);
     }
   } finally {
@@ -245,15 +245,16 @@ async function loadKeyRings() {
     }
     body.innerHTML = rings.map(r => {
       const fp = r.key_fingerprint ? `<span class="badge badge-success" title="${rdEsc(r.key_fingerprint)}">&#128274; ${rdEsc(r.key_fingerprint.slice(0, 11))}</span>` : '<span style="color: var(--text-dim);">none</span>';
-      const used = r.targets.length > 0;
+      const used = r.target_count > 0;
       // Names go through data- attributes: an HTML-escaped quote inside an inline
       // handler is decoded before the script runs
       const btn = (perm, cls, fn, label) => can(perm)
-        ? `<button class="btn ${cls} btn-sm" data-id="${rdEsc(r.id)}" data-name="${rdEsc(r.name)}" data-targets="${r.targets.length}" onclick="${fn}(this.dataset.id, this.dataset.name, +this.dataset.targets)">${label}</button>` : '';
+        ? `<button class="btn ${cls} btn-sm" data-id="${rdEsc(r.id)}" data-name="${rdEsc(r.name)}" data-targets="${r.target_count}" onclick="${fn}(this.dataset.id, this.dataset.name, +this.dataset.targets)">${label}</button>` : '';
       return `<tr>
         <td>${rdEsc(r.name)}<br>${labelChips(r.labels)}</td>
         <td>${fp}${r.key_created_at ? ` <span style="font-size: 11px; color: var(--text-muted);">${rdEsc(new Date(r.key_created_at).toLocaleDateString())}</span>` : ''}</td>
-        <td>${used ? rdEsc(r.targets.join(', ')) : '<span style="color: var(--text-dim);">unused</span>'}</td>
+        <td>${!used ? '<span style="color: var(--text-dim);">unused</span>'
+          : rdEsc(r.targets.join(', ')) + (r.target_count > r.targets.length ? ` <span style="color: var(--text-dim);">+${r.target_count - r.targets.length} outside your scope</span>` : '')}</td>
         <td>${r.master_public_key ? 'RSA master key' : '<span style="color: var(--text-dim);">no</span>'}</td>
         <td style="text-align: right; white-space: nowrap;">
           ${btn('keyrings:export', 'btn-secondary', 'exportKeyRing', 'Export')}
@@ -300,7 +301,14 @@ async function rotateKeyRing(id, name, targetCount) {
 async function deleteKeyRing(id, name) {
   if (!confirm(`Delete key ring "${name}" and its keys?\n\nNothing uses it, but any snapshot ever written with one of its keys becomes unreadable unless you exported the key file.`)) return;
   try {
-    const resp = await apiFetch(`/api/v1/keyrings/${id}`, { method: 'DELETE' });
+    let resp = await apiFetch(`/api/v1/keyrings/${id}`, { method: 'DELETE' });
+    if (resp.status === 409) {
+      // Runs were written with its keys: only go ahead once the keys are exported
+      const e = await resp.json().catch(() => ({}));
+      if (!e.runs) throw new Error(e.error || 'Delete failed');
+      if (prompt(`${e.error}\n\nType the ring's name to delete it anyway:`) !== name) return;
+      resp = await apiFetch(`/api/v1/keyrings/${id}?force=true`, { method: 'DELETE' });
+    }
     if (!resp.ok) { const e = await resp.json().catch(() => ({})); throw new Error(e.error || 'Delete failed'); }
     showToast('Key ring deleted', 'success');
     loadKeyRings();

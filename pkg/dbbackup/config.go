@@ -3,6 +3,7 @@ package dbbackup
 import (
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,6 +32,7 @@ type ProfileSummary struct {
 	Engine string `json:"engine"`
 	User   string `json:"user,omitempty"`
 	Host   string `json:"host,omitempty"`
+	Port   int    `json:"port,omitempty"`
 }
 
 // ToolConfig pins the client tool directories (default: PATH and well-known locations)
@@ -179,6 +181,12 @@ func ResolveCredentials(spec *Spec, password string, profiles map[string]Credent
 			if creds.TLS.Mode == "" {
 				creds.TLS = p.TLS
 			}
+			if creds.Port == 0 {
+				creds.Port = DefaultPort(spec.Engine)
+			}
+			if err := p.Allows(creds.Host, creds.Port); err != nil {
+				return creds, fmt.Errorf("credential profile %q: %w", name, err)
+			}
 		}
 	}
 	if creds.Port == 0 {
@@ -192,4 +200,40 @@ func ResolveCredentials(spec *Spec, password string, profiles map[string]Credent
 		return creds, fmt.Errorf("%w: no password available for %s@%s (job password blank and profile provides none); only unix-socket connections may run without a password", ErrNoCredentials, creds.User, creds.Host)
 	}
 	return creds, nil
+}
+
+// Allows binds a profile's password to where it may be sent, so a job (or a server
+// that rewrote it) can't point the profile at another host and collect the password.
+// A profile with a host only connects to that host (and its port, when set); one
+// without a host only to the local machine: a unix socket, localhost or a loopback
+// address.
+func (p CredentialProfile) Allows(host string, port int) error {
+	if p.Host == "" {
+		if isLocalHost(host) {
+			return nil
+		}
+		return fmt.Errorf("it has no host, so it only works for local connections, and the job connects to %s (add --host %s to the profile if that's intended)", host, host)
+	}
+	if !strings.EqualFold(strings.TrimSuffix(host, "."), strings.TrimSuffix(p.Host, ".")) {
+		return fmt.Errorf("it's for host %s, and the job connects to %s", p.Host, host)
+	}
+	if p.Port != 0 && port != p.Port {
+		return fmt.Errorf("it's for port %d, and the job connects to port %d", p.Port, port)
+	}
+	return nil
+}
+
+// isLocalHost reports whether a connection stays on this machine. SQL Server's named
+// instance suffix (host\instance) and its "." and "(local)" aliases are understood.
+func isLocalHost(host string) bool {
+	if strings.HasPrefix(host, "/") {
+		return true
+	}
+	h, _, _ := strings.Cut(host, `\`)
+	h = strings.ToLower(strings.TrimSuffix(strings.Trim(h, "[]"), "."))
+	switch h {
+	case "", "localhost", ".", "(local)", "::1":
+		return true
+	}
+	return strings.HasPrefix(h, "127.") && net.ParseIP(h) != nil
 }

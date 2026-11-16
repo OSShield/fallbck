@@ -51,7 +51,7 @@ Let's be straight about the limitation here: the server holds the encryption key
 Sometimes the server shouldn't know a credential at all. Keep it on the agent:
 
 - **Database credential profiles** ([Databases](../agents/databases.md)) and **VCS credential profiles** ([Git repositories](../agents/vcs.md)), including GitHub App keys, live in the agent's encrypted store. That's AES-256-GCM, with the key in a 0600 file that's also wrapped with DPAPI on Windows. The server only learns the profile names.
-- A VCS profile only works for the URL it was made for. So a compromised server can't point a job at its own host and harvest the token.
+- A VCS profile only works for the URL it was made for, and a database profile only for its host and port (or only for local connections, if it has no host). So a compromised server can't point a job at its own host and harvest the token or password.
 - Databases can also use passwordless local auth, where there's no secret at all.
 - **Kubernetes** jobs read database credentials from Secrets in the cluster. They only read Secrets labelled `fallbck.io/allow-db-credentials: "true"`, and only to reach a Service in the same namespace. Worker pods get short-lived credentials from a per-run Secret and have no Kubernetes API access.
 - **Microsoft 365 credential profiles** ([Microsoft 365](../agents/m365.md#keep-the-credential-on-the-agent)) keep the app's secret or certificate in the same store. A profile only works for the tenant and app IDs it was made for, so a compromised server can't point it at another tenant. Mark a tenant "Kept on the agents" and the server holds no credential for it at all.

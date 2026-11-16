@@ -487,17 +487,20 @@ func (d *DB) ListTargets(ctx context.Context, scope Scope) ([]*BackupTarget, err
 
 const ringSelect = `
 	SELECT r.id, r.name, r.active_key_id, r.master_public_key, r.created_at, r.updated_at, r.created_by, COALESCE(k.fingerprint, ''), k.created_at,
-	       COALESCE((SELECT array_agg(t.name ORDER BY t.name) FROM backup_targets t WHERE t.key_ring_id = r.id), '{}'), r.labels
+	       COALESCE((SELECT json_agg(json_build_object('name', t.name, 'labels', t.labels) ORDER BY t.name) FROM backup_targets t WHERE t.key_ring_id = r.id), '[]'), r.labels
 	FROM key_rings r LEFT JOIN target_keys k ON k.id = r.active_key_id`
 
 func scanRing(row pgx.Row) (*KeyRing, error) {
 	var r KeyRing
-	if err := row.Scan(&r.ID, &r.Name, &r.ActiveKeyID, &r.MasterPublicKey, &r.CreatedAt, &r.UpdatedAt, &r.CreatedBy, &r.KeyFingerprint, &r.KeyCreatedAt, &r.Targets, &r.Labels); err != nil {
+	var targets []byte
+	if err := row.Scan(&r.ID, &r.Name, &r.ActiveKeyID, &r.MasterPublicKey, &r.CreatedAt, &r.UpdatedAt, &r.CreatedBy, &r.KeyFingerprint, &r.KeyCreatedAt, &targets, &r.Labels); err != nil {
 		return nil, err
 	}
-	if r.Targets == nil {
-		r.Targets = []string{}
+	if err := json.Unmarshal(targets, &r.attached); err != nil {
+		return nil, err
 	}
+	r.TargetCount = len(r.attached)
+	r.ScopeTargets(Unscoped)
 	return &r, nil
 }
 
@@ -556,14 +559,30 @@ func (d *DB) UpdateKeyRing(ctx context.Context, r *KeyRing) error {
 	return nil
 }
 
-// DeleteKeyRing removes a ring and its keys; refused (ErrInUse) while a target uses it
-func (d *DB) DeleteKeyRing(ctx context.Context, id uuid.UUID) error {
+// KeysUsedError refuses deleting a ring whose keys encrypted existing snapshots
+type KeysUsedError struct{ Runs int }
+
+func (e *KeysUsedError) Error() string {
+	return fmt.Sprintf("%d runs were written with this ring's keys", e.Runs)
+}
+
+// DeleteKeyRing removes a ring and its keys; refused (ErrInUse) while a target uses it.
+// Unless force is set, it's also refused (ErrKeysUsed) while runs were written with one
+// of its keys: those snapshots need the key to be read.
+func (d *DB) DeleteKeyRing(ctx context.Context, id uuid.UUID, force bool) error {
 	var n int
 	if err := d.Pool.QueryRow(ctx, `SELECT count(*) FROM backup_targets WHERE key_ring_id = $1`, id).Scan(&n); err != nil {
 		return err
 	}
 	if n > 0 {
 		return ErrInUse
+	}
+	if !force {
+		if n, err := d.CountRunsWithRingKeys(ctx, id); err != nil {
+			return err
+		} else if n > 0 {
+			return &KeysUsedError{Runs: n}
+		}
 	}
 	tag, err := d.Pool.Exec(ctx, `DELETE FROM key_rings WHERE id = $1`, id)
 	if err != nil {
@@ -665,10 +684,10 @@ func (d *DB) RetireTargetKey(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
-// CountRunsWithKey counts runs whose snapshot was written with the key
-func (d *DB) CountRunsWithKey(ctx context.Context, fingerprint string) (int, error) {
+// CountRunsWithRingKeys counts runs whose snapshot was written with one of the ring's keys
+func (d *DB) CountRunsWithRingKeys(ctx context.Context, ringID uuid.UUID) (int, error) {
 	var n int
-	err := d.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM backup_runs WHERE key_fingerprint = $1`, fingerprint).Scan(&n)
+	err := d.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM backup_runs WHERE key_fingerprint IN (SELECT fingerprint FROM target_keys WHERE ring_id = $1)`, ringID).Scan(&n)
 	return n, err
 }
 
