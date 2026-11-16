@@ -35,6 +35,9 @@ type EnrollRequest struct {
 	// VCSProviders are the VCS providers a filesystem agent can list repositories
 	// of (git, gitlab, github); agents that predate the list only run git jobs
 	VCSProviders []string `json:"vcs_providers,omitempty"`
+	// RemoteBackends are the remote backends a filesystem agent can back up (s3,
+	// azureblob, sftp, smb, webdav); agents that predate remote jobs send none
+	RemoteBackends []string `json:"remote_backends,omitempty"`
 }
 
 // EnrollResponse contains the credentials and configuration needed for the agent to start.
@@ -88,10 +91,11 @@ type HeartbeatRequest struct {
 	// DBEngines / DBTools: see EnrollRequest
 	DBEngines []string `json:"db_engines,omitempty"`
 	DBTools   bool     `json:"db_tools,omitempty"`
-	// GitVersion / GitLFS / VCSProviders: see EnrollRequest
-	GitVersion   string   `json:"git_version,omitempty"`
-	GitLFS       bool     `json:"git_lfs,omitempty"`
-	VCSProviders []string `json:"vcs_providers,omitempty"`
+	// GitVersion / GitLFS / VCSProviders / RemoteBackends: see EnrollRequest
+	GitVersion     string   `json:"git_version,omitempty"`
+	GitLFS         bool     `json:"git_lfs,omitempty"`
+	VCSProviders   []string `json:"vcs_providers,omitempty"`
+	RemoteBackends []string `json:"remote_backends,omitempty"`
 	// Inventory is the compact inventory summary (inventory.Summary), attached every
 	// few minutes rather than with every heartbeat
 	Inventory json.RawMessage `json:"inventory,omitempty"`

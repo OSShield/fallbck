@@ -203,6 +203,10 @@ func cannotRun(a *db.Agent, summary *inventory.Summary, j *db.BackupJob, connect
 				return fmt.Sprintf("The agent found no git; VCS jobs need git %d.%d or newer.", vcs.MinGitMajor, vcs.MinGitMinor)
 			}
 			return fmt.Sprintf("The agent has git %s; VCS jobs need %d.%d or newer.", a.GitVersion, vcs.MinGitMajor, vcs.MinGitMinor)
+		case db.JobTypeRemote:
+			if t, _ := db.NormalizeAgentType(a.AgentType); t == db.AgentTypeFilesystem {
+				return "The agent predates remote jobs; update it."
+			}
 		}
 		return fmt.Sprintf("A %s agent cannot run %s jobs.", a.AgentType, jobType)
 	}

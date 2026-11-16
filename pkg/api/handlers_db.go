@@ -42,7 +42,7 @@ func (s *ServerAPI) validateJob(ctx context.Context, job *db.BackupJob, existing
 		job.OneFileSystem = false // only filesystem jobs walk host paths
 	}
 	switch jobType {
-	case db.JobTypeDatabase, db.JobTypeM365, db.JobTypeVCS:
+	case db.JobTypeDatabase, db.JobTypeM365, db.JobTypeVCS, db.JobTypeRemote:
 		job.BackupID = "" // these carry the group inside their own config
 	default:
 		if job.BackupID == "" {
@@ -73,7 +73,7 @@ func (s *ServerAPI) validateJob(ctx context.Context, job *db.BackupJob, existing
 		if len(job.BackupPaths) > 0 {
 			return "Microsoft 365 jobs do not take backup paths", errors.New("paths on m365 job")
 		}
-		if job.DBConfig != nil || job.K8sConfig != nil || job.PVEConfig != nil || job.DockerConfig != nil || job.VCSConfig != nil {
+		if job.DBConfig != nil || job.K8sConfig != nil || job.PVEConfig != nil || job.DockerConfig != nil || job.VCSConfig != nil || job.RemoteConfig != nil {
 			return "Microsoft 365 jobs take m365_config only", errors.New("foreign config on m365 job")
 		}
 		if job.M365Config == nil {
@@ -95,7 +95,7 @@ func (s *ServerAPI) validateJob(ctx context.Context, job *db.BackupJob, existing
 		if len(job.BackupPaths) > 0 {
 			return "VCS jobs do not take backup paths", errors.New("paths on vcs job")
 		}
-		if job.DBConfig != nil || job.K8sConfig != nil || job.PVEConfig != nil || job.DockerConfig != nil || job.M365Config != nil {
+		if job.DBConfig != nil || job.K8sConfig != nil || job.PVEConfig != nil || job.DockerConfig != nil || job.M365Config != nil || job.RemoteConfig != nil {
 			return "VCS jobs take vcs_config only", errors.New("foreign config on vcs job")
 		}
 		if job.VCSConfig == nil {
@@ -119,6 +119,34 @@ func (s *ServerAPI) validateJob(ctx context.Context, job *db.BackupJob, existing
 		}
 		if agent != nil && !agent.CanRunJob(db.JobTypeVCS) {
 			return "Agent " + agent.Hostname + " has not reported git " + vcsMinGit + " or newer (install git, and git-lfs for LFS repositories, and wait for its next heartbeat)", errors.New("agent without git")
+		}
+	case db.JobTypeRemote:
+		if len(job.BackupPaths) > 0 {
+			return "Remote jobs do not take backup paths (list roots in remote_config)", errors.New("paths on remote job")
+		}
+		if job.DBConfig != nil || job.K8sConfig != nil || job.PVEConfig != nil || job.DockerConfig != nil || job.M365Config != nil || job.VCSConfig != nil {
+			return "Remote jobs take remote_config only", errors.New("foreign config on remote job")
+		}
+		if job.RemoteConfig == nil {
+			return "Remote jobs require remote_config", errors.New("missing remote_config")
+		}
+		if err := job.RemoteConfig.Validate(); err != nil {
+			return err.Error(), err
+		}
+		if s.DB != nil {
+			rem, err := s.DB.GetRemoteByID(ctx, job.RemoteConfig.RemoteID, p.Scope(auth.PermRemotesRead))
+			if err != nil {
+				return "Remote not found", err
+			}
+			if err := job.RemoteConfig.ValidateFor(rem); err != nil {
+				return err.Error(), err
+			}
+			if agent != nil && agentType == db.AgentTypeFilesystem && !agent.CanRunRemoteBackend(rem.Backend) {
+				if !agent.CanRunJob(db.JobTypeRemote) {
+					return "Agent " + agent.Hostname + " cannot run remote jobs yet: update the agent", errors.New("agent without remote backends")
+				}
+				return "Agent " + agent.Hostname + " cannot back up " + rem.Backend + " remotes: update the agent", errors.New("agent without remote backend")
+			}
 		}
 	case db.JobTypeDocker:
 		if len(job.BackupPaths) > 0 {
@@ -214,6 +242,9 @@ func (s *ServerAPI) validateJob(ctx context.Context, job *db.BackupJob, existing
 		}
 		if job.VCSConfig != nil {
 			return "Filesystem jobs do not take vcs_config", errors.New("vcs_config on filesystem job")
+		}
+		if job.RemoteConfig != nil {
+			return "Filesystem jobs do not take remote_config", errors.New("remote_config on filesystem job")
 		}
 		agentOS := ""
 		if agent != nil {

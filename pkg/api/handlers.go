@@ -21,6 +21,7 @@ import (
 	"github.com/osshield/fallbck/pkg/config"
 	"github.com/osshield/fallbck/pkg/db"
 	"github.com/osshield/fallbck/pkg/pbs"
+	"github.com/osshield/fallbck/pkg/remote"
 	"github.com/osshield/fallbck/pkg/temporal/scheduler"
 	"github.com/osshield/fallbck/pkg/vcs"
 	"go.temporal.io/sdk/client"
@@ -263,22 +264,23 @@ func (s *ServerAPI) HandleAgentEnroll(w http.ResponseWriter, r *http.Request) {
 	}
 
 	agent := &db.Agent{
-		ID:           agentID,
-		Hostname:     req.Hostname,
-		IPAddress:    ip,
-		OS:           req.OS,
-		Arch:         req.Arch,
-		Version:      req.Version,
-		AgentType:    agentType,
-		TaskQueue:    taskQueue,
-		Status:       db.AgentStatusOnline,
-		PVEHost:      req.PVEHost,
-		DockerHost:   req.DockerHost,
-		DBEngines:    db.CleanDBEngines(req.DBEngines),
-		DBTools:      req.DBTools || len(req.DBEngines) > 0,
-		GitVersion:   cleanGitVersion(req.GitVersion),
-		GitLFS:       req.GitLFS,
-		VCSProviders: vcs.CleanProviders(req.VCSProviders),
+		ID:             agentID,
+		Hostname:       req.Hostname,
+		IPAddress:      ip,
+		OS:             req.OS,
+		Arch:           req.Arch,
+		Version:        req.Version,
+		AgentType:      agentType,
+		TaskQueue:      taskQueue,
+		Status:         db.AgentStatusOnline,
+		PVEHost:        req.PVEHost,
+		DockerHost:     req.DockerHost,
+		DBEngines:      db.CleanDBEngines(req.DBEngines),
+		DBTools:        req.DBTools || len(req.DBEngines) > 0,
+		GitVersion:     cleanGitVersion(req.GitVersion),
+		GitLFS:         req.GitLFS,
+		VCSProviders:   vcs.CleanProviders(req.VCSProviders),
+		RemoteBackends: remote.CleanBackends(req.RemoteBackends),
 		// Scope comes from the token, never from the agent: an enrolling host must
 		// not be able to choose who administers it
 		Labels: token.Labels.OrEmpty(),
@@ -354,7 +356,8 @@ func (s *ServerAPI) HandleAgentHeartbeat(w http.ResponseWriter, r *http.Request)
 	}
 
 	st, err := s.DB.UpdateAgentHeartbeat(r.Context(), claims.AgentID, status, db.AgentCapabilities{PVEHost: req.PVEHost, DockerHost: req.DockerHost, DBTools: req.DBTools || len(req.DBEngines) > 0, DBEngines: db.CleanDBEngines(req.DBEngines), Inventory: req.Inventory,
-		Version: req.Version, SelfUpdate: req.SelfUpdate, UpdateError: req.UpdateError, GitVersion: cleanGitVersion(req.GitVersion), GitLFS: req.GitLFS, VCSProviders: vcs.CleanProviders(req.VCSProviders)})
+		Version: req.Version, SelfUpdate: req.SelfUpdate, UpdateError: req.UpdateError, GitVersion: cleanGitVersion(req.GitVersion), GitLFS: req.GitLFS, VCSProviders: vcs.CleanProviders(req.VCSProviders),
+		RemoteBackends: remote.CleanBackends(req.RemoteBackends)})
 	if err != nil {
 		if errors.Is(err, db.ErrNotFound) {
 			s.writeError(w, http.StatusUnauthorized, "agent no longer exists")
@@ -591,6 +594,17 @@ func (s *ServerAPI) HandleMergeAgent(w http.ResponseWriter, r *http.Request) {
 			}
 			if !target.CanRunVCSProvider(conn.Provider) {
 				s.writeError(w, http.StatusConflict, fmt.Sprintf("Agent %s cannot run job %q: it does not support %s connections yet (update the agent)", target.Hostname, job.Name, conn.Provider))
+				return
+			}
+		}
+		if job.IsRemote() && job.RemoteConfig != nil {
+			rem, err := s.DB.GetRemoteByID(ctx, job.RemoteConfig.RemoteID, db.Unscoped)
+			if err != nil {
+				s.writeError(w, http.StatusInternalServerError, "Failed to load the remote of job "+job.Name)
+				return
+			}
+			if !target.CanRunRemoteBackend(rem.Backend) {
+				s.writeError(w, http.StatusConflict, fmt.Sprintf("Agent %s cannot run job %q: it does not support %s remotes (update the agent)", target.Hostname, job.Name, rem.Backend))
 				return
 			}
 		}

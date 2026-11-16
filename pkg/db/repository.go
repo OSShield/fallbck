@@ -12,6 +12,7 @@ import (
 	"github.com/osshield/fallbck/pkg/m365"
 	"github.com/osshield/fallbck/pkg/pbs"
 	"github.com/osshield/fallbck/pkg/pvebackup"
+	"github.com/osshield/fallbck/pkg/remote"
 	"github.com/osshield/fallbck/pkg/vcs"
 	"time"
 
@@ -41,8 +42,8 @@ func (d *DB) CreateAgent(ctx context.Context, agent *Agent) error {
 	agent.UpdatedAt = now
 
 	query := `
-		INSERT INTO agents (id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, pve_host, docker_host, db_tools, db_engines, labels, git_version, git_lfs, vcs_providers)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+		INSERT INTO agents (id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, pve_host, docker_host, db_tools, db_engines, labels, git_version, git_lfs, vcs_providers, remote_backends)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
 		RETURNING id, created_at, updated_at
 	`
 	if agent.AgentType == "" {
@@ -53,7 +54,7 @@ func (d *DB) CreateAgent(ctx context.Context, agent *Agent) error {
 		agent.ID, agent.Hostname, agent.IPAddress, agent.OS, agent.Arch,
 		agent.Version, agent.TaskQueue, agent.Status, agent.LastSeenAt,
 		agent.CreatedAt, agent.UpdatedAt, agent.AgentType, agent.PVEHost, agent.DockerHost, agent.DBTools, enginesOrEmpty(agent.DBEngines), agent.Labels.JSON(),
-		agent.GitVersion, agent.GitLFS, enginesOrEmpty(agent.VCSProviders),
+		agent.GitVersion, agent.GitLFS, enginesOrEmpty(agent.VCSProviders), enginesOrEmpty(agent.RemoteBackends),
 	).Scan(&agent.ID, &agent.CreatedAt, &agent.UpdatedAt)
 }
 
@@ -62,8 +63,8 @@ func (d *DB) UpsertAgent(ctx context.Context, agent *Agent) error {
 	agent.UpdatedAt = now
 
 	query := `
-		INSERT INTO agents (id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, pve_host, docker_host, db_tools, db_engines, git_version, git_lfs, vcs_providers)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+		INSERT INTO agents (id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, pve_host, docker_host, db_tools, db_engines, git_version, git_lfs, vcs_providers, remote_backends)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
 		ON CONFLICT (id) DO UPDATE SET
 			agent_type = EXCLUDED.agent_type,
 			pve_host = EXCLUDED.pve_host,
@@ -73,6 +74,7 @@ func (d *DB) UpsertAgent(ctx context.Context, agent *Agent) error {
 			git_version = EXCLUDED.git_version,
 			git_lfs = EXCLUDED.git_lfs,
 			vcs_providers = EXCLUDED.vcs_providers,
+			remote_backends = EXCLUDED.remote_backends,
 			hostname = EXCLUDED.hostname,
 			ip_address = EXCLUDED.ip_address,
 			os = EXCLUDED.os,
@@ -87,16 +89,16 @@ func (d *DB) UpsertAgent(ctx context.Context, agent *Agent) error {
 	return d.Pool.QueryRow(ctx, query,
 		agent.ID, agent.Hostname, agent.IPAddress, agent.OS, agent.Arch,
 		agent.Version, agent.TaskQueue, agent.Status, agent.LastSeenAt,
-		now, now, agent.AgentType, agent.PVEHost, agent.DockerHost, agent.DBTools, enginesOrEmpty(agent.DBEngines), agent.GitVersion, agent.GitLFS, enginesOrEmpty(agent.VCSProviders),
+		now, now, agent.AgentType, agent.PVEHost, agent.DockerHost, agent.DBTools, enginesOrEmpty(agent.DBEngines), agent.GitVersion, agent.GitLFS, enginesOrEmpty(agent.VCSProviders), enginesOrEmpty(agent.RemoteBackends),
 	).Scan(&agent.CreatedAt, &agent.UpdatedAt)
 }
 
-const agentSelect = `SELECT id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, debug_logging, pve_host, docker_host, db_tools, db_engines, inventory, inventory_at, inventory_detail, inventory_detail_at, auto_update, self_update, update_requested_at, update_error, labels, git_version, git_lfs, vcs_providers
+const agentSelect = `SELECT id, hostname, ip_address, os, arch, version, task_queue, status, last_seen_at, created_at, updated_at, agent_type, debug_logging, pve_host, docker_host, db_tools, db_engines, inventory, inventory_at, inventory_detail, inventory_detail_at, auto_update, self_update, update_requested_at, update_error, labels, git_version, git_lfs, vcs_providers, remote_backends
 	FROM agents`
 
 func scanAgent(row pgx.Row) (*Agent, error) {
 	var a Agent
-	err := row.Scan(&a.ID, &a.Hostname, &a.IPAddress, &a.OS, &a.Arch, &a.Version, &a.TaskQueue, &a.Status, &a.LastSeenAt, &a.CreatedAt, &a.UpdatedAt, &a.AgentType, &a.DebugLogging, &a.PVEHost, &a.DockerHost, &a.DBTools, &a.DBEngines, &a.Inventory, &a.InventoryAt, &a.InventoryDetail, &a.InventoryDetailAt, &a.AutoUpdate, &a.SelfUpdate, &a.UpdateRequestedAt, &a.UpdateError, &a.Labels, &a.GitVersion, &a.GitLFS, &a.VCSProviders)
+	err := row.Scan(&a.ID, &a.Hostname, &a.IPAddress, &a.OS, &a.Arch, &a.Version, &a.TaskQueue, &a.Status, &a.LastSeenAt, &a.CreatedAt, &a.UpdatedAt, &a.AgentType, &a.DebugLogging, &a.PVEHost, &a.DockerHost, &a.DBTools, &a.DBEngines, &a.Inventory, &a.InventoryAt, &a.InventoryDetail, &a.InventoryDetailAt, &a.AutoUpdate, &a.SelfUpdate, &a.UpdateRequestedAt, &a.UpdateError, &a.Labels, &a.GitVersion, &a.GitLFS, &a.VCSProviders, &a.RemoteBackends)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -147,7 +149,7 @@ func (d *DB) UpdateAgentHeartbeat(ctx context.Context, id uuid.UUID, status Agen
 		inventory = COALESCE($8, inventory), inventory_at = CASE WHEN $8::jsonb IS NULL THEN inventory_at ELSE $1 END,
 		version = COALESCE(NULLIF($9, ''), version), self_update = $10, update_error = $11,
 		update_requested_at = CASE WHEN $11 <> '' THEN NULL ELSE update_requested_at END,
-		git_version = $12, git_lfs = $13, vcs_providers = $14
+		git_version = $12, git_lfs = $13, vcs_providers = $14, remote_backends = $15
 		WHERE id = $3 RETURNING debug_logging, auto_update, update_requested_at IS NOT NULL, os, arch`
 	var st HeartbeatState
 	var inv []byte
@@ -155,7 +157,7 @@ func (d *DB) UpdateAgentHeartbeat(ctx context.Context, id uuid.UUID, status Agen
 		inv = caps.Inventory
 	}
 	if err := d.Pool.QueryRow(ctx, query, now, status, id, caps.PVEHost, caps.DockerHost, caps.DBTools, enginesOrEmpty(caps.DBEngines), inv,
-		caps.Version, caps.SelfUpdate, caps.UpdateError, caps.GitVersion, caps.GitLFS, enginesOrEmpty(caps.VCSProviders)).Scan(&st.DebugLogging, &st.AutoUpdate, &st.UpdateRequested, &st.OS, &st.Arch); err != nil {
+		caps.Version, caps.SelfUpdate, caps.UpdateError, caps.GitVersion, caps.GitLFS, enginesOrEmpty(caps.VCSProviders), enginesOrEmpty(caps.RemoteBackends)).Scan(&st.DebugLogging, &st.AutoUpdate, &st.UpdateRequested, &st.OS, &st.Arch); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return st, ErrNotFound
 		}
@@ -740,8 +742,8 @@ func (d *DB) CreateJob(ctx context.Context, job *BackupJob) error {
 	}
 
 	query := `
-		INSERT INTO backup_jobs (id, name, agent_id, target_id, schedule_cron, backup_paths, exclude_paths, enabled, direct_pbs, created_at, updated_at, job_type, db_config, k8s_config, pve_config, docker_config, m365_config, m365_tenant_id, backup_id, labels, one_file_system, vcs_config, vcs_connection_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+		INSERT INTO backup_jobs (id, name, agent_id, target_id, schedule_cron, backup_paths, exclude_paths, enabled, direct_pbs, created_at, updated_at, job_type, db_config, k8s_config, pve_config, docker_config, m365_config, m365_tenant_id, backup_id, labels, one_file_system, vcs_config, vcs_connection_id, remote_config, remote_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
 		RETURNING id
 	`
 	job.Labels = job.Labels.OrEmpty()
@@ -749,7 +751,7 @@ func (d *DB) CreateJob(ctx context.Context, job *BackupJob) error {
 		job.ID, job.Name, job.AgentID, job.TargetID, job.ScheduleCron,
 		backupPathsJSON, excludePathsJSON, job.Enabled, job.DirectPBS,
 		job.CreatedAt, job.UpdatedAt, cols.jobType, cols.db, cols.k8s, cols.pve, cols.docker, cols.m365, cols.tenantID, job.BackupID, job.Labels.JSON(), job.OneFileSystem,
-		cols.vcs, cols.connectionID,
+		cols.vcs, cols.connectionID, cols.remote, cols.remoteID,
 	).Scan(&job.ID)
 }
 
@@ -757,7 +759,7 @@ const jobSelect = `
 	SELECT j.id, j.name, j.agent_id, j.target_id, j.schedule_cron, j.backup_paths, j.exclude_paths,
 	       j.enabled, j.direct_pbs, j.created_at, j.updated_at,
 	       j.job_type, j.db_config, j.k8s_config, j.pve_config, j.docker_config, j.m365_config, j.backup_id, j.labels, j.one_file_system,
-	       j.vcs_config,
+	       j.vcs_config, j.remote_config,
 	       a.hostname as agent_name, t.name as target_name
 	FROM backup_jobs j
 	JOIN agents a ON j.agent_id = a.id
@@ -765,13 +767,13 @@ const jobSelect = `
 
 func (d *DB) scanJob(row pgx.Row) (*BackupJob, error) {
 	var j BackupJob
-	var backupPathsRaw, excludePathsRaw, dbConfigRaw, k8sConfigRaw, pveConfigRaw, dockerConfigRaw, m365ConfigRaw, vcsConfigRaw []byte
+	var backupPathsRaw, excludePathsRaw, dbConfigRaw, k8sConfigRaw, pveConfigRaw, dockerConfigRaw, m365ConfigRaw, vcsConfigRaw, remoteConfigRaw []byte
 	err := row.Scan(
 		&j.ID, &j.Name, &j.AgentID, &j.TargetID, &j.ScheduleCron,
 		&backupPathsRaw, &excludePathsRaw,
 		&j.Enabled, &j.DirectPBS, &j.CreatedAt, &j.UpdatedAt,
 		&j.JobType, &dbConfigRaw, &k8sConfigRaw, &pveConfigRaw, &dockerConfigRaw, &m365ConfigRaw, &j.BackupID, &j.Labels, &j.OneFileSystem,
-		&vcsConfigRaw,
+		&vcsConfigRaw, &remoteConfigRaw,
 		&j.AgentName, &j.TargetName,
 	)
 	if err != nil {
@@ -790,6 +792,7 @@ func (d *DB) scanJob(row pgx.Row) (*BackupJob, error) {
 	j.DockerConfig = parseDockerConfig(j.JobType, dockerConfigRaw)
 	j.M365Config = parseM365Config(j.JobType, m365ConfigRaw)
 	j.VCSConfig = parseVCSConfig(j.JobType, vcsConfigRaw)
+	j.RemoteConfig = parseRemoteConfig(j.JobType, remoteConfigRaw)
 	return &j, nil
 }
 
@@ -821,12 +824,14 @@ func (d *DB) ListJobs(ctx context.Context, scope Scope) ([]*BackupJob, error) {
 
 // jobColumns are the type-specific column values of a job row
 type jobColumns struct {
-	jobType                         string
-	db, k8s, pve, docker, m365, vcs []byte
+	jobType                                 string
+	db, k8s, pve, docker, m365, vcs, remote []byte
 	// tenantID is the m365_tenant_id foreign key (nil for every other type)
 	tenantID *uuid.UUID
 	// connectionID is the vcs_connection_id foreign key (nil for every other type)
 	connectionID *uuid.UUID
+	// remoteID is the remote_id foreign key (nil for every other type)
+	remoteID *uuid.UUID
 }
 
 // jobTypeColumns normalises the job type and serialises the configuration of that
@@ -838,7 +843,7 @@ func (d *DB) jobTypeColumns(job *BackupJob) (jobColumns, error) {
 	}
 	job.JobType = jobType
 	empty := []byte("{}")
-	cols := jobColumns{jobType: jobType, db: empty, k8s: empty, pve: empty, docker: empty, m365: empty, vcs: empty}
+	cols := jobColumns{jobType: jobType, db: empty, k8s: empty, pve: empty, docker: empty, m365: empty, vcs: empty, remote: empty}
 	marshal := func(what string, v any) ([]byte, error) {
 		raw, err := json.Marshal(v)
 		if err != nil {
@@ -870,8 +875,26 @@ func (d *DB) jobTypeColumns(job *BackupJob) (jobColumns, error) {
 			id := job.VCSConfig.ConnectionID
 			cols.connectionID = &id
 		}
+	case jobType == JobTypeRemote && job.RemoteConfig != nil:
+		cols.remote, err = marshal("remote", job.RemoteConfig)
+		if job.RemoteConfig.RemoteID != uuid.Nil {
+			id := job.RemoteConfig.RemoteID
+			cols.remoteID = &id
+		}
 	}
 	return cols, err
+}
+
+// parseRemoteConfig decodes the remote_config column for remote jobs
+func parseRemoteConfig(jobType string, raw []byte) *remote.Spec {
+	if jobType != JobTypeRemote {
+		return nil
+	}
+	spec := &remote.Spec{}
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, spec)
+	}
+	return spec
 }
 
 // parseVCSConfig decodes the vcs_config column for VCS jobs

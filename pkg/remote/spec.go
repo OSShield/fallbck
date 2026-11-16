@@ -154,6 +154,18 @@ func (s *Spec) ValidateFor(r *Remote) error {
 	return nil
 }
 
+// Summary lists the roots ("" is the whole remote)
+func (s *Spec) Summary() string {
+	if s == nil {
+		return "Remote"
+	}
+	roots := make([]string, len(s.Roots))
+	for i, r := range s.Roots {
+		roots[i] = "/" + r
+	}
+	return strings.Join(roots, ", ")
+}
+
 // EffConcurrency applies the default
 func (s *Spec) EffConcurrency() int {
 	if s.Concurrency <= 0 {
