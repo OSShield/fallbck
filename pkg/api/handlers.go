@@ -164,6 +164,13 @@ func (s *ServerAPI) RegisterRoutes(r chi.Router, admin, agent Middleware) {
 			r.With(need(auth.PermConnectionsDelete)).Delete("/vcs/connections/{id}", s.HandleDeleteConnection)
 			r.With(need(auth.PermConnectionsWrite)).Post("/vcs/connections/{id}/test", s.HandleTestConnection)
 
+			// Remotes (rclone storage)
+			r.With(need(auth.PermRemotesWrite)).Post("/remotes", s.HandleCreateRemote)
+			r.With(need(auth.PermRemotesRead)).Get("/remotes", s.HandleListRemotes)
+			r.With(need(auth.PermRemotesRead)).Get("/remotes/{id}", s.HandleGetRemote)
+			r.With(need(auth.PermRemotesWrite)).Put("/remotes/{id}", s.HandleUpdateRemote)
+			r.With(need(auth.PermRemotesDelete)).Delete("/remotes/{id}", s.HandleDeleteRemote)
+
 			// Jobs
 			r.With(need(auth.PermJobsWrite)).Post("/jobs", s.HandleCreateJob)
 			r.With(need(auth.PermJobsRead)).Get("/jobs", s.HandleListJobs)

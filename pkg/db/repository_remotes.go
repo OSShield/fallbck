@@ -183,3 +183,22 @@ func (d *DB) DeleteRemote(ctx context.Context, id uuid.UUID) error {
 	}
 	return nil
 }
+
+// RemoteJobsWithoutProfile names the jobs of a remote that rely on its stored
+// credential (they name no agent profile)
+func (d *DB) RemoteJobsWithoutProfile(ctx context.Context, id uuid.UUID) ([]string, error) {
+	rows, err := d.Pool.Query(ctx, `SELECT name FROM backup_jobs WHERE remote_id = $1 AND COALESCE(remote_config->>'profile', '') = '' ORDER BY name`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, err
+		}
+		names = append(names, n)
+	}
+	return names, rows.Err()
+}

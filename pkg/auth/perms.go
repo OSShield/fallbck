@@ -36,6 +36,10 @@ const (
 	PermConnectionsWrite  = "connections:write"
 	PermConnectionsDelete = "connections:delete"
 
+	PermRemotesRead   = "remotes:read" // remote storage (S3, Azure Blob, SFTP, SMB, WebDAV)
+	PermRemotesWrite  = "remotes:write"
+	PermRemotesDelete = "remotes:delete"
+
 	PermAPIKeysManage = "apikeys:manage"
 	PermRBACManage    = "rbac:manage"
 	PermAuditRead     = "audit:read"
@@ -56,6 +60,7 @@ var Catalog = []PermissionGroup{
 	{"keyrings", []string{PermKeyringsRead, PermKeyringsWrite, PermKeyringsExport, PermKeyringsDelete}},
 	{"tenants", []string{PermTenantsRead, PermTenantsWrite, PermTenantsDelete}},
 	{"connections", []string{PermConnectionsRead, PermConnectionsWrite, PermConnectionsDelete}},
+	{"remotes", []string{PermRemotesRead, PermRemotesWrite, PermRemotesDelete}},
 	{"apikeys", []string{PermAPIKeysManage}},
 	{"rbac", []string{PermRBACManage}},
 	{"audit", []string{PermAuditRead}},
@@ -114,7 +119,7 @@ func BuiltinRoles() map[string][]string {
 	operator := append(slices.Clone(viewer),
 		PermJobsWrite, PermJobsRun, PermJobsDelete,
 		PermAgentsWrite, PermAgentsEnroll,
-		PermTargetsWrite, PermTenantsWrite, PermConnectionsWrite)
+		PermTargetsWrite, PermTenantsWrite, PermConnectionsWrite, PermRemotesWrite)
 	return map[string][]string{
 		RoleAdmin:    AllPermissions(),
 		RoleOperator: operator,
@@ -125,6 +130,6 @@ func BuiltinRoles() map[string][]string {
 // BuiltinDescriptions are shown in the Access page
 var BuiltinDescriptions = map[string]string{
 	RoleAdmin:    "Everything, including access management and API keys",
-	RoleOperator: "Read everything; create, run and delete jobs; manage agents, targets, tenants and connections (no deletes of those, no credentials or key export)",
+	RoleOperator: "Read everything; create, run and delete jobs; manage agents, targets, tenants, connections and remotes (no deletes of those, no credentials or key export)",
 	RoleViewer:   "Read everything",
 }
