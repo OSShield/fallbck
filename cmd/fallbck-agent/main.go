@@ -155,6 +155,7 @@ func main() {
 			acts.VCSProfile = runtime.VCSProfileLookup(cfg)
 			acts.RemoteCredentials = runtime.RemoteCredentialsFetcher(cfg, store)
 			acts.RemoteOpen = backends.NewSession
+			acts.RemoteStateDir = filepath.Join(cfg.DataDir, "remote-state")
 			if vss.Supported() && cfg.UseVSS() {
 				acts.VSSDir = filepath.Join(cfg.DataDir, "vss")
 				vss.Sweep(acts.VSSDir)

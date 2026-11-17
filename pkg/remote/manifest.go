@@ -66,6 +66,10 @@ type RootResult struct {
 	Objects int    `json:"objects"`
 	Bytes   int64  `json:"bytes"`
 	Error   string `json:"error,omitempty"`
+	// Group / SnapshotID: the root's own snapshot (split per_root)
+	Group      string `json:"group,omitempty"`
+	SnapshotID string `json:"snapshot_id,omitempty"`
+	Note       string `json:"note,omitempty"`
 }
 
 // Totals sums the roots

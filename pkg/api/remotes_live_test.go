@@ -349,13 +349,13 @@ func TestLiveRemoteJobs(t *testing.T) {
 		return tk
 	}
 	api := NewServerAPI(d, nil, config.DefaultServerConfig(), tm, nil)
-	fetch := func(ticket string) (int, RemoteCredentials, string) {
+	fetch := func(ticket string) (int, remote.RunCredentials, string) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/agents/remote-credentials", nil)
 		req.Header.Set(BackupTicketHeader, ticket)
 		req = req.WithContext(auth.WithAgent(req.Context(), &auth.AgentClaims{AgentID: f.agentA.ID}))
 		rr := httptest.NewRecorder()
 		api.HandleRemoteCredentials(rr, req)
-		var c RemoteCredentials
+		var c remote.RunCredentials
 		_ = json.Unmarshal(rr.Body.Bytes(), &c)
 		return rr.Code, c, rr.Body.String()
 	}
@@ -370,5 +370,29 @@ func TestLiveRemoteJobs(t *testing.T) {
 	}
 	if code, _, body := fetch(ticket(created.ID, f.agentB.ID)); code != http.StatusForbidden {
 		t.Errorf("another agent's ticket: %d %s", code, body)
+	}
+
+	// Sub-tickets (split per_root): only groups that extend the run's own group
+	subTicket := func(jobID uuid.UUID, runGroup, group string) int {
+		tk, err := tm.CreateBackupTicket(auth.BackupTicketClaims{JobID: jobID, AgentID: f.agentA.ID, TargetID: f.targetA.ID, BackupType: "host", BackupID: runGroup, BackupTime: time.Now().Unix()}, time.Hour)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := json.Marshal(SubTicketRequest{BackupID: group})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/agents/sub-ticket", bytes.NewReader(body))
+		req.Header.Set(BackupTicketHeader, tk)
+		req = req.WithContext(auth.WithAgent(req.Context(), &auth.AgentClaims{AgentID: f.agentA.ID}))
+		rr := httptest.NewRecorder()
+		api.HandleSubTicket(rr, req)
+		return rr.Code
+	}
+	if code := subTicket(created.ID, "remote-minio", "remote-minio-photos"); code != http.StatusOK {
+		t.Errorf("the job's own root group: %d", code)
+	}
+	if code := subTicket(created.ID, "remote-minio", "remote-nas-photos"); code != http.StatusForbidden {
+		t.Errorf("another job's group: %d", code)
+	}
+	if code := subTicket(f.jobA.ID, "host-a", "host-a-photos"); code != http.StatusForbidden {
+		t.Errorf("a filesystem job's ticket: %d", code)
 	}
 }

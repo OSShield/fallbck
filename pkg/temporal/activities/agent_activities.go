@@ -77,6 +77,8 @@ type AgentActivities struct {
 	// RemoteOpen connects to a remote (backends.NewSession). It is a function so this
 	// package, which the server links too, doesn't pull in rclone.
 	RemoteOpen func(r *remote.Remote, c remoterun.Credentials) (remoterun.Opener, error)
+	// RemoteStateDir holds per-job run progress of remote jobs (per-root resume)
+	RemoteStateDir string
 	// RemoteProfile looks up an agent credential profile of a remote job
 	RemoteProfile func(name string) (*remote.Profile, error)
 	// VCSProfile looks up an agent credential profile
@@ -447,8 +449,8 @@ func (a *AgentActivities) ExecuteRemoteBackup(ctx context.Context, session *temp
 	session = sessionForAttempt(ctx, session, a.RefreshTicket)
 	slog.Info("Agent activity started: ExecuteRemoteBackup", "activity_id", info.ActivityID, "attempt", info.Attempt,
 		"job_id", session.JobID, "group", session.BackupID, "datastore", session.Datastore, "direct_pbs", session.DirectPBS)
-	if a.RemoteCredentials == nil || a.RemoteOpen == nil {
-		return nil, errors.New("this agent has no remote credential fetcher or backends (agent too old?)")
+	if a.RemoteCredentials == nil || a.RemoteOpen == nil || a.SubTicket == nil || a.RemoteStateDir == "" {
+		return nil, errors.New("this agent has no remote credential fetcher, backends, sub-ticket fetcher or state directory (agent too old?)")
 	}
 
 	rt := startRunTracking(ctx, session.Ticket, session.BackupRunID, a.ReportProgress)
@@ -471,9 +473,17 @@ func (a *AgentActivities) ExecuteRemoteBackup(ctx context.Context, session *temp
 		return failed(nil, fmt.Errorf("fetching the remote: %w", err))
 	}
 
-	upload := func(ctx context.Context, tree *scan.Node, blobs []gopbs.Blob) (*temporal.BackupExecutionResult, error) {
+	upload := func(ctx context.Context, group string, tree *scan.Node, blobs []gopbs.Blob) (*temporal.BackupExecutionResult, error) {
 		us := *session
 		us.BackupPaths, us.ExcludePaths = nil, nil
+		if group != session.BackupID {
+			// A root's own group (split per_root): the server checks it extends the job's
+			ticket, backupTime, err := a.SubTicket(ctx, session.Ticket, group)
+			if err != nil {
+				return nil, fmt.Errorf("minting the snapshot ticket: %w", err)
+			}
+			us.Ticket, us.BackupID, us.BackupTime = ticket, group, backupTime
+		}
 		tr, err := openTransport(ctx, &us, a.Tunnel, a.Credentials, a.EncryptionKey, pt)
 		if err != nil {
 			return nil, err
@@ -490,6 +500,7 @@ func (a *AgentActivities) ExecuteRemoteBackup(ctx context.Context, session *temp
 		Profile:  a.RemoteProfile,
 		Open:     a.RemoteOpen,
 		Upload:   upload,
+		StateDir: filepath.Join(a.RemoteStateDir, session.JobID.String()),
 		Progress: func(p string) { pt.Set(p); reportPh() },
 		Hostname: a.Hostname, Version: a.Version,
 	})

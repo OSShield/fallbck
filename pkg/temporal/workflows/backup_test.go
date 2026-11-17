@@ -13,6 +13,7 @@ import (
 	"github.com/osshield/fallbck/pkg/dbbackup"
 	"github.com/osshield/fallbck/pkg/k8sbackup"
 	"github.com/osshield/fallbck/pkg/m365"
+	"github.com/osshield/fallbck/pkg/remote"
 	"github.com/osshield/fallbck/pkg/temporal"
 	"github.com/osshield/fallbck/pkg/temporal/activities"
 	"github.com/osshield/fallbck/pkg/vcs"
@@ -203,6 +204,40 @@ func TestBackupJobWorkflowVCS(t *testing.T) {
 	var agentActs *activities.AgentActivities
 	env.OnActivity(serverActs.PrepareBackupSession, mock.Anything, jobID).Return(session, nil)
 	env.OnActivity(agentActs.ExecuteVCSBackup, mock.Anything, session).Return(execResult, nil)
+	env.OnActivity(agentActs.ExecuteFilesystemBackup, mock.Anything, mock.Anything).Return(nil, nil)
+	var finalized *temporal.BackupExecutionResult
+	env.OnActivity(serverActs.FinalizeBackupRun, mock.Anything, session, mock.Anything).
+		Run(func(args mock.Arguments) { finalized = args.Get(2).(*temporal.BackupExecutionResult) }).Return(nil)
+
+	env.ExecuteWorkflow(BackupJobWorkflow, jobID)
+	if !env.IsWorkflowCompleted() {
+		t.Fatal("Workflow did not complete")
+	}
+	if err := env.GetWorkflowError(); err != nil {
+		t.Fatalf("Workflow failed: %v", err)
+	}
+	if finalized == nil || finalized.Status != db.RunStatusPartial || finalized.SnapshotID != execResult.SnapshotID {
+		t.Errorf("finalized %+v", finalized)
+	}
+	env.AssertNotCalled(t, "ExecuteFilesystemBackup", mock.Anything, mock.Anything)
+}
+
+func TestBackupJobWorkflowRemote(t *testing.T) {
+	testSuite := &testsuite.WorkflowTestSuite{}
+	env := testSuite.NewTestWorkflowEnvironment()
+
+	jobID := uuid.New()
+	session := &temporal.BackupSessionInfo{
+		JobID: jobID, AgentTaskQueue: "fallbck-agent-remote", BackupRunID: uuid.New(),
+		JobType: db.JobTypeRemote, BackupID: "remote-minio",
+		RemoteConfig: &remote.Spec{RemoteID: uuid.New(), Roots: []string{"photos"}},
+	}
+	execResult := &temporal.BackupExecutionResult{Status: db.RunStatusPartial, SnapshotID: "host/remote-minio/2026-11-17T01:00:00Z", ErrorMessage: "1 warnings: photos/a shrank while it was read"}
+
+	var serverActs *activities.ServerActivities
+	var agentActs *activities.AgentActivities
+	env.OnActivity(serverActs.PrepareBackupSession, mock.Anything, jobID).Return(session, nil)
+	env.OnActivity(agentActs.ExecuteRemoteBackup, mock.Anything, session).Return(execResult, nil)
 	env.OnActivity(agentActs.ExecuteFilesystemBackup, mock.Anything, mock.Anything).Return(nil, nil)
 	var finalized *temporal.BackupExecutionResult
 	env.OnActivity(serverActs.FinalizeBackupRun, mock.Anything, session, mock.Anything).
