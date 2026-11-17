@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	rclonefs "github.com/rclone/rclone/fs"
 	libfs "github.com/scheiblingco/librc/fs"
 	"github.com/scheiblingco/librc/remote/azure"
 	"github.com/scheiblingco/librc/remote/s3"
@@ -74,6 +75,12 @@ func (s *Session) Open(ctx context.Context, root string) (Source, error) {
 	)
 	switch r.Backend {
 	case spec.BackendS3:
+		// The listing's LastModified as the mtime: rclone otherwise HEADs every
+		// object for its mtime metadata (and uses the current time when that fails,
+		// which would defeat reuse). The backend keeps the config of this context.
+		// ponytail: set through rclone directly, belongs in librc's s3.Config
+		ctx, ci := rclonefs.AddConfig(ctx)
+		ci.UseServerModTime = true
 		f, err = s3.New(ctx, s3.Config{Name: name, Bucket: root, Provider: s3.Provider(r.Provider), EnvAuth: c.EnvAuth,
 			AccessKeyID: c.AccessKeyID, SecretAccessKey: c.SecretAccessKey, Region: r.Region, Endpoint: r.Endpoint, ForcePathStyle: r.PathStyle})
 	case spec.BackendAzure:

@@ -17,6 +17,7 @@ require (
 	github.com/microsoft/go-mssqldb v1.11.2
 	github.com/mxk/go-vss v1.2.1
 	github.com/osshield/gopbs v0.4.0-alpha.1
+	github.com/rclone/rclone v1.74.3
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/scheiblingco/librc v0.1.0
 	github.com/sigstore/sigstore-go v1.3.0
@@ -241,7 +242,6 @@ require (
 	github.com/prometheus/common v0.67.5 // indirect
 	github.com/prometheus/otlptranslator v1.0.0 // indirect
 	github.com/prometheus/procfs v0.20.1 // indirect
-	github.com/rclone/rclone v1.74.3 // indirect
 	github.com/rcrowley/go-metrics v0.0.0-20250401214520-65e299d6c5c9 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rfjakob/eme v1.2.0 // indirect
