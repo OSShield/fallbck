@@ -1,6 +1,8 @@
-// Package remote runs remote jobs on the agent: it reads S3, Azure Blob, SFTP, SMB
-// and WebDAV storage through librc and archives it with gopbs.
-package remote
+// Package backends opens remotes through librc (and so rclone). Only the agent
+// binary imports it: the run code in pkg/agent/remote gets it as a function, which
+// keeps rclone out of the server, whose activities package links the agent's run
+// code.
+package backends
 
 import (
 	"context"
@@ -19,39 +21,29 @@ import (
 	"github.com/scheiblingco/librc/remote/sftp"
 	"github.com/scheiblingco/librc/remote/smb"
 	"github.com/scheiblingco/librc/remote/webdav"
+
+	"github.com/osshield/fallbck/pkg/agent/remote"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 
 	spec "github.com/osshield/fallbck/pkg/remote"
 )
 
-// Source is the read-only view of one root that a run gets: librc's writes
-// (Put, Remove, Purge and the rest) are never reachable from the run
-type Source interface {
-	// Walk lists everything below dir recursively; paths are relative to the root
-	Walk(ctx context.Context, dir string, fn func(libfs.DirEntry) error) error
-	Open(ctx context.Context, path string) (io.ReadCloser, error)
-}
-
-// Credentials is what the run authenticates with: the server's stored credential
-// or the agent profile's (Profile.Credentials). EnvAuth (S3) uses the agent's
-// environment or instance role instead.
-type Credentials struct {
-	spec.Secrets
-	EnvAuth bool
-}
-
 // Session opens the roots of one remote for one run. Close it when the run ends:
 // it removes the SFTP known_hosts file.
 type Session struct {
 	remote     *spec.Remote
-	creds      Credentials
+	creds      remote.Credentials
 	knownHosts string
 }
 
 // NewSession checks the remote and prepares what the backend needs on disk. An SFTP
 // remote without host keys is refused: rclone would accept any server key.
-func NewSession(r *spec.Remote, creds Credentials) (*Session, error) {
+func NewSession(r *spec.Remote, creds remote.Credentials) (remote.Opener, error) {
+	return newSession(r, creds)
+}
+
+func newSession(r *spec.Remote, creds remote.Credentials) (*Session, error) {
 	s := &Session{remote: r, creds: creds}
 	if r.Backend == spec.BackendSFTP {
 		path, err := writeKnownHosts(r)
@@ -66,7 +58,7 @@ func NewSession(r *spec.Remote, creds Credentials) (*Session, error) {
 // Open opens one root of the job: bucket[/prefix] (S3), container[/prefix] (Azure),
 // share[/path] (SMB), or a path on the server (SFTP: absolute, "" is "/"; WebDAV:
 // below the URL)
-func (s *Session) Open(ctx context.Context, root string) (Source, error) {
+func (s *Session) Open(ctx context.Context, root string) (remote.Source, error) {
 	r, c := s.remote, s.creds
 	name := "fallbck-" + r.Backend
 	var (
@@ -118,7 +110,7 @@ func (s *Session) Close() error {
 	return err
 }
 
-// readOnly narrows a librc filesystem to Source
+// readOnly narrows a librc filesystem to remote.Source
 type readOnly struct{ f libfs.Filesystem }
 
 func (r readOnly) Walk(ctx context.Context, dir string, fn func(libfs.DirEntry) error) error {

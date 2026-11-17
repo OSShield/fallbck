@@ -12,7 +12,31 @@ import (
 
 	"github.com/osshield/fallbck/pkg/agent/vtree"
 	"github.com/osshield/fallbck/pkg/naming"
+	spec "github.com/osshield/fallbck/pkg/remote"
 )
+
+// Source is the read-only view of one root that a run gets: librc's writes
+// (Put, Remove, Purge and the rest) are never reachable from the run
+type Source interface {
+	// Walk lists everything below dir recursively; paths are relative to the root
+	Walk(ctx context.Context, dir string, fn func(libfs.DirEntry) error) error
+	Open(ctx context.Context, path string) (io.ReadCloser, error)
+}
+
+// Opener opens the roots of one remote for one run; Close removes what it put on
+// disk (the SFTP known_hosts file)
+type Opener interface {
+	Open(ctx context.Context, root string) (Source, error)
+	Close() error
+}
+
+// Credentials is what the run authenticates with: the server's stored credential
+// or the agent profile's (Profile.Credentials). EnvAuth (S3) uses the agent's
+// environment or instance role instead.
+type Credentials struct {
+	spec.Secrets
+	EnvAuth bool
+}
 
 // DirMtime is the mtime of every directory in a remote snapshot. Object stores have
 // no real directories and listing gives no stable time for the others, so a fixed
@@ -83,7 +107,7 @@ func Walk(ctx context.Context, src Source, prefix string, include, exclude []str
 			if err != nil {
 				return nil, err
 			}
-			return &sizeGuard{rc: rc, left: size, path: p, warn: warn}, nil
+			return &sizeGuard{rc: rc, left: size, path: full(p), warn: warn}, nil
 		}})
 		return nil
 	})

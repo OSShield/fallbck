@@ -174,13 +174,6 @@ func (s *ServerAPI) HandleDeleteRemote(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// RemoteCredentials is what a remote job's run gets: the remote's settings and, when
-// the job names no agent profile, its stored credential
-type RemoteCredentials struct {
-	Remote  *remote.Remote `json:"remote"`
-	Secrets remote.Secrets `json:"secrets"`
-}
-
 // HandleRemoteCredentials hands an agent the remote of the job named by its backup
 // ticket (agent token + ticket, like vcs-credentials). A job that names an agent
 // credential profile gets the settings without the stored credential: the agent's
@@ -205,7 +198,7 @@ func (s *ServerAPI) HandleRemoteCredentials(w http.ResponseWriter, r *http.Reque
 		s.writeError(w, http.StatusNotFound, "the job's remote no longer exists")
 		return
 	}
-	creds := RemoteCredentials{Remote: rem}
+	creds := remote.RunCredentials{Remote: rem}
 	if job.RemoteConfig.Profile == "" {
 		creds.Secrets = rem.Secrets
 	}

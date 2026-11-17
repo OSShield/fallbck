@@ -13,12 +13,14 @@ import (
 	dockerrun "github.com/osshield/fallbck/pkg/agent/dockerbackup"
 	m365run "github.com/osshield/fallbck/pkg/agent/m365"
 	pverun "github.com/osshield/fallbck/pkg/agent/pvebackup"
+	remoterun "github.com/osshield/fallbck/pkg/agent/remote"
 	vcsrun "github.com/osshield/fallbck/pkg/agent/vcs"
 	"github.com/osshield/fallbck/pkg/agent/vss"
 	"github.com/osshield/fallbck/pkg/db"
 	dockerspec "github.com/osshield/fallbck/pkg/dockerbackup"
 	"github.com/osshield/fallbck/pkg/m365"
 	pvespec "github.com/osshield/fallbck/pkg/pvebackup"
+	"github.com/osshield/fallbck/pkg/remote"
 	"github.com/osshield/fallbck/pkg/rundetail"
 	"github.com/osshield/fallbck/pkg/temporal"
 	"github.com/osshield/fallbck/pkg/vcs"
@@ -69,6 +71,14 @@ type AgentActivities struct {
 	VCSCredentials func(ctx context.Context, ticket string) (*vcs.Credentials, error)
 	// VCSStateDir holds the per-job git mirrors of VCS jobs (vcs_state_dir)
 	VCSStateDir string
+	// RemoteCredentials fetches the remote (and its stored credential) of a remote job
+	// with the run's ticket
+	RemoteCredentials func(ctx context.Context, ticket string) (*remote.RunCredentials, error)
+	// RemoteOpen connects to a remote (backends.NewSession). It is a function so this
+	// package, which the server links too, doesn't pull in rclone.
+	RemoteOpen func(r *remote.Remote, c remoterun.Credentials) (remoterun.Opener, error)
+	// RemoteProfile looks up an agent credential profile of a remote job
+	RemoteProfile func(name string) (*remote.Profile, error)
 	// VCSProfile looks up an agent credential profile
 	// of a VCS job in the encrypted store (nil: no store)
 	VCSProfile func(name string) (*vcs.Profile, error)
@@ -417,6 +427,75 @@ func (a *AgentActivities) ExecuteVCSBackup(ctx context.Context, session *tempora
 	if err != nil {
 		if dbrun.IsPrecheck(err) {
 			return precheckFailed("VCS backup", err, pt, a.LogTail)
+		}
+		if isTransportConfigErr(err) {
+			return nil, err
+		}
+		return failed(result, err)
+	}
+	return result, nil
+}
+
+// ExecuteRemoteBackup backs up the roots of a remote job (S3, Azure Blob, SFTP, SMB,
+// WebDAV) into one snapshot in the job's group, with the run manifest. Only objects
+// that changed since the previous snapshot are downloaded.
+func (a *AgentActivities) ExecuteRemoteBackup(ctx context.Context, session *temporal.BackupSessionInfo) (*temporal.BackupExecutionResult, error) {
+	info := activity.GetInfo(ctx)
+	if session.JobType != db.JobTypeRemote || session.RemoteConfig == nil {
+		return nil, sdktemporal.NewNonRetryableApplicationError("session is not a remote backup", ErrTypeDBPrecheckFailed, nil)
+	}
+	session = sessionForAttempt(ctx, session, a.RefreshTicket)
+	slog.Info("Agent activity started: ExecuteRemoteBackup", "activity_id", info.ActivityID, "attempt", info.Attempt,
+		"job_id", session.JobID, "group", session.BackupID, "datastore", session.Datastore, "direct_pbs", session.DirectPBS)
+	if a.RemoteCredentials == nil || a.RemoteOpen == nil {
+		return nil, errors.New("this agent has no remote credential fetcher or backends (agent too old?)")
+	}
+
+	rt := startRunTracking(ctx, session.Ticket, session.BackupRunID, a.ReportProgress)
+	defer rt.stop()
+	pt, reportPh := rt.pt, rt.report
+
+	failed := func(result *temporal.BackupExecutionResult, err error) (*temporal.BackupExecutionResult, error) {
+		slog.Error("Remote backup failed", "error", err, "phase", pt.Current())
+		if result == nil {
+			result = &temporal.BackupExecutionResult{}
+		}
+		result.Status, result.ErrorMessage = db.RunStatusFailed, err.Error()
+		return result, backupFailure(ctx, err, pt, a.LogTail)
+	}
+
+	pt.Set("fetching the remote")
+	reportPh()
+	creds, err := a.RemoteCredentials(ctx, session.Ticket)
+	if err != nil {
+		return failed(nil, fmt.Errorf("fetching the remote: %w", err))
+	}
+
+	upload := func(ctx context.Context, tree *scan.Node, blobs []gopbs.Blob) (*temporal.BackupExecutionResult, error) {
+		us := *session
+		us.BackupPaths, us.ExcludePaths = nil, nil
+		tr, err := openTransport(ctx, &us, a.Tunnel, a.Credentials, a.EncryptionKey, pt)
+		if err != nil {
+			return nil, err
+		}
+		defer tr.close()
+		return backup.Run(ctx, tr.options(backup.Options{
+			Session: &us, Workers: a.Workers, Tree: tree, ArchiveName: remote.ArchiveName, Blobs: blobs,
+			CacheDir: a.groupCacheDir(&us),
+			OnPhase:  func(p string) { pt.Set(p); reportPh() },
+		}))
+	}
+	result, err := remoterun.Run(ctx, remoterun.RunOptions{
+		Session: session, Spec: session.RemoteConfig, Credentials: *creds,
+		Profile:  a.RemoteProfile,
+		Open:     a.RemoteOpen,
+		Upload:   upload,
+		Progress: func(p string) { pt.Set(p); reportPh() },
+		Hostname: a.Hostname, Version: a.Version,
+	})
+	if err != nil {
+		if dbrun.IsPrecheck(err) {
+			return precheckFailed("remote backup", err, pt, a.LogTail)
 		}
 		if isTransportConfigErr(err) {
 			return nil, err

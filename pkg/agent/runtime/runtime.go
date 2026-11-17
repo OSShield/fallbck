@@ -33,6 +33,7 @@ import (
 	"github.com/osshield/fallbck/pkg/inventory"
 	"github.com/osshield/fallbck/pkg/m365"
 	"github.com/osshield/fallbck/pkg/pvebackup"
+	"github.com/osshield/fallbck/pkg/remote"
 	"github.com/osshield/fallbck/pkg/rundetail"
 	"github.com/osshield/fallbck/pkg/vcs"
 	"go.temporal.io/sdk/client"
@@ -447,6 +448,23 @@ func VCSCredentialsFetcher(cfg *config.AgentConfig, store *TokenStore) func(ctx 
 	}
 }
 
+// RemoteCredentialsFetcher retrieves the remote of a remote job (GET
+// /api/v1/agents/remote-credentials with the run's ticket); a job that uses an agent
+// credential profile gets it without the stored credential
+func RemoteCredentialsFetcher(cfg *config.AgentConfig, store *TokenStore) func(ctx context.Context, ticket string) (*remote.RunCredentials, error) {
+	httpClient := ServerHTTPClient(cfg)
+	return func(ctx context.Context, ticket string) (*remote.RunCredentials, error) {
+		var creds remote.RunCredentials
+		if err := TicketGet(ctx, httpClient, cfg, store, "/api/v1/agents/remote-credentials", ticket, &creds); err != nil {
+			return nil, err
+		}
+		if creds.Remote == nil {
+			return nil, errors.New("the server sent no remote")
+		}
+		return &creds, nil
+	}
+}
+
 // SubTicketFetcher mints the ticket of one unit snapshot of a run (POST
 // /api/v1/agents/sub-ticket); the group must extend the run's own group
 func SubTicketFetcher(cfg *config.AgentConfig, store *TokenStore) func(ctx context.Context, sessionTicket, group string) (string, int64, error) {
@@ -538,6 +556,10 @@ func StartHeartbeat(ctx context.Context, cfg *config.AgentConfig, store *TokenSt
 		req.GitVersion, req.GitLFS = a.git()
 		if a.Git != nil {
 			req.VCSProviders = vcs.AgentProviders
+		}
+		if a.Type == config.AgentTypeFilesystem {
+			// every backend is built in (librc, no cgo)
+			req.RemoteBackends = remote.Backends
 		}
 		if selfUpdate {
 			req.UpdateError = a.update.lastErr

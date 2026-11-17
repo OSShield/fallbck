@@ -18,6 +18,7 @@ import (
 	"github.com/osshield/fallbck/pkg/config"
 	"github.com/osshield/fallbck/pkg/dockerbackup"
 	"github.com/osshield/fallbck/pkg/pvebackup"
+	"github.com/osshield/fallbck/pkg/remote"
 	"github.com/osshield/fallbck/pkg/vcs"
 )
 
@@ -106,6 +107,7 @@ func Enroll(ctx context.Context, o Options) (*config.AgentConfig, error) {
 			reqBody.GitVersion, reqBody.GitLFS = o.Git()
 			reqBody.VCSProviders = vcs.AgentProviders
 		}
+		reqBody.RemoteBackends = remote.Backends
 	}
 
 	jsonBytes, err := json.Marshal(reqBody)

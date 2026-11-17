@@ -1,4 +1,4 @@
-package remote
+package backends
 
 import (
 	"context"
@@ -13,6 +13,7 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 
+	"github.com/osshield/fallbck/pkg/agent/remote"
 	spec "github.com/osshield/fallbck/pkg/remote"
 )
 
@@ -30,7 +31,7 @@ func hostKey(t *testing.T) ssh.PublicKey {
 }
 
 func TestSFTPWithoutHostKeysIsRefused(t *testing.T) {
-	_, err := NewSession(&spec.Remote{Backend: spec.BackendSFTP, Host: "nas", User: "u"}, Credentials{})
+	_, err := newSession(&spec.Remote{Backend: spec.BackendSFTP, Host: "nas", User: "u"}, remote.Credentials{})
 	if err == nil || !strings.Contains(err.Error(), "no host keys") {
 		t.Fatalf("got %v", err)
 	}
@@ -42,7 +43,7 @@ func TestSFTPKnownHostsFile(t *testing.T) {
 	key, other := hostKey(t), hostKey(t)
 	r := &spec.Remote{Backend: spec.BackendSFTP, Host: "nas.example.com", Port: 2222, User: "u",
 		KnownHosts: []string{key.Type() + " " + base64.StdEncoding.EncodeToString(key.Marshal())}}
-	s, err := NewSession(r, Credentials{})
+	s, err := newSession(r, remote.Credentials{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +82,7 @@ func TestSFTPKnownHostsFile(t *testing.T) {
 
 // Other backends write nothing to disk
 func TestNonSFTPSessionHasNoFiles(t *testing.T) {
-	s, err := NewSession(&spec.Remote{Backend: spec.BackendS3, Endpoint: "http://minio:9000"}, Credentials{})
+	s, err := newSession(&spec.Remote{Backend: spec.BackendS3, Endpoint: "http://minio:9000"}, remote.Credentials{})
 	if err != nil || s.knownHosts != "" {
 		t.Fatalf("%v %q", err, s.knownHosts)
 	}

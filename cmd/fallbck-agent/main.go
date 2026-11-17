@@ -11,6 +11,7 @@ import (
 
 	dbrun "github.com/osshield/fallbck/pkg/agent/dbbackup"
 	"github.com/osshield/fallbck/pkg/agent/enrollment"
+	"github.com/osshield/fallbck/pkg/agent/remote/backends"
 	"github.com/osshield/fallbck/pkg/agent/runtime"
 	vcsrun "github.com/osshield/fallbck/pkg/agent/vcs"
 	"github.com/osshield/fallbck/pkg/agent/vss"
@@ -152,6 +153,8 @@ func main() {
 			acts.VCSCredentials = runtime.VCSCredentialsFetcher(cfg, store)
 			acts.VCSStateDir = cfg.EffVCSStateDir()
 			acts.VCSProfile = runtime.VCSProfileLookup(cfg)
+			acts.RemoteCredentials = runtime.RemoteCredentialsFetcher(cfg, store)
+			acts.RemoteOpen = backends.NewSession
 			if vss.Supported() && cfg.UseVSS() {
 				acts.VSSDir = filepath.Join(cfg.DataDir, "vss")
 				vss.Sweep(acts.VSSDir)

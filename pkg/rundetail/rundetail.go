@@ -14,6 +14,7 @@ const (
 	TypeDocker     = "docker"
 	TypeM365       = "m365"
 	TypeVCS        = "vcs"
+	TypeRemote     = "remote"
 )
 
 // ArchiveStat is one pxar/catalog/payload archive uploaded in a snapshot
