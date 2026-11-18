@@ -21,6 +21,7 @@ import (
 	"github.com/osshield/fallbck/pkg/config"
 	"github.com/osshield/fallbck/pkg/db"
 	"github.com/osshield/fallbck/pkg/m365"
+	"github.com/osshield/fallbck/pkg/remote"
 	temporalui "github.com/osshield/fallbck/pkg/temporal/ui"
 	"github.com/osshield/fallbck/pkg/vcs"
 )
@@ -107,6 +108,7 @@ func (u *UIHandler) RegisterRoutes(r chi.Router) {
 		r.With(need(auth.PermTargetsRead)).Get("/targets", u.HandleTargets)
 		r.With(need(auth.PermTenantsRead)).Get("/tenants", u.HandleTenants)
 		r.With(need(auth.PermConnectionsRead)).Get("/vcs", u.HandleConnections)
+		r.With(need(auth.PermRemotesRead)).Get("/remotes", u.HandleRemotes)
 		r.With(need(auth.PermJobsRead)).Get("/jobs", u.HandleJobs)
 		r.With(need(auth.PermJobsRead)).Get("/kubernetes", u.HandleKubernetes)
 		r.With(need(auth.PermJobsRead)).Get("/runs", u.HandleRuns)
@@ -609,7 +611,16 @@ func (u *UIHandler) HandleAgentDetail(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	alerts := agenthealth.Evaluate(agenthealth.Input{Agent: agent, Jobs: jobs, LastRuns: last, ConnectionURLs: connectionURLs, ConnectionProviders: connectionProviders, Tenants: tenants, ServerVersion: u.deps.Version, Now: now})
+	// and remote jobs against their remote's backend and, with a profile, its identity
+	remotes := map[uuid.UUID]*remote.Remote{}
+	for _, j := range jobs {
+		if j.IsRemote() && j.RemoteConfig != nil && remotes[j.RemoteConfig.RemoteID] == nil {
+			if rem, err := u.DB.GetRemoteByID(ctx, j.RemoteConfig.RemoteID, db.Unscoped); err == nil {
+				remotes[rem.ID] = rem
+			}
+		}
+	}
+	alerts := agenthealth.Evaluate(agenthealth.Input{Agent: agent, Jobs: jobs, LastRuns: last, ConnectionURLs: connectionURLs, ConnectionProviders: connectionProviders, Tenants: tenants, Remotes: remotes, ServerVersion: u.deps.Version, Now: now})
 
 	behind, bok := agenthealth.VersionBehind(agent.Version, u.deps.Version)
 	u.renderPage(w, r, "agent_detail.html", map[string]interface{}{
@@ -693,6 +704,20 @@ func (u *UIHandler) HandleConnections(w http.ResponseWriter, r *http.Request) {
 		"Title":       "Git Connections",
 		"ActiveNav":   "vcs",
 		"Connections": connections,
+	})
+}
+
+// HandleRemotes lists the storage remotes (S3, Azure Blob, SFTP, SMB, WebDAV)
+// remote jobs back up
+func (u *UIHandler) HandleRemotes(w http.ResponseWriter, r *http.Request) {
+	var remotes []*remote.Remote
+	if u.DB != nil {
+		remotes, _ = u.DB.ListRemotes(r.Context(), scope(r, auth.PermRemotesRead))
+	}
+	u.renderPage(w, r, "remotes.html", map[string]interface{}{
+		"Title":     "Remotes",
+		"ActiveNav": "remotes",
+		"Remotes":   remotes,
 	})
 }
 

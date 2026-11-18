@@ -11,6 +11,7 @@ import (
 	"github.com/osshield/fallbck/pkg/dbbackup"
 	"github.com/osshield/fallbck/pkg/inventory"
 	"github.com/osshield/fallbck/pkg/m365"
+	"github.com/osshield/fallbck/pkg/remote"
 	"github.com/osshield/fallbck/pkg/vcs"
 )
 
@@ -218,6 +219,39 @@ func TestM365ProfileAlerts(t *testing.T) {
 	for _, al := range got {
 		if strings.Contains(al.Title, "missing") && !strings.Contains(al.Detail, "--tenant-id "+tenantGUID) {
 			t.Errorf("the hint should name the tenant's ids: %s", al.Detail)
+		}
+	}
+}
+
+func TestRemoteAlerts(t *testing.T) {
+	a := agentWith(t, &inventory.Summary{RemoteProfiles: []remote.ProfileSummary{
+		{Name: "minio", Backend: remote.BackendS3, Endpoint: "http://minio:9000"},
+		{Name: "elsewhere", Backend: remote.BackendS3, Endpoint: "http://other:9000"},
+	}})
+	a.RemoteBackends = []string{remote.BackendS3}
+	s3 := &remote.Remote{ID: uuid.New(), Name: "minio", Backend: remote.BackendS3, Endpoint: "http://minio:9000"}
+	smb := &remote.Remote{ID: uuid.New(), Name: "nas", Backend: remote.BackendSMB, Host: "nas"}
+	job := func(name string, r *remote.Remote, profile string) *db.BackupJob {
+		return &db.BackupJob{ID: uuid.New(), AgentID: a.ID, Name: name, Enabled: true, JobType: db.JobTypeRemote,
+			RemoteConfig: &remote.Spec{RemoteID: r.ID, Profile: profile}}
+	}
+	got := Evaluate(Input{Agent: a, Jobs: []*db.BackupJob{
+		job("ok", s3, "minio"), job("server-secret", s3, ""), job("missing", s3, "nope"), job("mismatch", s3, "elsewhere"), job("no-backend", smb, ""),
+	}, Remotes: map[uuid.UUID]*remote.Remote{s3.ID: s3, smb.ID: smb}, ServerVersion: a.Version, Now: time.Now()})
+	s := titles(got)
+	for _, name := range []string{"missing", "mismatch", "no-backend"} {
+		if !strings.Contains(s, `danger:Job "`+name+`" cannot run on this agent`) {
+			t.Errorf("no alert for %s in:\n%s", name, s)
+		}
+	}
+	for _, name := range []string{`"ok"`, `"server-secret"`} {
+		if strings.Contains(s, name) {
+			t.Errorf("unexpected alert for %s in:\n%s", name, s)
+		}
+	}
+	for _, al := range got {
+		if strings.Contains(al.Title, "missing") && !strings.Contains(al.Detail, "--backend s3 --endpoint http://minio:9000") {
+			t.Errorf("the hint should name the remote: %s", al.Detail)
 		}
 	}
 }

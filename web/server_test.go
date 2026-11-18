@@ -56,6 +56,8 @@ func TestUIRenderRoutes(t *testing.T) {
 		{"/onboarding", http.StatusOK, `id="job-vcs-fields"`},
 		{"/vcs", http.StatusOK, "Git Connections"},
 		{"/vcs", http.StatusOK, `id="connection-form"`},
+		{"/remotes", http.StatusOK, `id="remote-form"`},
+		{"/remotes", http.StatusOK, `name="remote_known_hosts"`},
 		{"/jobs", http.StatusOK, `id="job-vcs-fields"`},
 		{"/jobs", http.StatusOK, `<option value="vcs">Git repositories (GitLab groups`},
 		{"/jobs", http.StatusOK, `href="/onboarding"`},

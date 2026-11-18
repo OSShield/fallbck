@@ -2033,6 +2033,167 @@ async function testTenant(id, btn) {
 }
 
 
+// ===== Remotes ================================================================
+// The remote fields live in the Remotes page modal (form#remote-form). Elements
+// with data-backends show for those backends only.
+
+function remoteForm() { return document.getElementById('remote-form'); }
+function remoteField(form, name) { return form.querySelector(`[name="remote_${name}"]`); }
+
+function updateRemoteFields(form) {
+  const backend = remoteField(form, 'backend').value;
+  form.querySelectorAll('[data-backends]').forEach(el => { el.hidden = !el.dataset.backends.split(' ').includes(backend); });
+  const agent = remoteField(form, 'auth_method').value === 'agent';
+  form.querySelector('.remote-secret-opts').hidden = agent;
+  form.querySelector('.remote-agent-opts').hidden = !agent;
+}
+
+function buildRemotePayload(form) {
+  const v = (name) => (remoteField(form, name).value || '').trim();
+  const backend = v('backend');
+  // only the backend's own fields: the server clears the rest anyway
+  const r = { name: v('name'), backend, auth_method: v('auth_method'), labels: formLabels(form, 'remote_labels') };
+  const secrets = {};
+  const take = (names, into) => names.forEach(n => { const x = v(n); if (x) into[n] = x; });
+  switch (backend) {
+    case 's3':
+      take(['provider', 'region', 'endpoint'], r);
+      r.path_style = remoteField(form, 'path_style').checked;
+      take(['access_key_id', 'secret_access_key'], secrets);
+      break;
+    case 'azureblob':
+      take(['account', 'endpoint'], r);
+      take(['account_key', 'sas_url'], secrets);
+      break;
+    case 'sftp':
+    case 'smb':
+      take(['host', 'user'], r);
+      if (v('port')) r.port = Number(v('port'));
+      if (backend === 'smb') take(['domain'], r);
+      else r.known_hosts = v('known_hosts').split('\n').map(l => l.trim()).filter(Boolean);
+      take(backend === 'sftp' ? ['password', 'key_pem'] : ['password'], secrets);
+      break;
+    case 'webdav':
+      take(['url', 'vendor', 'user'], r);
+      take(['password', 'bearer_token'], secrets);
+      break;
+  }
+  // no credential fields filled in keeps the stored one on update
+  if (r.auth_method !== 'agent' && Object.keys(secrets).length) r.secrets = secrets;
+  return r;
+}
+
+function resetRemoteFields(form) {
+  form.reset();
+  form.dataset.remoteId = '';
+  form.querySelectorAll('.remote-secret').forEach(el => { el.placeholder = el.tagName === 'TEXTAREA' ? '-----BEGIN OPENSSH PRIVATE KEY-----' : ''; });
+  updateRemoteFields(form);
+}
+
+function loadRemoteIntoFields(form, r) {
+  resetRemoteFields(form);
+  for (const k of ['name', 'backend', 'auth_method', 'provider', 'region', 'endpoint', 'account', 'host', 'user', 'domain', 'url', 'vendor']) {
+    if (r[k] !== undefined && r[k] !== null) remoteField(form, k).value = r[k];
+  }
+  if (r.port) remoteField(form, 'port').value = r.port;
+  remoteField(form, 'path_style').checked = !!r.path_style;
+  remoteField(form, 'known_hosts').value = (r.known_hosts || []).join('\n');
+  setFormLabels(form, r.labels, 'remote_labels');
+  if (r.has_secret) form.querySelectorAll('.remote-secret').forEach(el => { el.placeholder = 'leave blank to keep the stored credential'; });
+  updateRemoteFields(form);
+}
+
+function newRemote() {
+  const form = remoteForm();
+  resetRemoteFields(form);
+  document.getElementById('remote-modal-title').innerText = 'Add Remote';
+  openModal('modal-remote');
+}
+
+async function getRemote(id) {
+  const resp = await apiFetch(`/api/v1/remotes/${id}`);
+  if (!resp.ok) throw new Error('Failed to load remote');
+  return resp.json();
+}
+
+async function editRemote(id) {
+  try {
+    const form = remoteForm();
+    loadRemoteIntoFields(form, await getRemote(id));
+    form.dataset.remoteId = id;
+    document.getElementById('remote-modal-title').innerText = 'Edit Remote';
+    openModal('modal-remote');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function submitRemoteForm(e) {
+  e.preventDefault();
+  const form = e.target;
+  const id = form.dataset.remoteId || '';
+  try {
+    const resp = await apiFetch(id ? `/api/v1/remotes/${id}` : '/api/v1/remotes', {
+      method: id ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(buildRemotePayload(form))
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.error || 'Failed to save remote');
+    showToast(`Remote ${data.name} saved`, 'success');
+    closeModal('modal-remote');
+    setTimeout(() => window.location.reload(), 600);
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+// remoteTestCommand is the agent command that checks a remote: the server never
+// connects to one (see testRemote)
+function remoteTestCommand(r) {
+  const q = (s) => /^[A-Za-z0-9_.:\/@=+-]+$/.test(s) ? s : `'${String(s).replace(/'/g, `'\\''`)}'`;
+  const name = r.auth_method === 'agent' ? '<profile>' : 'test';
+  let endpoint, root, cred = '--ask-secret';
+  const test = [];
+  switch (r.backend) {
+    case 's3':
+      endpoint = r.endpoint || 'aws'; root = '<bucket>';
+      cred = '--access-key-id <access key id> --ask-secret';
+      if (r.region) test.push(`--region ${q(r.region)}`);
+      break;
+    case 'azureblob':
+      endpoint = r.endpoint || r.account; root = '<container>';
+      if (r.endpoint) test.push(`--user ${q(r.account)}`);
+      break;
+    case 'sftp':
+    case 'smb':
+      endpoint = r.host + (r.port ? ':' + r.port : ''); root = r.backend === 'smb' ? '<share>' : '<path>';
+      if (r.user) test.push(`--user ${q(r.user)}`);
+      if (r.domain) test.push(`--domain ${q(r.domain)}`);
+      if (r.known_hosts && r.known_hosts.length) test.push(`--host-key ${q(r.known_hosts[0])}`);
+      break;
+    case 'webdav':
+      endpoint = r.url; root = '<path>';
+      if (r.user) test.push(`--user ${q(r.user)}`);
+      break;
+  }
+  const lines = [];
+  if (r.auth_method !== 'agent') lines.push(`fallbck-agent remote profile create --name ${name} --backend ${r.backend} --endpoint ${q(endpoint)} ${cred}`);
+  lines.push(`fallbck-agent remote profile test --name ${name} --root ${root}${test.length ? ' ' + test.join(' ') : ''}`);
+  return lines.join('\n');
+}
+
+async function testRemote(id) {
+  try {
+    const r = await getRemote(id);
+    document.getElementById('remote-test-cmd').textContent = remoteTestCommand(r);
+    document.querySelector('#modal-remote-test .remote-test-stored').hidden = r.auth_method === 'agent';
+    openModal('modal-remote-test');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
 // ===== Git (VCS) connections ===================================================
 // The connection fields live in the Git Connections page modal (class
 // connection-fields).
