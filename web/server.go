@@ -650,11 +650,13 @@ func (u *UIHandler) HandleOnboarding(w http.ResponseWriter, r *http.Request) {
 	var targets []*db.BackupTarget
 	var tenants []*m365.Tenant
 	var connections []*vcs.Connection
+	var remotes []*remote.Remote
 	if u.DB != nil {
 		agents, _ = u.DB.ListAgents(ctx, scope(r, auth.PermAgentsRead))
 		targets, _ = u.DB.ListTargets(ctx, scope(r, auth.PermTargetsRead))
 		tenants, _ = u.DB.ListTenants(ctx, scope(r, auth.PermTenantsRead))
 		connections, _ = u.DB.ListConnections(ctx, scope(r, auth.PermConnectionsRead))
+		remotes, _ = u.DB.ListRemotes(ctx, scope(r, auth.PermRemotesRead))
 	}
 	u.renderPage(w, r, "onboarding.html", map[string]interface{}{
 		"Title":       "Set up a new server",
@@ -664,6 +666,7 @@ func (u *UIHandler) HandleOnboarding(w http.ResponseWriter, r *http.Request) {
 		"Targets":     targets,
 		"Tenants":     tenants,
 		"Connections": connections,
+		"Remotes":     remotes,
 	})
 }
 
@@ -728,6 +731,7 @@ func (u *UIHandler) HandleJobs(w http.ResponseWriter, r *http.Request) {
 	var targets []*db.BackupTarget
 	var tenants []*m365.Tenant
 	var connections []*vcs.Connection
+	var remotes []*remote.Remote
 
 	if u.DB != nil {
 		jobs, _ = u.DB.ListJobs(ctx, scope(r, auth.PermJobsRead))
@@ -735,6 +739,11 @@ func (u *UIHandler) HandleJobs(w http.ResponseWriter, r *http.Request) {
 		targets, _ = u.DB.ListTargets(ctx, scope(r, auth.PermTargetsRead))
 		tenants, _ = u.DB.ListTenants(ctx, scope(r, auth.PermTenantsRead))
 		connections, _ = u.DB.ListConnections(ctx, scope(r, auth.PermConnectionsRead))
+		remotes, _ = u.DB.ListRemotes(ctx, scope(r, auth.PermRemotesRead))
+	}
+	remoteNames := map[uuid.UUID]string{}
+	for _, rem := range remotes {
+		remoteNames[rem.ID] = rem.Name
 	}
 	// Every job type is listed here (filtered client-side); the newest run per job feeds
 	// the last-run column and filter
@@ -756,6 +765,8 @@ func (u *UIHandler) HandleJobs(w http.ResponseWriter, r *http.Request) {
 		"Targets":       targets,
 		"Tenants":       tenants,
 		"Connections":   connections,
+		"Remotes":       remotes,
+		"RemoteNames":   remoteNames,
 	})
 }
 

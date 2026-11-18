@@ -634,20 +634,23 @@ function setJobTypeIn(form, type) {
   const isDocker = type === 'docker';
   const isM365 = type === 'm365';
   const isVCS = type === 'vcs';
+  const isRemote = type === 'remote';
   const isK8s = type === 'kubernetes'; // cluster jobs: only the onboarding form carries that fieldset
   const show = (id, on) => {
     const el = form.querySelector('#' + id);
     if (el) { el.hidden = !on; el.disabled = !on; }
   };
-  show('job-fs-fields', !isDB && !isPVE && !isDocker && !isK8s && !isM365 && !isVCS);
+  show('job-fs-fields', !isDB && !isPVE && !isDocker && !isK8s && !isM365 && !isVCS && !isRemote);
   show('job-db-fields', isDB);
   show('job-pve-fields', isPVE);
   show('job-docker-fields', isDocker);
   show('job-m365-fields', isM365);
   show('job-vcs-fields', isVCS);
+  show('job-remote-fields', isRemote);
   show('job-k8s-fields', isK8s);
-  show('job-backup-group', !isDB && !isM365 && !isVCS); // those carry the group in their own config
+  show('job-backup-group', !isDB && !isM365 && !isVCS && !isRemote); // those carry the group in their own config
   if (isVCS) updateVCSProvider(form);
+  if (isRemote) updateRemoteJob(form);
   filterJobAgents(form, type);
   if (form.elements['db_engine']) setDBEngine(form.elements['db_engine'].value, form);
   else updateDBTarget(form);
@@ -675,11 +678,75 @@ function filterJobAgents(form, type) {
     if (type === 'pve') match = agentType === 'filesystem' && opt.dataset.pve === 'true';
     if (type === 'docker') match = agentType === 'filesystem' && opt.dataset.docker === 'true';
     if (type === 'm365') match = agentType === 'filesystem'; // any agent with internet access
+    if (type === 'remote') match = agentType === 'filesystem' && agentRunsRemote((opt.dataset.remoteBackends || '').split(',').filter(Boolean), remoteJobBackend(form));
     if (type === 'vcs') match = agentType === 'filesystem' && agentRunsVCS(opt.dataset.vcs === 'true', opt.dataset.vcsProviders, vcsProvider(form));
     opt.hidden = !match; opt.disabled = !match;
     if (match && opt.selected) keep = true;
   }
   if (!keep) sel.value = '';
+}
+
+// ---- Remote storage jobs ----
+
+// remoteJobRemote is the selected remote's option in a job form (null = none)
+function remoteJobRemote(form) {
+  const sel = form.elements['remote_id'];
+  return sel && sel.value ? sel.selectedOptions[0] : null;
+}
+function remoteJobBackend(form) { const o = remoteJobRemote(form); return o ? o.dataset.backend : ''; }
+
+// agentRunsRemote mirrors db.Agent.CanRunRemoteBackend ('' = any backend)
+function agentRunsRemote(backends, backend) {
+  return backends.length > 0 && (!backend || backends.includes(backend));
+}
+
+const REMOTE_ROOT_HINTS = {
+  s3: ['Buckets (one per line)', 'Bucket, optionally with a prefix: <code>bucket</code> or <code>bucket/prefix</code>.'],
+  azureblob: ['Containers (one per line)', 'Container, optionally with a prefix: <code>container</code> or <code>container/prefix</code>.'],
+  smb: ['Shares (one per line)', 'Share, optionally with a path: <code>share</code> or <code>share/dir</code>.'],
+  sftp: ['Paths (one per line, optional)', 'Absolute paths on the server, e.g. <code>srv/data</code> for /srv/data. Empty backs up from /.'],
+  webdav: ['Paths (one per line, optional)', 'Paths below the remote\'s URL. Empty backs up everything below it.'],
+};
+
+// updateRemoteJob fits the roots and profile fields to the selected remote and
+// limits the agents to those that can read its backend
+function updateRemoteJob(form) {
+  const opt = remoteJobRemote(form);
+  const box = form.querySelector('#job-remote-fields');
+  if (!box) return;
+  const [label, hint] = REMOTE_ROOT_HINTS[opt ? opt.dataset.backend : 's3'];
+  box.querySelector('.remote-roots-label').innerText = label;
+  box.querySelector('.remote-roots-hint').innerHTML = hint;
+  const agentAuth = opt && opt.dataset.auth === 'agent';
+  box.querySelector('.remote-profile-label').innerText = 'Agent credential profile' + (agentAuth ? ' (required: the remote keeps its credential on the agents)' : ' (optional)');
+  form.elements['remote_profile'].required = !!agentAuth;
+  box.querySelector('.remote-profile-cmd').innerText = opt ? `fallbck-agent remote profile create --name <name> --backend ${opt.dataset.backend} --endpoint ${opt.dataset.identity} ...` : 'fallbck-agent remote profile create';
+  const typeEl = form.elements['job_type'];
+  if ((typeEl ? typeEl.value : form.dataset.jobType) === 'remote') filterJobAgents(form, 'remote');
+  if (typeof obRemoteAgentNote === 'function') obRemoteAgentNote(form);
+}
+
+function loadRemoteIntoForm(form, rc) {
+  form.elements['remote_id'].value = rc.remote_id || '';
+  form.elements['remote_roots'].value = (rc.roots || []).join('\n');
+  form.elements['remote_include'].value = (rc.include || []).join('\n');
+  form.elements['remote_exclude'].value = (rc.exclude || []).join('\n');
+  form.elements['remote_split'].value = rc.split || 'single';
+  form.elements['remote_backup_id'].value = rc.backup_id || '';
+  form.elements['remote_profile'].value = rc.profile || '';
+  updateRemoteJob(form);
+}
+
+function buildRemoteConfig(form, fd) {
+  return {
+    remote_id: fd.get('remote_id') || '',
+    roots: formLines(fd, 'remote_roots'),
+    include: formLines(fd, 'remote_include'),
+    exclude: formLines(fd, 'remote_exclude'),
+    split: fd.get('remote_split') || 'single',
+    backup_id: (fd.get('remote_backup_id') || '').trim(),
+    profile: (fd.get('remote_profile') || '').trim()
+  };
 }
 
 // ---- Git repository (VCS) jobs ----
@@ -914,6 +981,7 @@ function loadJobIntoForm(form, job) {
     form.elements['m365_profile'].value = mc.profile || '';
   }
   if (jobType === 'vcs') loadVCSIntoForm(form, job.vcs_config || {});
+  if (jobType === 'remote') loadRemoteIntoForm(form, job.remote_config || {});
   if (jobType === 'database' && job.db_config) {
     const dc = job.db_config;
     form.elements['db_engine'].value = dc.engine || 'postgres';
@@ -1034,6 +1102,12 @@ function buildJobPayload(form) {
     payload.backup_paths = [];
     payload.exclude_paths = [];
     payload.vcs_config = buildVCSConfig(form, fd);
+  }
+
+  if (payload.job_type === 'remote') {
+    payload.backup_paths = [];
+    payload.exclude_paths = [];
+    payload.remote_config = buildRemoteConfig(form, fd);
   }
 
   if (payload.job_type === 'database') {
@@ -1544,7 +1618,7 @@ function renderRun(run) {
   }
   const d = run.details || {};
   const type = d.type || 'filesystem';
-  const typeLabel = { filesystem: 'Filesystem', database: 'Database', kubernetes: 'Kubernetes', pve: 'Proxmox VE host', docker: 'Docker host', m365: 'Microsoft 365', vcs: 'Git repositories' }[type] || type;
+  const typeLabel = { filesystem: 'Filesystem', database: 'Database', kubernetes: 'Kubernetes', pve: 'Proxmox VE host', docker: 'Docker host', m365: 'Microsoft 365', vcs: 'Git repositories', remote: 'Remote storage' }[type] || type;
 
   const active = RUN_ACTIVE.includes(run.status);
   let html = '';
@@ -1573,7 +1647,7 @@ function renderRun(run) {
   // Live progress while running; after a failed or cancelled run, the last reported
   // per-item statuses are what remains when the agent never produced a detail blob
   const m = d.manifest || {};
-  const hasItemDetail = (m.volumes && m.volumes.length) || (m.databases && m.databases.length) || (m.units && m.units.length) || (m.repositories && m.repositories.length) || d.archives;
+  const hasItemDetail = (m.volumes && m.volumes.length) || (m.databases && m.databases.length) || (m.units && m.units.length) || (m.repositories && m.repositories.length) || (m.roots && m.roots.length) || d.archives;
   const items = run.progress && run.progress.items ? Object.keys(run.progress.items).length : 0;
   if (active && run.progress) html += renderProgress(run.progress);
   else if (!active && items && !hasItemDetail) html += renderProgress(run.progress, true);
@@ -1584,6 +1658,7 @@ function renderRun(run) {
   else if (type === 'docker') html += renderDockerDetail(d.manifest || {});
   else if (type === 'm365') html += renderM365Detail(d.manifest || {});
   else if (type === 'vcs') html += renderVCSDetail(d.manifest || {});
+  else if (type === 'remote') html += renderRemoteDetail(d.manifest || {});
   else if (d.archives || d.paths) html += renderFsDetail(d);
 
   if (run.log_tail) html += rdCard('Agent log (captured at the run)', rdPre(run.log_tail));
@@ -1797,6 +1872,40 @@ function renderM365Detail(m) {
 
 // Git repositories: the source, one row per repository, warnings and the restore
 // notes
+// Remote storage: the remote, one row per root (with its own snapshot when the job
+// splits per root), warnings
+function renderRemoteDetail(m) {
+  let html = '';
+  const r = m.remote || {}, t = m.totals || {}, spec = m.spec || {};
+  const roots = m.roots || [];
+  const perRoot = spec.split === 'per_root';
+  const rows = [
+    ['Remote', `${rdEsc(r.name || '-')} <span style="color:var(--text-muted);font-size:12px;">${rdEsc(r.backend || '')}</span>`],
+    ['Endpoint', rdMono(r.identity || '-')],
+    ['Credential', r.profile ? `agent credential profile ${rdMono(r.profile)}` : "the remote's"],
+    ['Roots', `${t.roots || 0}` + (t.failed ? ` (${t.failed} failed)` : '')],
+    ['Objects', `${t.objects || 0} (${rdBytes(t.bytes)})`],
+    ['Snapshots', perRoot ? 'one per root' : 'one, a directory per root'],
+    ['Group', rdMono((m.job || {}).group || '-')],
+  ];
+  if ((spec.include || []).length) rows.push(['Include', rdChips(spec.include)]);
+  if ((spec.exclude || []).length) rows.push(['Exclude', rdChips(spec.exclude)]);
+  html += rdCard('Remote storage', rdKV(rows));
+  if (roots.length) {
+    const head = ['Root', 'Status', 'Objects', 'Size'];
+    if (perRoot) head.push('Snapshot');
+    head.push('Notes');
+    html += rdCard(`Roots (${roots.length})`, rdTable(head, roots.map(x => {
+      const row = [rdMono(x.root || '/'), rdStatus(x.status), String(x.objects || 0), rdBytes(x.bytes)];
+      if (perRoot) row.push(x.snapshot_id ? rdMono(x.snapshot_id) : rdMono(x.group || '-'));
+      row.push([x.error, x.note].filter(Boolean).map(n => rdEsc(n.split('\n')[0].slice(0, 200))).join('<br>') || '-');
+      return row;
+    })));
+  }
+  if (m.warnings && m.warnings.length) html += rdCard(`Warnings (${m.warnings.length})`, '<ul style="margin:0 0 0 18px;font-size:13px;">' + m.warnings.slice(0, 200).map(w => `<li>${rdEsc(w)}</li>`).join('') + '</ul>' + (m.warnings.length > 200 ? `<p style="font-size:13px;color:var(--text-muted);">and ${m.warnings.length - 200} more in the raw details</p>` : ''));
+  return html;
+}
+
 function renderVCSDetail(m) {
   let html = '';
   const src = m.source || {}, gen = m.generator || {}, t = m.totals || {};

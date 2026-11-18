@@ -10,6 +10,7 @@ const AGENT_WIZARD_TYPES = {
   docker:     { label: 'filesystem agent', pkg: 'fallbck-agent',    service: 'fallbck-agent' },
   m365:       { label: 'filesystem agent', pkg: 'fallbck-agent',    service: 'fallbck-agent' },
   vcs:        { label: 'filesystem agent', pkg: 'fallbck-agent',    service: 'fallbck-agent' },
+  remote:     { label: 'filesystem agent', pkg: 'fallbck-agent',    service: 'fallbck-agent' },
   database:   { label: 'database agent',   pkg: 'fallbck-agent',    service: 'fallbck-agent' },
   kubernetes: { label: 'Kubernetes agent' }
 };
@@ -282,7 +283,7 @@ const ob = {
 // Capability the onboarding type needs before backups of that kind can be created
 const OB_TYPE_NEEDS = { database: 'db_tools', proxmox: 'pve_host', docker: 'docker_host', vcs: 'git_version' };
 // Default backup type per onboarding type
-const OB_TYPE_BACKUP = { files: 'filesystem', database: 'database', proxmox: 'pve', docker: 'docker', m365: 'm365', vcs: 'vcs', kubernetes: 'kubernetes' };
+const OB_TYPE_BACKUP = { files: 'filesystem', database: 'database', proxmox: 'pve', docker: 'docker', m365: 'm365', vcs: 'vcs', remote: 'remote', kubernetes: 'kubernetes' };
 
 document.addEventListener('DOMContentLoaded', obInit);
 
@@ -669,6 +670,7 @@ function obBackupAvailable(kind) {
     case 'docker': return t === 'filesystem' && a.docker_host;
     case 'm365': return t === 'filesystem'; // any agent with internet access
     case 'vcs': return t === 'filesystem' && gitVersionOK(a.git_version);
+    case 'remote': return t === 'filesystem' && (a.remote_backends || []).length > 0;
     case 'kubernetes': return t === 'kubernetes';
   }
   return false;
@@ -693,7 +695,7 @@ async function obRenderBackupTypes() {
   }
   obMarkSelected('backup', ob.backupType);
   const note = document.getElementById('ob-backup-note');
-  const explain = { database: 'Database: install pg_dump / mariadb-dump / mongodump on the host; the agent reports them within a minute.', pve: 'Proxmox VE host: only for agents on a PVE node.', docker: 'Docker host: only for agents that can reach a Docker daemon.', vcs: 'Git repositories: install git 2.31 or newer (and git-lfs) on the host; the agent reports it within a minute.' };
+  const explain = { database: 'Database: install pg_dump / mariadb-dump / mongodump on the host; the agent reports them within a minute.', pve: 'Proxmox VE host: only for agents on a PVE node.', docker: 'Docker host: only for agents that can reach a Docker daemon.', vcs: 'Git repositories: install git 2.31 or newer (and git-lfs) on the host; the agent reports it within a minute.', remote: 'Remote storage: update the agent; older agents cannot read remotes.' };
   const lines = missing.map(m => explain[m]).filter(Boolean);
   note.innerText = lines.length ? 'Not offered for this agent yet: ' + lines.join(' ') : '';
   note.hidden = !lines.length;
@@ -818,7 +820,7 @@ function obRenderDetails() {
   }
   if (!form.elements['name'].value) {
     const label = { filesystem: 'files', database: 'databases', pve: 'PVE host', docker: 'Docker host', m365: 'Microsoft 365', kubernetes: 'cluster' }[ob.backupType] || 'backup';
-    form.elements['name'].value = ob.backupType === 'm365' ? 'Microsoft 365' : ob.backupType === 'vcs' ? 'Git repositories' : `${a.hostname || 'host'} ${label}`;
+    form.elements['name'].value = ob.backupType === 'm365' ? 'Microsoft 365' : ob.backupType === 'vcs' ? 'Git repositories' : ob.backupType === 'remote' ? 'Remote storage' : `${a.hostname || 'host'} ${label}`;
   }
 }
 
@@ -865,7 +867,7 @@ function obRenderReview() {
   const target = obTargetCards().find(c => c.dataset.value === ob.targetId);
   const rows = [
     ['Agent', (ob.agent || {}).hostname || ob.agentId],
-    ['Backup type', { filesystem: 'Files', database: 'Database', pve: 'Proxmox VE host', docker: 'Docker host', m365: 'Microsoft 365 tenant', vcs: 'Git repositories', kubernetes: 'Kubernetes cluster' }[p.job_type] || p.job_type],
+    ['Backup type', { filesystem: 'Files', database: 'Database', pve: 'Proxmox VE host', docker: 'Docker host', m365: 'Microsoft 365 tenant', vcs: 'Git repositories', remote: 'Remote storage', kubernetes: 'Kubernetes cluster' }[p.job_type] || p.job_type],
     ['Job name', p.name],
     ['Target', target ? `${target.dataset.name} (${target.dataset.datastore}${target.dataset.namespace ? ', ' + target.dataset.namespace : ''})` : ob.targetId, ob.targetAutoPicked ? 'change' : ''],
   ];
@@ -891,6 +893,14 @@ function obRenderReview() {
     else rows.push(['Groups', (vc.groups || []).length ? vc.groups.join(', ') + (vc.include_subgroups ? ' and subgroups' : '') : 'every project the token can see'],
       ['Excludes', (vc.exclude || []).join(', ') || '-']);
     rows.push(['Token', vc.profile ? `agent credential profile ${vc.profile}` : (opt && opt.dataset.token === 'true' ? (opt.dataset.auth === 'github_app' ? "the connection's GitHub App" : 'the connection token') : 'none (public repositories)')]);
+  }
+  if (p.job_type === 'remote') {
+    const rc = p.remote_config;
+    const opt = remoteJobRemote(document.getElementById('job-form'));
+    rows.push(['Remote', opt ? `${opt.dataset.name} (${opt.dataset.backend}, ${opt.dataset.identity})` : '-'],
+      ['Roots', rc.roots.join(', ') || 'the whole remote'],
+      ['Snapshots', rc.split === 'per_root' ? 'one per root' : 'one, a directory per root'],
+      ['Credential', rc.profile ? `agent credential profile ${rc.profile}` : "the remote's"]);
   }
   if (p.job_type === 'kubernetes') rows.push(['Volumes', p.k8s_config.volumes.mode], ['Namespaces', (p.k8s_config.namespaces.include || []).join(', ') || 'all']);
   rows.push(['Schedule', p.schedule_cron ? `${p.schedule_cron} (${document.getElementById('onboarding').dataset.timezone})` : 'manual only'],
@@ -996,4 +1006,16 @@ function obKeyExported(t) {
   ob.pendingKeyTarget = '';
   document.querySelectorAll('.ob-key-gate').forEach(g => { g.innerHTML = '<strong>Key file downloaded.</strong> Keep it and its passphrase away from the server.'; g.style.borderColor = 'var(--border)'; });
   obUpdateFooter();
+}
+
+// obRemoteAgentNote warns when the fixed agent cannot read the selected remote's
+// backend (an agent built without it, or older than remote jobs)
+function obRemoteAgentNote(form) {
+  const note = document.getElementById('ob-remote-agent-note');
+  if (!note || form.id !== 'job-form') return;
+  const a = ob.agent || {};
+  const backend = remoteJobBackend(form);
+  const bad = ob.backupType === 'remote' && backend && !agentRunsRemote(a.remote_backends || [], backend);
+  note.innerText = bad ? `${a.hostname || 'This agent'} cannot back up ${backend} remotes: update the agent.` : '';
+  note.hidden = !bad;
 }
