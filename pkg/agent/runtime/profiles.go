@@ -10,6 +10,7 @@ import (
 	"github.com/osshield/fallbck/pkg/config"
 	dbspec "github.com/osshield/fallbck/pkg/dbbackup"
 	"github.com/osshield/fallbck/pkg/m365"
+	"github.com/osshield/fallbck/pkg/remote"
 	"github.com/osshield/fallbck/pkg/vcs"
 )
 
@@ -93,4 +94,26 @@ func M365ProfileSummaries(cfg *config.AgentConfig) []m365.ProfileSummary {
 		return nil
 	}
 	return credstore.M365Summaries(profiles)
+}
+
+// RemoteProfileLookup returns a remote storage credential profile from the
+// encrypted store, read on every call like VCSProfileLookup
+func RemoteProfileLookup(cfg *config.AgentConfig) func(name string) (*remote.Profile, error) {
+	return func(name string) (*remote.Profile, error) {
+		return credstore.Open(cfg.DataDir).RemoteProfile(name)
+	}
+}
+
+// RemoteProfileSummaries lists the remote storage profiles an agent reports to the
+// server: names, backends and endpoints, never credentials
+func RemoteProfileSummaries(cfg *config.AgentConfig) []remote.ProfileSummary {
+	if cfg == nil {
+		return nil
+	}
+	profiles, err := credstore.Open(cfg.DataDir).LoadRemote()
+	if err != nil {
+		slog.Warn("Could not read the remote storage credential profiles", "error", err)
+		return nil
+	}
+	return credstore.RemoteSummaries(profiles)
 }

@@ -9,6 +9,7 @@ import (
 
 	dbspec "github.com/osshield/fallbck/pkg/dbbackup"
 	"github.com/osshield/fallbck/pkg/m365"
+	"github.com/osshield/fallbck/pkg/remote"
 	"github.com/osshield/fallbck/pkg/vcs"
 )
 
@@ -26,6 +27,8 @@ type Summary struct {
 	VCSProfiles []vcs.ProfileSummary `json:"vcs_profiles,omitempty"`
 	// M365Profiles are the Microsoft 365 app credential profiles (ids, expiry)
 	M365Profiles []m365.ProfileSummary `json:"m365_profiles,omitempty"`
+	// RemoteProfiles are the remote storage credential profiles (backends, endpoints)
+	RemoteProfiles []remote.ProfileSummary `json:"remote_profiles,omitempty"`
 	// Tools are the database client tools by engine ("" when not found)
 	Tools map[string][]Tool `json:"tools,omitempty"`
 	// Spool is the spool directory and its free space

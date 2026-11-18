@@ -156,6 +156,7 @@ func main() {
 			acts.RemoteCredentials = runtime.RemoteCredentialsFetcher(cfg, store)
 			acts.RemoteOpen = backends.NewSession
 			acts.RemoteStateDir = filepath.Join(cfg.DataDir, "remote-state")
+			acts.RemoteProfile = runtime.RemoteProfileLookup(cfg)
 			if vss.Supported() && cfg.UseVSS() {
 				acts.VSSDir = filepath.Join(cfg.DataDir, "vss")
 				vss.Sweep(acts.VSSDir)
@@ -238,6 +239,12 @@ func main() {
 			os.Exit(1)
 		}
 
+	case "remote":
+		if err := remoteCommand(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "Error:", err)
+			os.Exit(1)
+		}
+
 	case "version":
 		fmt.Printf("fallbck-agent v%s\n", AgentVersion)
 
@@ -262,6 +269,7 @@ Commands:
                     and the db_backup settings (config <key> [<value>]); see database --help
   vcs               VCS token profiles kept on this host (profile create|list|delete|test)
   m365              Microsoft 365 app credential profiles kept on this host (profile create|list|delete|test)
+  remote            Remote storage credential profiles kept on this host (profile create|list|delete|test)
   migrate-db-agent  Take over a fallbck-db-agent installation on this host (state and
                     credential profiles), then retire it with fallbck-ctl agents merge
   service           Windows: install|uninstall|start|stop|status the Windows service
