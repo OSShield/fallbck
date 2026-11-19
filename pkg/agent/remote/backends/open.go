@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -73,10 +74,9 @@ func (s *Session) Open(ctx context.Context, root string) (remote.Source, error) 
 		// ponytail: set through rclone directly, belongs in librc's s3.Config
 		ctx, ci := rclonefs.AddConfig(ctx)
 		ci.UseServerModTime = true
-		f, err = s3.New(ctx, s3.Config{Name: name, Bucket: root, Provider: s3.Provider(r.Provider), EnvAuth: c.EnvAuth,
-			AccessKeyID: c.AccessKeyID, SecretAccessKey: c.SecretAccessKey, Region: r.Region, Endpoint: r.Endpoint, ForcePathStyle: r.PathStyle})
+		f, err = s3.New(ctx, s.s3Config(root))
 	case spec.BackendAzure:
-		f, err = azure.New(ctx, azure.Config{Name: name, Container: root, Account: r.Account, Key: c.AccountKey, SASUrl: c.SASURL, Endpoint: r.Endpoint})
+		f, err = azure.New(ctx, s.azureConfig(root))
 	case spec.BackendSFTP:
 		if s.knownHosts == "" {
 			return nil, errors.New("sftp: the session is closed or has no host keys")
@@ -84,7 +84,7 @@ func (s *Session) Open(ctx context.Context, root string) (remote.Source, error) 
 		f, err = sftp.New(ctx, sftp.Config{Name: name, Host: r.Host, Port: r.EffPort(), User: r.User, Password: c.Password,
 			KeyPEM: c.KeyPEM, KnownHostsFile: s.knownHosts, Root: "/" + root})
 	case spec.BackendSMB:
-		f, err = smb.New(ctx, smb.Config{Name: name, Host: r.Host, Port: r.EffPort(), User: r.User, Password: c.Password, Domain: r.Domain, Share: root})
+		f, err = smb.New(ctx, s.smbConfig(root))
 	case spec.BackendWebDAV:
 		f, err = webdav.New(ctx, webdav.Config{Name: name, URL: r.URL, Vendor: webdav.Vendor(r.Vendor), User: r.User,
 			Password: c.Password, BearerToken: c.BearerToken, Root: root})
@@ -95,6 +95,52 @@ func (s *Session) Open(ctx context.Context, root string) (remote.Source, error) 
 		return nil, err
 	}
 	return readOnly{f}, nil
+}
+
+// Discover lists the buckets (S3), containers (Azure Blob) or shares (SMB, without
+// the administrative ones ending in $) the credential can see, sorted
+func (s *Session) Discover(ctx context.Context) ([]string, error) {
+	var (
+		names []string
+		err   error
+	)
+	switch s.remote.Backend {
+	case spec.BackendS3:
+		names, err = s3.ListBuckets(ctx, s.s3Config(""))
+	case spec.BackendAzure:
+		names, err = azure.ListContainers(ctx, s.azureConfig(""))
+	case spec.BackendSMB:
+		names, err = smb.ListShares(ctx, s.smbConfig(""))
+	default:
+		return nil, fmt.Errorf("%s remotes have no buckets to list", s.remote.Backend)
+	}
+	if err != nil {
+		return nil, err
+	}
+	out := names[:0]
+	for _, n := range names {
+		if n != "" && !strings.HasSuffix(n, "$") {
+			out = append(out, n)
+		}
+	}
+	slices.Sort(out)
+	return out, nil
+}
+
+func (s *Session) s3Config(bucket string) s3.Config {
+	r, c := s.remote, s.creds
+	return s3.Config{Name: "fallbck-" + r.Backend, Bucket: bucket, Provider: s3.Provider(r.Provider), EnvAuth: c.EnvAuth,
+		AccessKeyID: c.AccessKeyID, SecretAccessKey: c.SecretAccessKey, Region: r.Region, Endpoint: r.Endpoint, ForcePathStyle: r.PathStyle}
+}
+
+func (s *Session) azureConfig(container string) azure.Config {
+	r, c := s.remote, s.creds
+	return azure.Config{Name: "fallbck-" + r.Backend, Container: container, Account: r.Account, Key: c.AccountKey, SASUrl: c.SASURL, Endpoint: r.Endpoint}
+}
+
+func (s *Session) smbConfig(share string) smb.Config {
+	r, c := s.remote, s.creds
+	return smb.Config{Name: "fallbck-" + r.Backend, Host: r.Host, Port: r.EffPort(), User: r.User, Password: c.Password, Domain: r.Domain, Share: share}
 }
 
 // Close removes the run's temporary files

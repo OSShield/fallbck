@@ -42,12 +42,14 @@ The agent only lists and reads, so give it a credential that can't do anything e
 }
 ```
 
+A job that backs up every bucket (no `roots`) also needs `s3:ListAllMyBuckets` on `"Resource": "*"`, and the second statement's resources become `arn:aws:s3:::*/*`.
+
 MinIO takes the same policy (`mc admin policy create`). Wasabi and R2 have their own read-only key options; use those.
 
 **Azure Blob.** Either the account key, which can do everything (but generally don't do that, use a read-only key), or a SAS URL, which can be limited:
 
 - **Allowed services:** Blob
-- **Allowed resource types:** Container and Object
+- **Allowed resource types:** Container and Object, plus Service if a job backs up every container
 - **Allowed permissions:** Read and List, nothing else
 - An expiry date you'll remember to renew. The agent can't warn you about it.
 
@@ -141,7 +143,7 @@ Through the API:
 
 | Field | Default | |
 |---|---|---|
-| `roots` | required for S3, Azure and SMB; the whole remote for SFTP and WebDAV | What to back up (see the table at the top). Roots can't overlap. |
+| `roots` | every bucket, container or share; the whole remote on SFTP and WebDAV | What to back up (see the table at the top). Roots can't overlap. |
 | `include` | everything | Globs on paths below a root. `*` doesn't cross `/`. A pattern that matches a directory takes everything below it. |
 | `exclude` | nothing | Same syntax. Excludes win over includes. |
 | `split` | `single` | `single`: one snapshot per run, each root a directory in it. `per_root`: one snapshot group per root. |
@@ -149,6 +151,8 @@ Through the API:
 | `profile` | none | An agent credential profile (step 4). Required when the remote keeps its credential on the agents. |
 
 `POST` it to `/api/v1/jobs`.
+
+Leave `roots` out on S3, Azure or SMB and the job backs up every bucket, container or share the credential can see. The agent lists them again at the start of every run, so a new bucket is in the next backup without touching the job, and a deleted one just drops out. SMB shares ending in `$` (`IPC$`, `C$`) are skipped. The credential needs the right to list them; see step 2. There's no way to exclude a bucket yet, so give the job a credential that only sees what you want backed up, or list the roots.
 
 ## What lands on PBS
 
@@ -159,7 +163,7 @@ With `split: single`, each run writes **one snapshot** in `host/remote-<remote n
 | `remote.pxar` → `<root>/…` | The objects of each root, under the root's path (`photos/…`, `archive/2026/…`). A whole-remote root sits at the top. |
 | `fallbck-remote.json.blob` | The run manifest: the remote (never its credential), each root's object and byte counts, warnings |
 
-With `split: per_root`, each root gets its own group, `<job group>-<root>`, with `/` turned into `-`: `remote-minio-photos`, `remote-minio-archive-2026`. Each of those snapshots has the root's objects at the top of `remote.pxar`, plus a manifest for that root. The job's own group gets a small snapshot holding just the run manifest, which lists every root's snapshot. Use this when roots are big and you want to prune or restore them separately.
+With `split: per_root`, each root gets its own group, `<job group>-<root>`, with `/` turned into `-`: `remote-minio-photos`, `remote-minio-archive-2026`. Each of those snapshots has the root's objects at the top of `remote.pxar`, plus a manifest for that root. The job's own group gets a small snapshot with an empty archive and the run manifest, which lists every root's snapshot. Use this when roots are big and you want to prune or restore them separately.
 
 Objects keep their size and modification time. On S3 that's the listing's `LastModified`, so the agent doesn't have to ask about every object separately. Directories all get the same fixed time, since object stores don't have real ones. Use a **pxar v2 target**: objects that didn't change since the last run are referenced from the previous snapshot instead of being read again. Without v2, every run downloads everything.
 
@@ -168,7 +172,9 @@ Objects keep their size and modification time. On S3 that's the listing's `LastM
 - An object whose key can't be a path (`a//b`, `a/./b`) is skipped with a warning.
 - An object that changes size between listing and reading is cut or padded with zeros to the listed size, with a warning. The next run picks up the new version.
 - A root that can't be opened or listed fails on its own, and the rest carry on.
+- In a job without roots, a failed bucket listing fails the run (it's retried like any other failure), and finding no buckets at all makes it partial.
 - Any warning or failed root makes the run **partial**. The run fails only when no root could be backed up.
+- With `per_root`, two discovered names that make the same group (SMB shares `Data` and `data`) can't share it: the second one fails, and the run is partial.
 - With `per_root`, a retry of the same run skips the roots that already finished, so a timeout on root nine doesn't redo roots one to eight. Progress is kept in `<data_dir>/remote-state/<job id>/run.json`. The next scheduled run starts from scratch.
 
 Roots run one after another. Each run's page lists every root with its status, size, snapshot and any error.

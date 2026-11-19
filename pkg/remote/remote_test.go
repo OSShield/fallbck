@@ -185,12 +185,12 @@ func TestSpecValidateFor(t *testing.T) {
 		valid bool
 	}{
 		{"bucket", Spec{RemoteID: id, Roots: []string{"my-bucket/logs"}}, s3, true},
-		{"no bucket", Spec{RemoteID: id}, s3, false},
+		{"no bucket: every bucket", Spec{RemoteID: id}, s3, true},
 		{"bad bucket", Spec{RemoteID: id, Roots: []string{"My_Bucket"}}, s3, false},
 		{"bad container", Spec{RemoteID: id, Roots: []string{"a.b"}}, &Remote{Backend: BackendAzure}, false},
 		{"container", Spec{RemoteID: id, Roots: []string{"backups"}}, &Remote{Backend: BackendAzure}, true},
 		{"share", Spec{RemoteID: id, Roots: []string{"Data$/x"}}, &Remote{Backend: BackendSMB}, true},
-		{"no share", Spec{RemoteID: id}, &Remote{Backend: BackendSMB}, false},
+		{"no share: every share", Spec{RemoteID: id}, &Remote{Backend: BackendSMB}, true},
 		{"agent-held needs profile", Spec{RemoteID: id, Roots: []string{"bkt"}}, &Remote{Backend: BackendS3, AuthMethod: AuthAgent}, false},
 		{"agent-held with profile", Spec{RemoteID: id, Roots: []string{"bkt"}, Profile: "p"}, &Remote{Backend: BackendS3, AuthMethod: AuthAgent}, true},
 		{"missing remote", Spec{RemoteID: id}, nil, false},

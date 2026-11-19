@@ -701,9 +701,9 @@ function agentRunsRemote(backends, backend) {
 }
 
 const REMOTE_ROOT_HINTS = {
-  s3: ['Buckets (one per line)', 'Bucket, optionally with a prefix: <code>bucket</code> or <code>bucket/prefix</code>.'],
-  azureblob: ['Containers (one per line)', 'Container, optionally with a prefix: <code>container</code> or <code>container/prefix</code>.'],
-  smb: ['Shares (one per line)', 'Share, optionally with a path: <code>share</code> or <code>share/dir</code>.'],
+  s3: ['Buckets (one per line, optional)', 'Bucket, optionally with a prefix: <code>bucket</code> or <code>bucket/prefix</code>. Empty backs up every bucket the credential can see, found again at every run.'],
+  azureblob: ['Containers (one per line, optional)', 'Container, optionally with a prefix: <code>container</code> or <code>container/prefix</code>. Empty backs up every container the credential can see, found again at every run.'],
+  smb: ['Shares (one per line, optional)', 'Share, optionally with a path: <code>share</code> or <code>share/dir</code>. Empty backs up every share the user can see (except the ones ending in $), found again at every run.'],
   sftp: ['Paths (one per line, optional)', 'Absolute paths on the server, e.g. <code>srv/data</code> for /srv/data. Empty backs up from /.'],
   webdav: ['Paths (one per line, optional)', 'Paths below the remote\'s URL. Empty backs up everything below it.'],
 };
@@ -1883,7 +1883,7 @@ function renderRemoteDetail(m) {
     ['Remote', `${rdEsc(r.name || '-')} <span style="color:var(--text-muted);font-size:12px;">${rdEsc(r.backend || '')}</span>`],
     ['Endpoint', rdMono(r.identity || '-')],
     ['Credential', r.profile ? `agent credential profile ${rdMono(r.profile)}` : "the remote's"],
-    ['Roots', `${t.roots || 0}` + (t.failed ? ` (${t.failed} failed)` : '')],
+    ['Roots', `${t.roots || 0}` + (t.failed ? ` (${t.failed} failed)` : '') + (m.discovered ? ', found at the start of the run (the job lists none)' : '')],
     ['Objects', `${t.objects || 0} (${rdBytes(t.bytes)})`],
     ['Snapshots', perRoot ? 'one per root' : 'one, a directory per root'],
     ['Group', rdMono((m.job || {}).group || '-')],

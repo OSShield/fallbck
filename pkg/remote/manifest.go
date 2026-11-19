@@ -23,10 +23,13 @@ type Manifest struct {
 	Remote        RemoteInfo   `json:"remote"`
 	Spec          *Spec        `json:"spec"`
 	Roots         []RootResult `json:"roots"`
-	Totals        Totals       `json:"totals"`
-	Warnings      []string     `json:"warnings,omitempty"`
-	StartedAt     time.Time    `json:"started_at"`
-	FinishedAt    time.Time    `json:"finished_at"`
+	// Discovered: the job names no roots, so Roots are what the credential could
+	// see at the start of the run
+	Discovered bool      `json:"discovered,omitempty"`
+	Totals     Totals    `json:"totals"`
+	Warnings   []string  `json:"warnings,omitempty"`
+	StartedAt  time.Time `json:"started_at"`
+	FinishedAt time.Time `json:"finished_at"`
 }
 
 // Generator is the agent that wrote the snapshot

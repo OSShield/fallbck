@@ -307,10 +307,9 @@ func TestLiveRemoteJobs(t *testing.T) {
 		body map[string]any
 		want string
 	}{
-		"agent lacks the backend":     {job(f.agentB.ID, map[string]any{"remote_id": sftp.ID, "profile": "nas"}), "cannot back up sftp"},
-		"agent-held without profile":  {job(f.agentA.ID, map[string]any{"remote_id": sftp.ID}), "credential profile"},
-		"kubernetes agent":            {job(k8s.ID, map[string]any{"remote_id": s3.ID, "roots": []string{"photos"}}), "cannot run remote jobs"},
-		"bucket remote without roots": {job(f.agentA.ID, map[string]any{"remote_id": s3.ID}), "at least one bucket"},
+		"agent lacks the backend":    {job(f.agentB.ID, map[string]any{"remote_id": sftp.ID, "profile": "nas"}), "cannot back up sftp"},
+		"agent-held without profile": {job(f.agentA.ID, map[string]any{"remote_id": sftp.ID}), "credential profile"},
+		"kubernetes agent":           {job(k8s.ID, map[string]any{"remote_id": s3.ID, "roots": []string{"photos"}}), "cannot run remote jobs"},
 		"backup paths": {func() map[string]any {
 			b := job(f.agentA.ID, map[string]any{"remote_id": s3.ID})
 			b["backup_paths"] = []string{"/etc"}
@@ -320,6 +319,15 @@ func TestLiveRemoteJobs(t *testing.T) {
 		code, resp := call(t, h, http.MethodPost, "/api/v1/jobs", tc.body)
 		if code != http.StatusBadRequest || !bytes.Contains(resp, []byte(tc.want)) {
 			t.Errorf("%s: %d %s", name, code, resp)
+		}
+	}
+	// No roots: every bucket, found at each run; stored as no roots
+	if code, resp := call(t, h, http.MethodPost, "/api/v1/jobs", job(f.agentA.ID, map[string]any{"remote_id": s3.ID})); code != http.StatusCreated {
+		t.Errorf("every bucket: %d %s", code, resp)
+	} else {
+		var j db.BackupJob
+		if err := json.Unmarshal(resp, &j); err != nil || j.RemoteConfig == nil || len(j.RemoteConfig.Roots) != 0 {
+			t.Errorf("every bucket: %s %v", resp, err)
 		}
 	}
 	// An agent that predates remote jobs

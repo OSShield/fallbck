@@ -95,6 +95,17 @@ func Run(ctx context.Context, o RunOptions) (*temporal.BackupExecutionResult, er
 		Spec:          &s,
 		StartedAt:     started,
 	}}
+	run.roots = s.Roots
+	if what, ok := spec.DiscoversRoots(r.Backend); ok && len(s.Roots) == 0 {
+		o.Progress("listing the " + what + "s")
+		if run.roots, err = sess.Discover(ctx); err != nil {
+			return nil, fmt.Errorf("listing the %ss: %w", what, err)
+		}
+		run.manifest.Discovered = true
+		if len(run.roots) == 0 {
+			run.warn.Add("the credential can't see any %s", what)
+		}
+	}
 	var res *temporal.BackupExecutionResult
 	if s.Split == spec.SplitPerRoot {
 		res, err = run.perRoot(ctx)
@@ -111,7 +122,7 @@ func Run(ctx context.Context, o RunOptions) (*temporal.BackupExecutionResult, er
 	res.Status = "completed"
 	var problems []string
 	if m.Totals.Failed > 0 {
-		problems = append(problems, fmt.Sprintf("%d of %d roots failed: %s", m.Totals.Failed, len(s.Roots), strings.Join(run.failures(), "; ")))
+		problems = append(problems, fmt.Sprintf("%d of %d roots failed: %s", m.Totals.Failed, len(run.roots), strings.Join(run.failures(), "; ")))
 	}
 	if n := len(m.Warnings); n > 0 {
 		problems = append(problems, fmt.Sprintf("%d warnings: %s", n, strings.Join(m.Warnings, "; ")))
@@ -125,8 +136,10 @@ func Run(ctx context.Context, o RunOptions) (*temporal.BackupExecutionResult, er
 }
 
 type runner struct {
-	o        RunOptions
-	s        *spec.Spec
+	o RunOptions
+	s *spec.Spec
+	// roots are the job's, or the discovered ones when it names none
+	roots    []string
 	sess     Opener
 	warn     *Warnings
 	manifest *spec.Manifest
@@ -159,7 +172,7 @@ func (run *runner) allFailed() (*temporal.BackupExecutionResult, error) {
 
 // list opens and walks one root; prefix places its entries in the tree
 func (run *runner) list(ctx context.Context, i int, root, prefix string, warn *Warnings) ([]vtree.Entry, []vtree.Dir, spec.RootResult) {
-	run.o.Progress(fmt.Sprintf("listing %s (%d of %d)", display(root), i+1, len(run.s.Roots)))
+	run.o.Progress(fmt.Sprintf("listing %s (%d of %d)", display(root), i+1, len(run.roots)))
 	res := spec.RootResult{Root: root, Status: spec.RootCompleted}
 	entries, dirs, err := func() ([]vtree.Entry, []vtree.Dir, error) {
 		src, err := run.sess.Open(ctx, root)
@@ -186,7 +199,7 @@ func (run *runner) single(ctx context.Context) (*temporal.BackupExecutionResult,
 		entries []vtree.Entry
 		dirs    []vtree.Dir
 	)
-	for i, root := range run.s.Roots {
+	for i, root := range run.roots {
 		e, d, res := run.list(ctx, i, root, root, run.warn)
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -195,7 +208,7 @@ func (run *runner) single(ctx context.Context) (*temporal.BackupExecutionResult,
 		run.manifest.Roots = append(run.manifest.Roots, res)
 	}
 	run.manifest.Tally()
-	if run.manifest.Totals.Failed == len(run.s.Roots) {
+	if n := len(run.roots); n > 0 && run.manifest.Totals.Failed == n {
 		return run.allFailed()
 	}
 	tree, err := vtree.BuildTree(spec.ArchiveName, entries, dirs, DirMtime)
@@ -218,8 +231,17 @@ func (run *runner) perRoot(ctx context.Context) (*temporal.BackupExecutionResult
 	total := &temporal.BackupExecutionResult{}
 	// ponytail: roots one after another; run several at once if many small roots
 	// make runs slow
-	for i, root := range run.s.Roots {
+	groups := map[string]string{}
+	for i, root := range run.roots {
 		group := spec.UnitGroup(run.o.Session.BackupID, root)
+		if prev, ok := groups[group]; ok {
+			// Only discovered names can collide: Validate refuses it for listed roots
+			res := spec.RootResult{Root: root, Status: spec.RootFailed, Group: group,
+				Error: fmt.Sprintf("would share the PBS group %s with %s; back it up in a job of its own", group, display(prev))}
+			run.manifest.Roots = append(run.manifest.Roots, res)
+			continue
+		}
+		groups[group] = root
 		if done, ok := st.Roots[root]; ok {
 			done.Note = "finished by an earlier attempt of this run"
 			run.manifest.Roots = append(run.manifest.Roots, done)
@@ -254,7 +276,7 @@ func (run *runner) perRoot(ctx context.Context) (*temporal.BackupExecutionResult
 		run.manifest.Roots = append(run.manifest.Roots, res)
 	}
 	run.manifest.Tally()
-	if run.manifest.Totals.Failed == len(run.s.Roots) {
+	if n := len(run.roots); n > 0 && run.manifest.Totals.Failed == n {
 		return run.allFailed()
 	}
 

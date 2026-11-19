@@ -224,6 +224,26 @@ func TestRemoteBackends(t *testing.T) {
 			if len(up.groups) != 3 {
 				t.Errorf("per_root: groups %v, want two roots and the job's", keys(up.groups))
 			}
+
+			// No roots: every bucket, container or share the credential can see
+			if _, ok := spec.DiscoversRoots(c.remote.Backend); !ok {
+				return
+			}
+			res, up, err = run(t, c.remote, c.secrets, nil, spec.SplitSingle)
+			if err != nil || res.Status != "completed" || !strings.Contains(string(res.Details), `"discovered":true`) {
+				t.Fatalf("no roots: %v %+v", err, res)
+			}
+			got = up.groups["remote-"+c.remote.Name]
+			for p, data := range want {
+				if got[p] != data {
+					t.Errorf("no roots: %s = %q, want %q", p, got[p], data)
+				}
+			}
+			for p := range got {
+				if strings.Contains(strings.SplitN(p, "/", 2)[0], "$") {
+					t.Errorf("no roots: an administrative share was backed up: %s", p)
+				}
+			}
 		})
 	}
 }

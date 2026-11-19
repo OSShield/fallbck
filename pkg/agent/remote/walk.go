@@ -27,6 +27,9 @@ type Source interface {
 // disk (the SFTP known_hosts file)
 type Opener interface {
 	Open(ctx context.Context, root string) (Source, error)
+	// Discover lists the buckets, containers or shares the credential can see
+	// (a job without roots backs up all of them)
+	Discover(ctx context.Context) ([]string, error)
 	Close() error
 }
 

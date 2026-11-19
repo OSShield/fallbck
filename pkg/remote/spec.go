@@ -123,10 +123,10 @@ func (s *Spec) Validate() error {
 	return nil
 }
 
-// ValidateFor checks the spec against its remote: bucket backends need at least one
-// root whose first segment is a usable bucket, container or share name, and a
-// remote that keeps its credential on the agents needs a profile. Call after
-// Validate.
+// ValidateFor checks the spec against its remote: on bucket backends each root's
+// first segment must be a usable bucket, container or share name (no roots means
+// all of them, found at every run), and a remote that keeps its credential on the
+// agents needs a profile. Call after Validate.
 func (s *Spec) ValidateFor(r *Remote) error {
 	if r == nil {
 		return specErr("the remote does not exist")
@@ -134,7 +134,7 @@ func (s *Spec) ValidateFor(r *Remote) error {
 	if r.AuthMethod == AuthAgent && s.Profile == "" {
 		return specErr("the remote keeps its credential on the agents; name the agent credential profile that holds it")
 	}
-	what, check := rootKind(r.Backend)
+	_, check := rootKind(r.Backend)
 	if check == nil {
 		// SFTP and WebDAV: no roots means the whole remote
 		if len(s.Roots) == 0 {
@@ -142,9 +142,7 @@ func (s *Spec) ValidateFor(r *Remote) error {
 		}
 		return nil
 	}
-	if len(s.Roots) == 0 {
-		return specErr("list at least one %s", what)
-	}
+	// No roots: every bucket, container or share, found again at every run
 	for _, root := range s.Roots {
 		first, _, _ := strings.Cut(root, "/")
 		if err := check(first); err != nil {
@@ -159,6 +157,9 @@ func (s *Spec) Summary() string {
 	if s == nil {
 		return "Remote"
 	}
+	if len(s.Roots) == 0 {
+		return "everything the credential can see"
+	}
 	roots := make([]string, len(s.Roots))
 	for i, r := range s.Roots {
 		roots[i] = "/" + r
@@ -172,6 +173,13 @@ func (s *Spec) EffConcurrency() int {
 		return DefaultConcurrency
 	}
 	return s.Concurrency
+}
+
+// DiscoversRoots reports whether a job on backend without roots backs up every
+// bucket, container or share (found at each run), and what those are called
+func DiscoversRoots(backend string) (what string, ok bool) {
+	what, check := rootKind(backend)
+	return what, check != nil
 }
 
 // rootKind names what the first segment of a root is on the backend, and checks it

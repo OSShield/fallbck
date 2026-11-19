@@ -22,9 +22,10 @@ import (
 
 // fakeOpener serves roots from fake filesystems; a missing root fails to open
 type fakeOpener struct {
-	roots  map[string]*fakeFS
-	creds  Credentials
-	closed bool
+	roots       map[string]*fakeFS
+	creds       Credentials
+	closed      bool
+	discoverErr error
 }
 
 func (f *fakeOpener) Open(_ context.Context, root string) (Source, error) {
@@ -32,6 +33,19 @@ func (f *fakeOpener) Open(_ context.Context, root string) (Source, error) {
 		return fs, nil
 	}
 	return nil, errors.New("no such bucket")
+}
+
+// Discover lists the fake's roots, or fails with discoverErr
+func (f *fakeOpener) Discover(context.Context) ([]string, error) {
+	if f.discoverErr != nil {
+		return nil, f.discoverErr
+	}
+	var out []string
+	for r := range f.roots {
+		out = append(out, r)
+	}
+	slices.Sort(out)
+	return out, nil
 }
 
 func (f *fakeOpener) Close() error { f.closed = true; return nil }
@@ -282,5 +296,75 @@ func TestRunPerRootResume(t *testing.T) {
 	e.opts.Session.BackupRunID = uuid.New()
 	if _, err := Run(context.Background(), e.opts); err != nil || len(e.up.groups) != 3 {
 		t.Errorf("new run: %v groups %v", err, e.up.groups)
+	}
+}
+
+// A job without roots backs up every bucket, found again at every run
+func TestRunDiscoveredRoots(t *testing.T) {
+	fs := map[string]*fakeFS{"aaa": {objects: map[string]string{"x": "1"}}, "bbb": {objects: map[string]string{"y": "2"}}}
+	e := newRun(nil, fs)
+	res, err := Run(context.Background(), e.opts)
+	if err != nil || res.Status != "completed" {
+		t.Fatalf("%+v %v", res, err)
+	}
+	if e.up.files["remote/aaa/x"] != "1" || e.up.files["remote/bbb/y"] != "2" {
+		t.Errorf("files %v", e.up.files)
+	}
+	d := details(t, res)
+	if !d.Discovered || len(d.Roots) != 2 || len(d.Spec.Roots) != 0 {
+		t.Errorf("manifest: discovered %v roots %+v spec roots %v", d.Discovered, d.Roots, d.Spec.Roots)
+	}
+
+	// A bucket created since the last run is picked up
+	fs["ccc"] = &fakeFS{objects: map[string]string{"z": "3"}}
+	if res, err = Run(context.Background(), e.opts); err != nil || res.Status != "completed" || e.up.files["remote/ccc/z"] != "3" {
+		t.Fatalf("second run: %+v %v files %v", res, err, e.up.files)
+	}
+	if len(e.opts.Spec.Roots) != 0 {
+		t.Errorf("the job's spec changed: %v", e.opts.Spec.Roots)
+	}
+}
+
+// No visible bucket is partial, not green; a failed listing fails the run
+func TestRunDiscoveryEmptyAndFailing(t *testing.T) {
+	e := newRun(nil, map[string]*fakeFS{})
+	res, err := Run(context.Background(), e.opts)
+	if err != nil || res.Status != "partial" || !strings.Contains(res.ErrorMessage, "can't see any bucket") || len(e.up.groups) != 1 {
+		t.Fatalf("empty: %+v %v groups %v", res, err, e.up.groups)
+	}
+
+	e = newRun(nil, map[string]*fakeFS{"aaa": {}})
+	e.opener.discoverErr = errors.New("AccessDenied")
+	if res, err = Run(context.Background(), e.opts); err == nil || !strings.Contains(err.Error(), "listing the buckets: AccessDenied") || len(e.up.groups) != 0 {
+		t.Fatalf("failing: %+v %v", res, err)
+	}
+	if dbrun.IsPrecheck(err) {
+		t.Errorf("a listing failure should be retried, not a precheck failure")
+	}
+}
+
+// per_root with discovered roots: resume works, and names that would share a group
+// fail instead of mixing
+func TestRunDiscoveredPerRoot(t *testing.T) {
+	fs := map[string]*fakeFS{
+		"Data": {objects: map[string]string{"x": "1"}},
+		"data": {objects: map[string]string{"y": "2"}},
+		"logs": {objects: map[string]string{"z": "3"}},
+	}
+	e := newRun(nil, fs)
+	e.opts.Spec.Split = spec.SplitPerRoot
+	e.opts.StateDir = t.TempDir()
+	e.up.failGroup = "remote-minio-logs"
+	res, err := Run(context.Background(), e.opts)
+	if err != nil || res.Status != "partial" || !strings.Contains(res.ErrorMessage, "would share the PBS group remote-minio-data") {
+		t.Fatalf("first attempt: %+v %v", res, err)
+	}
+	if !slices.Equal(e.up.groups, []string{"remote-minio-data", "remote-minio"}) || e.up.byGroup["remote-minio-data"]["remote/x"] != "1" {
+		t.Fatalf("groups %v %v", e.up.groups, e.up.byGroup)
+	}
+
+	e.up.failGroup, e.up.groups = "", nil
+	if res, err = Run(context.Background(), e.opts); err != nil || !slices.Equal(e.up.groups, []string{"remote-minio-logs", "remote-minio"}) {
+		t.Fatalf("retry: %+v %v groups %v", res, err, e.up.groups)
 	}
 }
