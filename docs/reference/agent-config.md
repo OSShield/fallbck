@@ -31,7 +31,7 @@ Mostly written at enrollment.
 |---|---|---|
 | `vcs_state_dir` | `FALLBCK_AGENT_VCS_STATE_DIR` | Where the git mirrors of [VCS jobs](../agents/vcs.md) live between runs. Default `<data_dir>/vcs-state`. Needs room for every repository the agent backs up. |
 
-VCS tokens kept on the agent are managed with `fallbck-agent vcs profile`; they live in the same encrypted store as the database profiles.
+VCS tokens, Microsoft 365 app credentials and remote storage credentials kept on the agent are managed with `fallbck-agent vcs profile`, `fallbck-agent m365 profile` and `fallbck-agent remote profile`; they live in the same encrypted store as the database profiles. [Remote storage](../agents/remote.md) jobs keep the progress of a split-per-root run in `<data_dir>/remote-state`, so a retry skips the roots that already finished.
 
 ## `db_backup`
 

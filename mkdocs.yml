@@ -61,6 +61,7 @@ nav:
       - Docker hosts: agents/docker.md
       - Microsoft 365: agents/m365.md
       - Git repositories: agents/vcs.md
+      - Remote storage: agents/remote.md
   - Running it:
       - Access control: operations/access.md
       - Encryption: operations/encryption.md

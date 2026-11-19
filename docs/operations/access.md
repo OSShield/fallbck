@@ -19,7 +19,7 @@ A role is a named set of permissions. Three ship with the server and can't be ed
 | Role | What it does |
 |---|---|
 | `admin` | Everything, including access management and API keys. |
-| `operator` | Reads everything. Creates, runs and deletes jobs. Manages agents, enrollment tokens, targets and tenants, but can't delete them, reveal PBS credentials or export keys. |
+| `operator` | Reads everything. Creates, runs and deletes jobs. Manages agents, enrollment tokens, targets, tenants, VCS connections and remotes, but can't delete them, reveal PBS credentials or export keys. |
 | `viewer` | Reads everything. |
 
 Need something else? Clone one on the *Access* page and tick the boxes. Permissions are `resource:action`:
@@ -31,6 +31,8 @@ Need something else? Clone one on the *Access* page and tick the boxes. Permissi
 | `targets` | `read`, `write`, `delete`, `credentials` (reveal the PBS token) |
 | `keyrings` | `read`, `write` (create, rename, master key, rotate, import), `export`, `delete` |
 | `tenants` | `read`, `write`, `delete` |
+| `connections` | `read`, `write` (create, edit, test), `delete` (VCS connections) |
+| `remotes` | `read`, `write`, `delete` (remote storage: S3, Azure Blob, SFTP, SMB, WebDAV) |
 | `apikeys` | `manage` |
 | `rbac` | `manage` |
 | `audit` | `read` |

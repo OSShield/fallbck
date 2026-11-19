@@ -1,6 +1,6 @@
 # FallBCK
 
-FallBCK backs up your filesystems, databases, Kubernetes clusters, Proxmox VE and Docker hosts, and Microsoft 365 tenants into [Proxmox Backup Server](https://www.proxmox.com/en/products/proxmox-backup-server/overview). You get PBS's dedup, verification and pruning, plus one place to manage all the jobs.
+FallBCK backs up your filesystems, databases, Kubernetes clusters, Proxmox VE and Docker hosts, Microsoft 365 tenants, git repositories and remote storage into [Proxmox Backup Server](https://www.proxmox.com/en/products/proxmox-backup-server/overview). You get PBS's dedup, verification and pruning, plus one place to manage all the jobs.
 
 It's two moving parts:
 
@@ -28,6 +28,7 @@ Snapshots are plain pxar, so restores use PBS's own tools (the GUI or `proxmox-b
 | Docker hosts (containers, volumes, compose) | `fallbck-agent` | [Docker hosts](agents/docker.md) |
 | Exchange Online, OneDrive, SharePoint, Teams, Entra ID | `fallbck-agent` (anywhere with outbound HTTPS) | [Microsoft 365](agents/m365.md) |
 | Git repositories (beta) | `fallbck-agent` with git (anywhere with outbound HTTPS) | [Git repositories](agents/vcs.md) |
+| S3, Azure Blob, SFTP, SMB, WebDAV (beta) | `fallbck-agent` (anywhere that can reach the storage) | [Remote storage](agents/remote.md) |
 
 !!! note "FallBCK never deletes anything on PBS"
     Retention is a PBS datastore prune job, so set one up. FallBCK writes snapshots and that's it. It doesn't prune, forget or delete, and its API token doesn't need the rights to.

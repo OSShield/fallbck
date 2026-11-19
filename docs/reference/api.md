@@ -173,6 +173,28 @@ With `"auth_method": "agent"` the server keeps no credential at all. Every job o
 
 `provider` is `git` (a list of repository URLs below `base_url`), `gitlab` (projects listed through the GitLab API, selected by group) or `github` (owners, starred repositories and gists listed through the GitHub API; `base_url` is `https://github.com` or a GitHub Enterprise Server). A GitLab or GitHub job needs an agent that reports that provider: update older agents first. The token is optional and write-only: leave it out when the jobs use an agent credential profile. A GitHub connection can authenticate as a GitHub App instead: `"auth_type": "github_app"` with `app_id`, `installation_id` and the PEM `app_key` (write-only, `has_token` reports whether one is stored); the server then mints a token for every run. Needs the `connections:*` permissions. See [Git repositories](../agents/vcs.md).
 
+## Remotes
+
+| Method | Path | Notes |
+|---|---|---|
+| `POST` | `/remotes` | Create. |
+| `GET` | `/remotes` | |
+| `GET` | `/remotes/{id}` | |
+| `PUT` | `/remotes/{id}` | Leaving out `secrets` keeps the stored credential; `"clear_secrets": true` removes it. While jobs use the remote, its backend can't change, and it can't move its credential to the agents while a job has no profile. |
+| `DELETE` | `/remotes/{id}` | Refused while jobs still use it. |
+
+```json
+{
+  "name": "minio",
+  "backend": "s3",
+  "endpoint": "https://minio.example.com:9000",
+  "path_style": true,
+  "secrets": {"access_key_id": "AKIA...", "secret_access_key": "..."}
+}
+```
+
+`backend` is `s3`, `azureblob`, `sftp`, `smb` or `webdav`; each takes its own fields (see the table in [Remote storage](../agents/remote.md#3-create-a-remote)). `secrets` is write-only, and `has_secret` reports whether one is stored. With `"auth_method": "agent"` the server keeps no credential, and every job on the remote has to name an agent credential profile in `remote_config.profile`. There's no test endpoint: the server never connects to a remote. Needs the `remotes:*` permissions.
+
 ## Jobs
 
 | Method | Path | Notes |
@@ -201,7 +223,7 @@ Common fields:
 }
 ```
 
-`job_type` is one of `filesystem`, `database`, `kubernetes`, `pve`, `docker`, `m365` or `vcs`. Every type besides `filesystem` takes its settings in a matching object: `db_config`, `k8s_config`, `pve_config`, `docker_config`, `m365_config` or `vcs_config`. A database job, for example:
+`job_type` is one of `filesystem`, `database`, `kubernetes`, `pve`, `docker`, `m365`, `vcs` or `remote`. Every type besides `filesystem` takes its settings in a matching object: `db_config`, `k8s_config`, `pve_config`, `docker_config`, `m365_config`, `vcs_config` or `remote_config`. A database job, for example:
 
 ```json
 {
@@ -257,6 +279,6 @@ Selectors are strings in [Kubernetes label selector syntax](../operations/access
 
 These are what agents call, authenticated with their own bearer token. You won't need them unless you're writing an agent, but they're listed here so nothing's a mystery:
 
-`POST /agents/enroll` (enrollment token), `POST /agents/heartbeat`, `POST /agents/token/rotate`, `POST /agents/token/worker`, `POST /agents/ticket/refresh`, `POST /agents/sub-ticket`, `POST /agents/volume-ticket`, `POST /agents/run-progress`, `GET /agents/pbs-credentials`, `GET /agents/encryption-key`, `GET /agents/db-credentials`, `GET /agents/m365-credentials`, `GET /agents/vcs-credentials`, `GET /agents/update/{os}/{arch}`.
+`POST /agents/enroll` (enrollment token), `POST /agents/heartbeat`, `POST /agents/token/rotate`, `POST /agents/token/worker`, `POST /agents/ticket/refresh`, `POST /agents/sub-ticket`, `POST /agents/volume-ticket`, `POST /agents/run-progress`, `GET /agents/pbs-credentials`, `GET /agents/encryption-key`, `GET /agents/db-credentials`, `GET /agents/m365-credentials`, `GET /agents/vcs-credentials`, `GET /agents/remote-credentials`, `GET /agents/update/{os}/{arch}`.
 
 The credential endpoints also need a valid backup ticket in `X-Fallbck-Backup-Ticket`. The [Architecture](../architecture.md) page explains the flow.
