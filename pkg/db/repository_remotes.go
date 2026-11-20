@@ -27,6 +27,7 @@ type remoteConfig struct {
 	User       string   `json:"user,omitempty"`
 	Domain     string   `json:"domain,omitempty"`
 	KnownHosts []string `json:"known_hosts,omitempty"`
+	TLS        string   `json:"tls,omitempty"`
 	URL        string   `json:"url,omitempty"`
 	Vendor     string   `json:"vendor,omitempty"`
 }
@@ -34,13 +35,13 @@ type remoteConfig struct {
 func configOf(r *remote.Remote) remoteConfig {
 	return remoteConfig{Provider: r.Provider, Region: r.Region, Endpoint: r.Endpoint, PathStyle: r.PathStyle,
 		Account: r.Account, Host: r.Host, Port: r.Port, User: r.User, Domain: r.Domain,
-		KnownHosts: r.KnownHosts, URL: r.URL, Vendor: r.Vendor}
+		KnownHosts: r.KnownHosts, TLS: r.TLS, URL: r.URL, Vendor: r.Vendor}
 }
 
 func (c remoteConfig) apply(r *remote.Remote) {
 	r.Provider, r.Region, r.Endpoint, r.PathStyle = c.Provider, c.Region, c.Endpoint, c.PathStyle
 	r.Account, r.Host, r.Port, r.User, r.Domain = c.Account, c.Host, c.Port, c.User, c.Domain
-	r.KnownHosts, r.URL, r.Vendor = c.KnownHosts, c.URL, c.Vendor
+	r.KnownHosts, r.TLS, r.URL, r.Vendor = c.KnownHosts, c.TLS, c.URL, c.Vendor
 }
 
 // sealSecrets stores the credential as one sealed JSON document ("" when unset)

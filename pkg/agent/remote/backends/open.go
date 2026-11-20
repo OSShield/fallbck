@@ -18,6 +18,8 @@ import (
 	rclonefs "github.com/rclone/rclone/fs"
 	libfs "github.com/scheiblingco/librc/fs"
 	"github.com/scheiblingco/librc/remote/azure"
+	"github.com/scheiblingco/librc/remote/azurefiles"
+	"github.com/scheiblingco/librc/remote/ftp"
 	"github.com/scheiblingco/librc/remote/s3"
 	"github.com/scheiblingco/librc/remote/sftp"
 	"github.com/scheiblingco/librc/remote/smb"
@@ -56,9 +58,9 @@ func newSession(r *spec.Remote, creds remote.Credentials) (*Session, error) {
 	return s, nil
 }
 
-// Open opens one root of the job: bucket[/prefix] (S3), container[/prefix] (Azure),
-// share[/path] (SMB), or a path on the server (SFTP: absolute, "" is "/"; WebDAV:
-// below the URL)
+// Open opens one root of the job: bucket[/prefix] (S3), container[/prefix] (Azure
+// Blob), share[/path] (SMB, Azure Files), or a path on the server (SFTP and FTP:
+// absolute, "" is "/"; WebDAV: below the URL)
 func (s *Session) Open(ctx context.Context, root string) (remote.Source, error) {
 	r, c := s.remote, s.creds
 	name := "fallbck-" + r.Backend
@@ -83,8 +85,16 @@ func (s *Session) Open(ctx context.Context, root string) (remote.Source, error) 
 		}
 		f, err = sftp.New(ctx, sftp.Config{Name: name, Host: r.Host, Port: r.EffPort(), User: r.User, Password: c.Password,
 			KeyPEM: c.KeyPEM, KnownHostsFile: s.knownHosts, Root: "/" + root})
+	case spec.BackendAzureFiles:
+		share, path, _ := strings.Cut(root, "/")
+		f, err = azurefiles.New(ctx, azurefiles.Config{Name: name, ShareName: share, Root: path, Account: r.Account,
+			Key: c.AccountKey, SASUrl: c.SASURL, Endpoint: r.Endpoint})
 	case spec.BackendSMB:
 		f, err = smb.New(ctx, s.smbConfig(root))
+	case spec.BackendFTP:
+		// the certificate is checked against the system CAs; there's no way to skip it
+		f, err = ftp.New(ctx, ftp.Config{Name: name, Host: r.Host, Port: r.EffPort(), User: r.User, Password: c.Password,
+			TLS: r.TLS == spec.FTPTLSImplicit, ExplicitTLS: r.TLS == spec.FTPTLSExplicit, Root: "/" + root})
 	case spec.BackendWebDAV:
 		f, err = webdav.New(ctx, webdav.Config{Name: name, URL: r.URL, Vendor: webdav.Vendor(r.Vendor), User: r.User,
 			Password: c.Password, BearerToken: c.BearerToken, Root: root})

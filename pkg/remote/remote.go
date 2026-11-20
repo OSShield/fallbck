@@ -1,5 +1,5 @@
-// Package remote holds the remote storage backup job ("remote": S3, Azure Blob,
-// SFTP, SMB and WebDAV through rclone), the server-side remote model and the agent
+// Package remote holds the remote storage backup job ("remote": S3, Azure Blob
+// and Files, SFTP, SMB, FTP and WebDAV through rclone), the server-side remote model and the agent
 // credential profile. It's shared by the server and the agent, so it stays free of
 // rclone and agent dependencies.
 package remote
@@ -26,10 +26,14 @@ const (
 	BackendSFTP   = "sftp"
 	BackendSMB    = "smb"
 	BackendWebDAV = "webdav"
+	BackendFTP    = "ftp"
+	// BackendAzureFiles is Azure Files (SMB shares in a storage account, read
+	// through its REST API)
+	BackendAzureFiles = "azurefiles"
 )
 
 // Backends lists every backend, in display order
-var Backends = []string{BackendS3, BackendAzure, BackendSFTP, BackendSMB, BackendWebDAV}
+var Backends = []string{BackendS3, BackendAzure, BackendAzureFiles, BackendSFTP, BackendSMB, BackendFTP, BackendWebDAV}
 
 // CleanBackends keeps the known backends of an agent's report, without duplicates
 func CleanBackends(in []string) []string {
@@ -63,6 +67,15 @@ const (
 
 var s3Providers = []string{S3AWS, S3Minio, S3Wasabi, S3Cloudflare, S3Other}
 
+// FTP TLS modes: explicit (AUTH TLS on the control port) is the default
+const (
+	FTPTLSExplicit = "explicit"
+	FTPTLSImplicit = "implicit"
+	FTPTLSNone     = "none"
+)
+
+var ftpTLSModes = []string{FTPTLSExplicit, FTPTLSImplicit, FTPTLSNone}
+
 // WebDAV vendors (the rclone vendor setting)
 var webdavVendors = []string{"nextcloud", "owncloud", "infinitescale", "sharepoint", "sharepoint-ntlm", "fastmail", "rclone", "other"}
 
@@ -77,13 +90,16 @@ type Remote struct {
 
 	// S3: Provider, Region, Endpoint ("" = AWS) and PathStyle.
 	// Azure Blob: Account and Endpoint ("" = <account>.blob.core.windows.net).
+	// Azure Files: the same, with <account>.file.core.windows.net.
 	Provider  string `json:"provider,omitempty"`
 	Region    string `json:"region,omitempty"`
 	Endpoint  string `json:"endpoint,omitempty"`
 	PathStyle bool   `json:"path_style,omitempty"`
 	Account   string `json:"account,omitempty"`
 
-	// SFTP and SMB: Host, Port (0 = the protocol default) and User. SMB: Domain.
+	// SFTP, SMB and FTP: Host, Port (0 = the protocol default) and User. SMB:
+	// Domain. FTP: TLS (explicit, implicit or none; the certificate is checked
+	// against the system CAs).
 	// SFTP: KnownHosts, the server's host keys ("<type> <base64>", required: the
 	// agent refuses servers it can't verify).
 	Host       string   `json:"host,omitempty"`
@@ -91,6 +107,7 @@ type Remote struct {
 	User       string   `json:"user,omitempty"`
 	Domain     string   `json:"domain,omitempty"`
 	KnownHosts []string `json:"known_hosts,omitempty"`
+	TLS        string   `json:"tls,omitempty"`
 
 	// WebDAV: URL, Vendor and User
 	URL    string `json:"url,omitempty"`
@@ -114,10 +131,10 @@ type Secrets struct {
 	// S3
 	AccessKeyID     string `json:"access_key_id,omitempty"`
 	SecretAccessKey string `json:"secret_access_key,omitempty"`
-	// Azure Blob: the account key, or a SAS URL on the remote's own account
+	// Azure Blob and Files: the account key, or a SAS URL on the remote's own account
 	AccountKey string `json:"account_key,omitempty"`
 	SASURL     string `json:"sas_url,omitempty"`
-	// SFTP, SMB and WebDAV
+	// SFTP, SMB, FTP and WebDAV
 	Password string `json:"password,omitempty"`
 	// SFTP: an unencrypted private key (PEM or OpenSSH format)
 	KeyPEM string `json:"key_pem,omitempty"`
@@ -169,7 +186,7 @@ func (r *Remote) Validate() error {
 		if r.Provider, err = s3Provider(keep.Provider, r.Endpoint); err != nil {
 			return remoteErr("%v", err)
 		}
-	case BackendAzure:
+	case BackendAzure, BackendAzureFiles:
 		if !accountRe(keep.Account) {
 			return remoteErr("account must be the storage account name (3-24 lower-case letters and digits)")
 		}
@@ -179,7 +196,7 @@ func (r *Remote) Validate() error {
 				return remoteErr("endpoint: %v", err)
 			}
 		}
-	case BackendSFTP, BackendSMB:
+	case BackendSFTP, BackendSMB, BackendFTP:
 		if r.Host, err = cleanHost(keep.Host); err != nil {
 			return remoteErr("host: %v", err)
 		}
@@ -187,9 +204,21 @@ func (r *Remote) Validate() error {
 			return remoteErr("port must be between 1 and 65535")
 		}
 		r.Port, r.User = keep.Port, keep.User
-		if r.Backend == BackendSMB {
+		switch r.Backend {
+		case BackendSMB:
 			r.Domain = keep.Domain
-		} else {
+		case BackendFTP:
+			if r.User == "" {
+				return remoteErr("user is required")
+			}
+			r.TLS = strings.ToLower(strings.TrimSpace(keep.TLS))
+			if r.TLS == "" {
+				r.TLS = FTPTLSExplicit
+			}
+			if !slices.Contains(ftpTLSModes, r.TLS) {
+				return remoteErr("tls must be one of %s", strings.Join(ftpTLSModes, ", "))
+			}
+		default:
 			if r.User == "" {
 				return remoteErr("user is required")
 			}
@@ -246,19 +275,29 @@ func (r *Remote) Identity() string {
 			return awsIdentity
 		}
 		return origin(r.Endpoint)
-	case BackendAzure:
+	case BackendAzure, BackendAzureFiles:
 		if r.Endpoint == "" {
-			return "https://" + r.Account + ".blob.core.windows.net"
+			return azureService(r.Backend, r.Account)
 		}
 		return origin(r.Endpoint)
 	case BackendSFTP:
 		return "sftp://" + net.JoinHostPort(r.Host, strconv.Itoa(r.EffPort()))
 	case BackendSMB:
 		return "smb://" + net.JoinHostPort(r.Host, strconv.Itoa(r.EffPort()))
+	case BackendFTP:
+		return "ftp://" + net.JoinHostPort(r.Host, strconv.Itoa(r.EffPort()))
 	case BackendWebDAV:
 		return origin(r.URL)
 	}
 	return ""
+}
+
+// azureService is an account's default service URL: blob or file
+func azureService(backend, account string) string {
+	if backend == BackendAzureFiles {
+		return "https://" + account + ".file.core.windows.net"
+	}
+	return "https://" + account + ".blob.core.windows.net"
 }
 
 // awsIdentity covers every AWS region: credentials aren't tied to one
@@ -269,8 +308,14 @@ func (r *Remote) EffPort() int {
 	if r.Port != 0 {
 		return r.Port
 	}
-	if r.Backend == BackendSMB {
+	switch r.Backend {
+	case BackendSMB:
 		return 445
+	case BackendFTP:
+		if r.TLS == FTPTLSImplicit {
+			return 990
+		}
+		return 21
 	}
 	return 22
 }
@@ -307,7 +352,7 @@ func cleanSecrets(backend, identity string, in Secrets) (Secrets, error) {
 		if (s.AccessKeyID == "") != (s.SecretAccessKey == "") {
 			return s, errors.New("set both the access key id and the secret access key")
 		}
-	case BackendAzure:
+	case BackendAzure, BackendAzureFiles:
 		s.AccountKey, s.SASURL = strings.TrimSpace(in.AccountKey), strings.TrimSpace(in.SASURL)
 		if s.AccountKey != "" && s.SASURL != "" {
 			return s, errors.New("set either the account key or a SAS URL")
@@ -328,7 +373,7 @@ func cleanSecrets(backend, identity string, in Secrets) (Secrets, error) {
 				return s, fmt.Errorf("private key: %v (it must be unencrypted)", err)
 			}
 		}
-	case BackendSMB:
+	case BackendSMB, BackendFTP:
 		s.Password = in.Password
 	case BackendWebDAV:
 		s.Password, s.BearerToken = in.Password, strings.TrimSpace(in.BearerToken)

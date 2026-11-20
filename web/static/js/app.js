@@ -703,8 +703,10 @@ function agentRunsRemote(backends, backend) {
 const REMOTE_ROOT_HINTS = {
   s3: ['Buckets (one per line, optional)', 'Bucket, optionally with a prefix: <code>bucket</code> or <code>bucket/prefix</code>. Empty backs up every bucket the credential can see, found again at every run.'],
   azureblob: ['Containers (one per line, optional)', 'Container, optionally with a prefix: <code>container</code> or <code>container/prefix</code>. Empty backs up every container the credential can see, found again at every run.'],
+  azurefiles: ['Shares (one per line)', 'Share, optionally with a path: <code>share</code> or <code>share/dir</code>. At least one: the agent can\'t list an account\'s shares yet.'],
   smb: ['Shares (one per line, optional)', 'Share, optionally with a path: <code>share</code> or <code>share/dir</code>. Empty backs up every share the user can see (except the ones ending in $), found again at every run.'],
   sftp: ['Paths (one per line, optional)', 'Absolute paths on the server, e.g. <code>srv/data</code> for /srv/data. Empty backs up from /.'],
+  ftp: ['Paths (one per line, optional)', 'Absolute paths on the server, e.g. <code>pub/data</code> for /pub/data. Empty backs up from /.'],
   webdav: ['Paths (one per line, optional)', 'Paths below the remote\'s URL. Empty backs up everything below it.'],
 };
 
@@ -717,6 +719,7 @@ function updateRemoteJob(form) {
   const [label, hint] = REMOTE_ROOT_HINTS[opt ? opt.dataset.backend : 's3'];
   box.querySelector('.remote-roots-label').innerText = label;
   box.querySelector('.remote-roots-hint').innerHTML = hint;
+  form.elements['remote_roots'].required = !!opt && opt.dataset.backend === 'azurefiles';
   const agentAuth = opt && opt.dataset.auth === 'agent';
   box.querySelector('.remote-profile-label').innerText = 'Agent credential profile' + (agentAuth ? ' (required: the remote keeps its credential on the agents)' : ' (optional)');
   form.elements['remote_profile'].required = !!agentAuth;
@@ -2171,14 +2174,17 @@ function buildRemotePayload(form) {
       take(['access_key_id', 'secret_access_key'], secrets);
       break;
     case 'azureblob':
+    case 'azurefiles':
       take(['account', 'endpoint'], r);
       take(['account_key', 'sas_url'], secrets);
       break;
     case 'sftp':
     case 'smb':
+    case 'ftp':
       take(['host', 'user'], r);
       if (v('port')) r.port = Number(v('port'));
       if (backend === 'smb') take(['domain'], r);
+      else if (backend === 'ftp') take(['tls'], r);
       else r.known_hosts = v('known_hosts').split('\n').map(l => l.trim()).filter(Boolean);
       take(backend === 'sftp' ? ['password', 'key_pem'] : ['password'], secrets);
       break;
@@ -2201,7 +2207,7 @@ function resetRemoteFields(form) {
 
 function loadRemoteIntoFields(form, r) {
   resetRemoteFields(form);
-  for (const k of ['name', 'backend', 'auth_method', 'provider', 'region', 'endpoint', 'account', 'host', 'user', 'domain', 'url', 'vendor']) {
+  for (const k of ['name', 'backend', 'auth_method', 'provider', 'region', 'endpoint', 'account', 'host', 'user', 'domain', 'tls', 'url', 'vendor']) {
     if (r[k] !== undefined && r[k] !== null) remoteField(form, k).value = r[k];
   }
   if (r.port) remoteField(form, 'port').value = r.port;
@@ -2210,6 +2216,20 @@ function loadRemoteIntoFields(form, r) {
   setFormLabels(form, r.labels, 'remote_labels');
   if (r.has_secret) form.querySelectorAll('.remote-secret').forEach(el => { el.placeholder = 'leave blank to keep the stored credential'; });
   updateRemoteFields(form);
+}
+
+// hetznerPreset fills in a Hetzner Storage Box: SFTP on port 23 at
+// <main account>.your-storagebox.de (a sub-account logs in on its main account's host)
+function hetznerPreset(form) {
+  const user = remoteField(form, 'user');
+  const main = (user.value || '').trim().replace(/-sub\d+$/, '');
+  if (!/^u\d+$/.test(main)) {
+    showToast('Enter the Storage Box user first (u123456 or u123456-sub1)', 'error');
+    user.focus();
+    return;
+  }
+  remoteField(form, 'host').value = `${main}.your-storagebox.de`;
+  remoteField(form, 'port').value = 23;
 }
 
 function newRemote() {
@@ -2271,12 +2291,16 @@ function remoteTestCommand(r) {
       if (r.region) test.push(`--region ${q(r.region)}`);
       break;
     case 'azureblob':
-      endpoint = r.endpoint || r.account; root = '<container>';
+    case 'azurefiles':
+      endpoint = r.endpoint || r.account; root = r.backend === 'azurefiles' ? '<share>' : '<container>';
       if (r.endpoint) test.push(`--user ${q(r.account)}`);
       break;
     case 'sftp':
     case 'smb':
-      endpoint = r.host + (r.port ? ':' + r.port : ''); root = r.backend === 'smb' ? '<share>' : '<path>';
+    case 'ftp':
+      // an implicit-TLS FTP remote without a port is on 990, which the profile names
+      endpoint = r.host + (r.port ? ':' + r.port : (r.tls === 'implicit' ? ':990' : '')); root = r.backend === 'smb' ? '<share>' : '<path>';
+      if (r.tls && r.tls !== 'explicit') test.push(`--tls ${r.tls}`);
       if (r.user) test.push(`--user ${q(r.user)}`);
       if (r.domain) test.push(`--domain ${q(r.domain)}`);
       if (r.known_hosts && r.known_hosts.length) test.push(`--host-key ${q(r.known_hosts[0])}`);

@@ -710,7 +710,7 @@ func (u *UIHandler) HandleConnections(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// HandleRemotes lists the storage remotes (S3, Azure Blob, SFTP, SMB, WebDAV)
+// HandleRemotes lists the storage remotes (S3, Azure Blob and Files, SFTP, SMB, FTP, WebDAV)
 // remote jobs back up
 func (u *UIHandler) HandleRemotes(w http.ResponseWriter, r *http.Request) {
 	var remotes []*remote.Remote

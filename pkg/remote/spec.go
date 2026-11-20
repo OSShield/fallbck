@@ -143,6 +143,9 @@ func (s *Spec) ValidateFor(r *Remote) error {
 		return nil
 	}
 	// No roots: every bucket, container or share, found again at every run
+	if what, ok := DiscoversRoots(r.Backend); !ok && len(s.Roots) == 0 {
+		return specErr("name at least one %s: the agent can't list them on %s", what, r.Backend)
+	}
 	for _, root := range s.Roots {
 		first, _, _ := strings.Cut(root, "/")
 		if err := check(first); err != nil {
@@ -179,7 +182,8 @@ func (s *Spec) EffConcurrency() int {
 // bucket, container or share (found at each run), and what those are called
 func DiscoversRoots(backend string) (what string, ok bool) {
 	what, check := rootKind(backend)
-	return what, check != nil
+	// ponytail: librc v0.1.0 has no azurefiles.ListShares; add it there to drop this
+	return what, check != nil && backend != BackendAzureFiles
 }
 
 // rootKind names what the first segment of a root is on the backend, and checks it
@@ -197,6 +201,13 @@ func rootKind(backend string) (string, func(string) error) {
 		return "container", func(c string) error {
 			if len(c) < 3 || len(c) > 63 || strings.Trim(c, "abcdefghijklmnopqrstuvwxyz0123456789-") != "" {
 				return fmt.Errorf("%q is not an Azure container name (3-63 lower-case letters, digits and '-')", c)
+			}
+			return nil
+		}
+	case BackendAzureFiles:
+		return "share", func(sh string) error {
+			if len(sh) < 3 || len(sh) > 63 || strings.Trim(sh, "abcdefghijklmnopqrstuvwxyz0123456789-") != "" {
+				return fmt.Errorf("%q is not an Azure file share name (3-63 lower-case letters, digits and '-')", sh)
 			}
 			return nil
 		}

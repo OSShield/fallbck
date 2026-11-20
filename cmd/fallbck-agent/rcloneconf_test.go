@@ -67,6 +67,33 @@ remote = minio:photos
 [ftp]
 type = ftp
 host = ftp.example.com
+user = bkp
+pass = ` + obscure.MustObscure("ftp-pass") + `
+explicit_tls = true
+
+[ftps]
+type = ftp
+host = ftps.example.com
+user = bkp
+pass = ` + obscure.MustObscure("ftp-pass") + `
+tls = true
+port = 990
+
+[insecure]
+type = ftp
+host = ftp.example.com
+user = bkp
+explicit_tls = true
+no_check_certificate = true
+
+[files]
+type = azurefiles
+account = photosacct
+share_name = profiles
+key = files-key
+
+[gdrive]
+type = drive
 
 [jump]
 type = sftp
@@ -130,6 +157,15 @@ func TestImportRcloneSections(t *testing.T) {
 		"cloud": func(p remote.Profile, r *remote.Remote) bool {
 			return p.Secrets.BearerToken == "tok" && r.Vendor == "nextcloud" && p.Endpoint == "https://cloud.example.com"
 		},
+		"ftp": func(p remote.Profile, r *remote.Remote) bool {
+			return p.Secrets.Password == "ftp-pass" && r.TLS == remote.FTPTLSExplicit && p.Endpoint == "ftp://ftp.example.com:21"
+		},
+		"ftps": func(p remote.Profile, r *remote.Remote) bool {
+			return r.TLS == remote.FTPTLSImplicit && p.Endpoint == "ftp://ftps.example.com:990"
+		},
+		"files": func(p remote.Profile, r *remote.Remote) bool {
+			return p.Secrets.AccountKey == "files-key" && r.Account == "photosacct" && p.Endpoint == "https://photosacct.file.core.windows.net"
+		},
 	}
 	for section, check := range cases {
 		kv, err := loadRcloneSection(path, section, noAsk)
@@ -159,12 +195,13 @@ func TestImportRcloneSections(t *testing.T) {
 	}
 
 	for section, want := range map[string]string{
-		"secret":  "wraps another one",
-		"ftp":     `type "ftp"`,
-		"jump":    "sets ssh",
-		"r2":      "has no endpoint",
-		"azurite": "has a path",
-		"missing": "no section [missing]",
+		"secret":   "wraps another one",
+		"gdrive":   `type "drive"`,
+		"insecure": "sets no_check_certificate",
+		"jump":     "sets ssh",
+		"r2":       "has no endpoint",
+		"azurite":  "has a path",
+		"missing":  "no section [missing]",
 	} {
 		kv, err := loadRcloneSection(path, section, noAsk)
 		if err == nil {

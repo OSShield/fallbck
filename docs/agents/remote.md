@@ -1,13 +1,15 @@
 # Remote storage
 
-Backs up storage that lives somewhere else: S3 buckets, Azure Blob containers, and SFTP, SMB and WebDAV servers. Any `fallbck-agent` that can reach the storage runs the job. It lists what's there and reads every object into PBS. It never writes, renames or deletes anything on the remote.
+Backs up storage that lives somewhere else: S3 buckets, Azure Blob containers, Azure Files shares, and SFTP, SMB, FTP and WebDAV servers. Any `fallbck-agent` that can reach the storage runs the job. It lists what's there and reads every object into PBS. It never writes, renames or deletes anything on the remote.
 
 | Backend | `backend` | A root is |
 |---|---|---|
 | S3 (AWS, MinIO, Wasabi, Cloudflare R2, anything S3-compatible) | `s3` | `bucket` or `bucket/prefix` |
 | Azure Blob Storage | `azureblob` | `container` or `container/prefix` |
-| SFTP | `sftp` | an absolute path on the server, without the leading `/` |
+| Azure Files | `azurefiles` | `share` or `share/path` |
+| SFTP (also [Hetzner Storage Box](#hetzner-storage-box)) | `sftp` | an absolute path on the server, without the leading `/` |
 | SMB / CIFS | `smb` | `share` or `share/path` |
+| FTP / FTPS | `ftp` | an absolute path on the server, without the leading `/` |
 | WebDAV (Nextcloud, ownCloud, SharePoint, …) | `webdav` | a path below the remote's URL |
 
 This is a beta. Set it up in the web UI (**Remotes**, then **Onboarding → Remote storage**) or through the [API](../reference/api.md#remotes); both are shown below.
@@ -55,7 +57,9 @@ MinIO takes the same policy (`mc admin policy create`). Wasabi and R2 have their
 
 The SAS has to be for the remote's own storage account.
 
-**SFTP, SMB and WebDAV.** A user with read access to the paths. On SFTP, that's a password or an unencrypted private key.
+**Azure Files.** The same as Blob, with **File** as the allowed service and Container and Object as the resource types. A SAS made for Blob doesn't work on Files.
+
+**SFTP, SMB, FTP and WebDAV.** A user with read access to the paths. On SFTP, that's a password or an unencrypted private key.
 
 ## 3. Create a remote
 
@@ -73,15 +77,31 @@ curl -X POST https://fallbck.example.com/api/v1/remotes \
 | Backend | Fields |
 |---|---|
 | `s3` | `provider` (`AWS`, `Minio`, `Wasabi`, `Cloudflare`, `Other`; left empty it's AWS without an endpoint and Other with one), `region`, `endpoint` (empty for AWS), `path_style` (MinIO and most self-hosted S3 want it). Secrets: `access_key_id`, `secret_access_key`. |
-| `azureblob` | `account`, `endpoint` (empty for Azure itself). Secrets: `account_key` or `sas_url`. |
+| `azureblob`, `azurefiles` | `account`, `endpoint` (empty for Azure itself). Secrets: `account_key` or `sas_url`. |
 | `sftp` | `host`, `port` (default 22), `user`, `known_hosts` (required). Secrets: `password` or `key_pem`. |
 | `smb` | `host`, `port` (default 445), `user`, `domain`. Secrets: `password`. |
+| `ftp` | `host`, `port` (default 21, or 990 with implicit TLS), `user`, `tls` (`explicit`, the default, `implicit` or `none`). Secrets: `password`. |
 | `webdav` | `url`, `vendor` (`nextcloud`, `owncloud`, `infinitescale`, `sharepoint`, `sharepoint-ntlm`, `fastmail`, `rclone`, `other`), `user`. Secrets: `password` or `bearer_token`, or none. |
 
 The credential is sealed on the server and handed to the agent per run with its backup ticket. The API never returns it.
 
 !!! warning "SFTP needs the server's host keys"
     The agent won't talk to an SFTP server it can't verify. Put the server's keys in `known_hosts`, one `<type> <base64>` per entry. Get them with `ssh-keyscan -p 22 sftp.example.com`, or let `fallbck-agent remote profile test` fetch and print them (step 4). Compare the fingerprint with the server's before you trust it.
+
+!!! warning "FTP sends the password in clear text unless you use TLS"
+    Keep `tls` on `explicit` (or `implicit`, if that's all the server does). The certificate has to be valid for the host and trusted by the agent's system. There's no option to skip that check, so a server with a self-signed certificate is refused. Put its CA in the agent's system trust store, or give the server a real certificate. Use `none` only on a network you trust with the password.
+
+### Hetzner Storage Box
+
+A Storage Box is SFTP on port 23, so it's an `sftp` remote. In the web UI, enter the user (`u123456`, or a sub-account like `u123456-sub1`) and click **Hetzner Storage Box**, which fills in the host and port. Through the API:
+
+```json
+{"name": "storagebox", "backend": "sftp", "host": "u123456.your-storagebox.de", "port": 23,
+ "user": "u123456-sub1", "known_hosts": ["ssh-ed25519 AAAA..."]}
+```
+
+- A sub-account logs in on its main account's host and sees only its own directory. Give the job a sub-account with read-only access, not the main account.
+- Get the host keys with `ssh-keyscan -p 23 u123456.your-storagebox.de`, and check them against the fingerprints Hetzner publishes.
 
 The **Test** button on the Remotes page doesn't connect to anything, because the server has no route to your storage and shouldn't need one. It shows the agent commands that test the remote from where the job will run.
 
@@ -103,14 +123,14 @@ The agent only uses a profile for the endpoint it was created for. If someone ch
 | Backend | `--endpoint` |
 |---|---|
 | `s3` | the endpoint URL, or `aws` for AWS (any region) |
-| `azureblob` | the storage account name, or the blob service URL |
-| `sftp`, `smb` | `host` or `host:port` |
+| `azureblob`, `azurefiles` | the storage account name, or the blob or file service URL |
+| `sftp`, `smb`, `ftp` | `host` or `host:port`. For FTP with implicit TLS, `host:990`. |
 | `webdav` | the server URL (only scheme, host and port count) |
 
 Where the credential comes from:
 
 - `--ask-secret` prompts for the backend's usual secret: the S3 secret access key, the Azure account key, or the password. It reads one line from standard input when piped.
-- `--ask-sas-url` (Azure) and `--ask-token` (WebDAV) prompt for the alternatives.
+- `--ask-sas-url` (Azure Blob and Files) and `--ask-token` (WebDAV) prompt for the alternatives.
 - `--secret-file` reads that secret from a file at every run, so a secret manager can rotate it in place.
 - `--key-file` (SFTP) reads a private key at every run. Add `--store-key` to copy it into the store instead.
 - `--env-auth` (S3) stores nothing and uses the agent's environment or instance role: `AWS_ACCESS_KEY_ID` and friends, an EC2 instance profile, or IRSA.
@@ -127,9 +147,9 @@ The section defaults to `--name`; pick another with `--section`. The import take
 
 It then prints the matching remote as JSON for `POST /api/v1/remotes`, with `auth_method` set to `agent`. Its endpoint is the one the profile is bound to. For SFTP, you still need to fill in `known_hosts`.
 
-It only imports sections of type `s3`, `azureblob`, `sftp`, `smb` and `webdav`, and refuses anything it can't do the same way. That covers wrapper remotes such as `crypt` and `alias` (import the section they point to), S3 profiles and session tokens, Azure managed identities and service principals, SFTP through an `ssh` command, an agent or an encrypted key, and Kerberos on SMB. S3 providers other than AWS need `endpoint` written out, because rclone fills it in itself. Azure endpoints in the emulator form (`<url>/<account>`) aren't accepted, the same as for remotes.
+It only imports sections of type `s3`, `azureblob`, `azurefiles`, `sftp`, `smb`, `ftp` and `webdav`, and refuses anything it can't do the same way. That covers wrapper remotes such as `crypt` and `alias` (import the section they point to), S3 profiles and session tokens, Azure managed identities and service principals, SFTP through an `ssh` command, an agent or an encrypted key, Kerberos on SMB, and FTP with `no_check_certificate`. S3 providers other than AWS need `endpoint` written out, because rclone fills it in itself. Azure endpoints in the emulator form (`<url>/<account>`) aren't accepted, the same as for remotes.
 
-`profile test` opens the root the way a run would and lists the first ten entries. Give it what the remote has that the profile doesn't: `--root`, plus `--user`, `--region` or `--domain` where they apply. For an Azure endpoint URL, `--user` is the account name. For SFTP, pass the server's key with `--host-key`. Without it, the agent fetches the key, prints its fingerprint and trusts it for that one test.
+`profile test` opens the root the way a run would and lists the first ten entries. Give it what the remote has that the profile doesn't: `--root`, plus `--user`, `--region`, `--domain` or `--tls` (FTP) where they apply. For an Azure endpoint URL, `--user` is the account name. For SFTP, pass the server's key with `--host-key`. Without it, the agent fetches the key, prints its fingerprint and trusts it for that one test.
 
 The agent's status page warns when a job names a profile the agent doesn't have, a profile made for another endpoint, or a backend the agent can't read.
 
@@ -157,7 +177,7 @@ Through the API:
 
 | Field | Default | |
 |---|---|---|
-| `roots` | every bucket, container or share; the whole remote on SFTP and WebDAV | What to back up (see the table at the top). Roots can't overlap. |
+| `roots` | every bucket, container or share; the whole remote on SFTP, FTP and WebDAV; required on Azure Files | What to back up (see the table at the top). Roots can't overlap. |
 | `include` | everything | Globs on paths below a root. `*` doesn't cross `/`. A pattern that matches a directory takes everything below it. |
 | `exclude` | nothing | Same syntax. Excludes win over includes. |
 | `split` | `single` | `single`: one snapshot per run, each root a directory in it. `per_root`: one snapshot group per root. |
@@ -166,7 +186,7 @@ Through the API:
 
 `POST` it to `/api/v1/jobs`.
 
-Leave `roots` out on S3, Azure or SMB and the job backs up every bucket, container or share the credential can see. The agent lists them again at the start of every run, so a new bucket is in the next backup without touching the job, and a deleted one just drops out. SMB shares ending in `$` (`IPC$`, `C$`) are skipped. The credential needs the right to list them; see step 2. There's no way to exclude a bucket yet, so give the job a credential that only sees what you want backed up, or list the roots.
+Leave `roots` out on S3, Azure or SMB and the job backs up every bucket, container or share the credential can see. The agent lists them again at the start of every run, so a new bucket is in the next backup without touching the job, and a deleted one just drops out. SMB shares ending in `$` (`IPC$`, `C$`) are skipped. The credential needs the right to list them; see step 2. Azure Files can't do this yet: name the shares. There's no way to exclude a bucket yet, so give the job a credential that only sees what you want backed up, or list the roots.
 
 ## What lands on PBS
 

@@ -12,8 +12,10 @@ for those backends; remote-secret-opts only while the server holds the credentia
     <select name="remote_backend" class="form-control" onchange="updateRemoteFields(this.form)">
       <option value="s3" selected>S3 (AWS, MinIO, Wasabi, Cloudflare R2, …)</option>
       <option value="azureblob">Azure Blob Storage</option>
-      <option value="sftp">SFTP</option>
+      <option value="azurefiles">Azure Files</option>
+      <option value="sftp">SFTP (also Hetzner Storage Box)</option>
       <option value="smb">SMB / CIFS</option>
+      <option value="ftp">FTP / FTPS</option>
       <option value="webdav">WebDAV</option>
     </select>
   </div>
@@ -36,18 +38,22 @@ for those backends; remote-secret-opts only while the server holds the credentia
     <input type="text" name="remote_region" class="form-control" placeholder="eu-north-1">
   </div>
 </div>
-<div data-backends="azureblob" class="form-group">
+<div data-backends="azureblob azurefiles" class="form-group">
   <label>Storage account</label>
   <input type="text" name="remote_account" class="form-control" placeholder="contosobackup">
 </div>
-<div data-backends="s3 azureblob" class="form-group">
+<div data-backends="s3 azureblob azurefiles" class="form-group">
   <label>Endpoint</label>
   <input type="text" name="remote_endpoint" class="form-control" placeholder="https://minio.example.com:9000">
   <span class="form-text">Leave empty for AWS or Azure itself. The credential is only ever sent here.</span>
   <label data-backends="s3" style="display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 13px;"><input type="checkbox" name="remote_path_style"> Path-style requests (MinIO and most self-hosted S3)</label>
 </div>
 
-<div data-backends="sftp smb" style="display: grid; grid-template-columns: 2fr 1fr; gap: 16px;">
+<div data-backends="sftp" style="display: flex; flex-direction: row; align-items: center; justify-content: flex-start; gap: 12px; margin-bottom: 16px;">
+  <button type="button" class="btn btn-secondary btn-sm" style="width: auto; flex: none;" onclick="hetznerPreset(this.form)">Hetzner Storage Box</button>
+  <span class="form-text" style="margin: 0;">Fills in the host and port from the user below (u123456, or a sub-account like u123456-sub1).</span>
+</div>
+<div data-backends="sftp smb ftp" style="display: grid; grid-template-columns: 2fr 1fr; gap: 16px;">
   <div class="form-group">
     <label>Host</label>
     <input type="text" name="remote_host" class="form-control" placeholder="nas.example.com">
@@ -76,7 +82,7 @@ for those backends; remote-secret-opts only while the server holds the credentia
     </select>
   </div>
 </div>
-<div data-backends="sftp smb webdav" style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+<div data-backends="sftp smb ftp webdav" style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
   <div class="form-group">
     <label>User</label>
     <input type="text" name="remote_user" class="form-control">
@@ -84,6 +90,15 @@ for those backends; remote-secret-opts only while the server holds the credentia
   <div class="form-group" data-backends="smb">
     <label>Domain</label>
     <input type="text" name="remote_domain" class="form-control" placeholder="WORKGROUP">
+  </div>
+  <div class="form-group" data-backends="ftp">
+    <label>TLS</label>
+    <select name="remote_tls" class="form-control">
+      <option value="explicit" selected>Explicit (AUTH TLS on port 21)</option>
+      <option value="implicit">Implicit (port 990)</option>
+      <option value="none">None: password in clear text</option>
+    </select>
+    <span class="form-text">The certificate must be valid for the host and trusted by the agent's system; self-signed ones are refused.</span>
   </div>
 </div>
 <div data-backends="sftp" class="form-group">
@@ -115,7 +130,7 @@ for those backends; remote-secret-opts only while the server holds the credentia
       <span class="form-text">To change the credential, enter both.</span>
     </div>
   </div>
-  <div data-backends="azureblob" style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+  <div data-backends="azureblob azurefiles" style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
     <div class="form-group">
       <label>Account key</label>
       <input type="password" name="remote_account_key" class="form-control remote-secret" autocomplete="new-password">
@@ -123,10 +138,10 @@ for those backends; remote-secret-opts only while the server holds the credentia
     <div class="form-group">
       <label>or SAS URL</label>
       <input type="password" name="remote_sas_url" class="form-control remote-secret" autocomplete="new-password">
-      <span class="form-text">Read and list permissions on the account's containers.</span>
+      <span class="form-text">Read and list permissions on the account's containers or shares.</span>
     </div>
   </div>
-  <div data-backends="sftp smb webdav" class="form-group">
+  <div data-backends="sftp smb ftp webdav" class="form-group">
     <label>Password</label>
     <input type="password" name="remote_password" class="form-control remote-secret" autocomplete="new-password">
   </div>

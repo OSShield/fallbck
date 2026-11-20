@@ -80,7 +80,7 @@ The details, including the trade-offs, are in [Security](https://docs.fallbck.eu
 | Containers | Databases | Supports backups of databases inside containers, same databases as above, with the credentials fetched from a kubernetes secret | Restore files or archives from PBS UI or CLI and run the script included in the backup for automatic restore, or copy/restore files manually as needed |
 | Cloud | Microsoft 365 [Beta] | Backup of Microsoft 365 data including Outlook, OneDrive, Sharepoint, Teams and Entra data | Saved as much as possible as the native format, automatic restore functionality and documentation is still under active development |
 | Code | Git repositories [Beta] | Mirrors of git repositories over HTTPS (GitLab groups, GitHub owners, stars and gists, or plain URLs): all branches, tags, merge/pull request heads and Git LFS objects, one snapshot per run | Restore the archive from PBS UI or CLI and run the included script to push a repository into an empty one |
-| Cloud | Remote storage [Beta] | Read-only backup of S3 buckets, Azure Blob containers and SFTP, SMB and WebDAV servers, one snapshot per run or one per bucket, container or share | Restore the archive from PBS UI or CLI and copy it back with rclone, the cloud CLI or plain scp |
+| Cloud | Remote storage [Beta] | Read-only backup of S3 buckets, Azure Blob containers, Azure Files shares and SFTP (Hetzner Storage Box too), SMB, FTP and WebDAV servers, one snapshot per run or one per bucket, container or share | Restore the archive from PBS UI or CLI and copy it back with rclone, the cloud CLI or plain scp |
 
 
 ## LLM Usage
@@ -131,7 +131,7 @@ These are the future backup sources that are currently planned. If you miss any,
 - VCS (Gitea, Forgejo, etc.)
   - GitLab and GitHub are done
 - Cloud storage (via librclone)
-  - S3, Azure Blob, SFTP, SMB and WebDAV are done; more rclone backends (Dropbox, Google Drive, Mega, …) as people ask for them
+  - S3, Azure Blob, Azure Files, SFTP, SMB, FTP and WebDAV are done; more rclone backends (Dropbox, Google Drive, Mega, …) as people ask for them
 - Google Workspace (Gmail, Drive, Calendar, Contacts, etc.)
 - Build a better, responsive UI for the web interface
 - Other hypervisors

@@ -25,7 +25,7 @@ type Profile struct {
 	// never reported. S3 keeps its access key id here too.
 	Secrets Secrets `json:"-"`
 	// SecretFile is read at run time instead of the secret: the S3 secret access
-	// key, the Azure account key, or the SFTP, SMB or WebDAV password
+	// key, the Azure account key, or the SFTP, SMB, FTP or WebDAV password
 	SecretFile string `json:"secret_file,omitempty"`
 	// KeyFile is an SFTP private key read at run time
 	KeyFile string `json:"key_file,omitempty"`
@@ -46,8 +46,9 @@ type ProfileSummary struct {
 // NormalizeEndpoint turns what an administrator writes for a profile into the
 // identity it's compared with (Remote.Identity):
 //   - S3: the endpoint URL, or "" / "aws" for AWS (any region)
-//   - Azure Blob: the account name, or the blob service URL
-//   - SFTP and SMB: host or host:port
+//   - Azure Blob and Files: the account name, or the service URL
+//   - SFTP, SMB and FTP: host or host:port (an FTP profile for implicit TLS
+//     names port 990)
 //   - WebDAV: the server URL (only scheme, host and port count)
 func NormalizeEndpoint(backend, raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
@@ -58,16 +59,16 @@ func NormalizeEndpoint(backend, raw string) (string, error) {
 		}
 		u, err := normalizeURL(raw, false)
 		return origin(u), err
-	case BackendAzure:
+	case BackendAzure, BackendAzureFiles:
 		if strings.Contains(raw, "://") {
 			u, err := normalizeURL(raw, false)
 			return origin(u), err
 		}
 		if a := strings.ToLower(raw); accountRe(a) {
-			return "https://" + a + ".blob.core.windows.net", nil
+			return azureService(backend, a), nil
 		}
 		return "", fmt.Errorf("%q is neither a storage account name nor a URL", raw)
-	case BackendSFTP, BackendSMB:
+	case BackendSFTP, BackendSMB, BackendFTP:
 		host, port := raw, 0
 		if h, p, err := net.SplitHostPort(raw); err == nil {
 			n, err := strconv.Atoi(p)
@@ -134,11 +135,11 @@ func (p *Profile) Validate() error {
 	} else {
 		var sources int
 		switch p.Backend {
-		case BackendAzure:
+		case BackendAzure, BackendAzureFiles:
 			sources = set(s.AccountKey, s.SASURL, p.SecretFile)
 		case BackendSFTP:
 			sources = set(s.Password, s.KeyPEM, p.SecretFile, p.KeyFile)
-		case BackendSMB:
+		case BackendSMB, BackendFTP:
 			sources = set(s.Password, p.SecretFile)
 		case BackendWebDAV:
 			sources = set(s.Password, s.BearerToken, p.SecretFile)
@@ -165,7 +166,7 @@ func (p *Profile) Credentials() (Secrets, error) {
 		switch p.Backend {
 		case BackendS3:
 			s.SecretAccessKey = v
-		case BackendAzure:
+		case BackendAzure, BackendAzureFiles:
 			s.AccountKey = v
 		default:
 			s.Password = v

@@ -5,15 +5,24 @@
 //
 //	docker compose -f .bin/librc/tests/compose.yml up -d s3 sftp webdav azurite smb
 //	go test -tags remoteintegration ./pkg/agent/remote/backends/
+//
+// The FTP server is started here (rclone serve ftp, host network, port 2121 and
+// passive ports 30000-30009). Azure Files has no emulator, so it has no case.
 package backends
 
 import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"errors"
 	"io"
+	"math/big"
 	"net"
+	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +30,7 @@ import (
 	"github.com/google/uuid"
 	libfs "github.com/scheiblingco/librc/fs"
 	"github.com/scheiblingco/librc/remote/azure"
+	"github.com/scheiblingco/librc/remote/ftp"
 	"github.com/scheiblingco/librc/remote/s3"
 	"github.com/scheiblingco/librc/remote/sftp"
 	"github.com/scheiblingco/librc/remote/smb"
@@ -64,7 +74,30 @@ func sftpHostKey(t *testing.T, addr string) string {
 	return strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key)))
 }
 
+// startFTP runs rclone serve ftp (plain) on 127.0.0.1:port with ten passive ports
+func startFTP(t *testing.T, port, passive int) {
+	t.Helper()
+	name := "fallbck-it-ftp-" + uuid.NewString()[:8]
+	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+	out, err := exec.Command("docker", "run", "-d", "--name", name, "--network", "host", "rclone/rclone:1.74.3",
+		"serve", "ftp", "/data", "--addr", addr, "--user", "testuser", "--pass", "testpass", "--public-ip", "127.0.0.1",
+		"--passive-port", strconv.Itoa(passive)+"-"+strconv.Itoa(passive+9)).CombinedOutput()
+	if err != nil {
+		t.Fatalf("starting the ftp server: %v\n%s", err, out)
+	}
+	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", name).Run() })
+	for i := 0; i < 50; i++ {
+		if c, err := net.Dial("tcp", addr); err == nil {
+			c.Close()
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("the ftp server on %s didn't start", addr)
+}
+
 func cases(t *testing.T) map[string]backendCase {
+	startFTP(t, 2121, 30000)
 	return map[string]backendCase{
 		"s3": {
 			remote:  &spec.Remote{Name: "s3", Backend: spec.BackendS3, Provider: spec.S3Other, Endpoint: "http://127.0.0.1:9000", PathStyle: true},
@@ -117,6 +150,18 @@ func cases(t *testing.T) map[string]backendCase {
 				return f
 			},
 			base: "share/fbk/",
+		},
+		"ftp": {
+			remote:  &spec.Remote{Name: "ftp", Backend: spec.BackendFTP, Host: "127.0.0.1", Port: 2121, User: "testuser", TLS: spec.FTPTLSNone},
+			secrets: spec.Secrets{Password: "testpass"},
+			seed: func(ctx context.Context, t *testing.T) libfs.Filesystem {
+				f, err := ftp.New(ctx, ftp.Config{Name: "seed-ftp", Host: "127.0.0.1", Port: 2121, User: "testuser", Password: "testpass", Root: "/fbk"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				return f
+			},
+			base: "fbk/",
 		},
 		"webdav": {
 			remote:  &spec.Remote{Name: "webdav", Backend: spec.BackendWebDAV, URL: "http://127.0.0.1:18080", Vendor: "rclone", User: "testuser"},
@@ -261,6 +306,55 @@ func TestSFTPWrongHostKey(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "key mismatch") && !strings.Contains(err.Error(), "host key") {
 		t.Fatalf("want a host key error, got %v", err)
+	}
+	t.Log(err)
+}
+
+// An FTP server whose certificate the system doesn't trust is refused during the
+// TLS handshake, before the agent sends anything else. The server is a bare TLS
+// listener with a self-signed certificate: a password would come after the
+// handshake, so receiving any data counts as a failure.
+func TestFTPSelfSigned(t *testing.T) {
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "127.0.0.1"},
+		IPAddresses: []net.IP{net.IPv4(127, 0, 0, 1)}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour)}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, pub, priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln, err := tls.Listen("tcp", "127.0.0.1:0", &tls.Config{Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: priv}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	got := make(chan string, 1)
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		_, _ = c.Write([]byte("220 hello\r\n"))
+		b := make([]byte, 64)
+		n, _ := c.Read(b)
+		got <- string(b[:n])
+	}()
+
+	port := ln.Addr().(*net.TCPAddr).Port
+	r := &spec.Remote{Name: "ftps", Backend: spec.BackendFTP, Host: "127.0.0.1", Port: port, User: "testuser", TLS: spec.FTPTLSImplicit}
+	res, _, err := run(t, r, spec.Secrets{Password: "testpass"}, []string{""}, spec.SplitSingle)
+	if err == nil {
+		t.Fatalf("a self-signed certificate was accepted: %+v", res)
+	}
+	if !strings.Contains(err.Error(), "certificate") {
+		t.Fatalf("want a certificate error, got %v", err)
+	}
+	select {
+	case data := <-got:
+		if data != "" {
+			t.Errorf("the server received %q", data)
+		}
+	case <-time.After(5 * time.Second):
 	}
 	t.Log(err)
 }

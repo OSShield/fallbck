@@ -79,6 +79,7 @@ var rcloneRefused = map[string][]string{
 	remote.BackendSFTP:   {"ssh", "key_file_pass", "key_use_agent", "pubkey", "pubkey_file", "ask_password"},
 	remote.BackendSMB:    {"use_kerberos", "spn"},
 	remote.BackendWebDAV: {"bearer_token_command", "auth_redirect"},
+	remote.BackendFTP:    {"no_check_certificate", "ask_password"},
 }
 
 // profileFromRclone maps an rclone section to an agent profile and the remote the
@@ -88,11 +89,15 @@ func profileFromRclone(section string, kv map[string]string) (remote.Profile, *r
 	switch typ {
 	case "alias", "crypt", "union", "combine", "chunker", "compress", "hasher", "cache":
 		return remote.Profile{}, nil, fmt.Errorf("[%s] is a %s remote, which wraps another one; import the section it points to", section, typ)
-	case remote.BackendS3, remote.BackendAzure, remote.BackendSFTP, remote.BackendSMB, remote.BackendWebDAV:
+	case remote.BackendS3, remote.BackendAzure, remote.BackendAzureFiles, remote.BackendSFTP, remote.BackendSMB, remote.BackendFTP, remote.BackendWebDAV:
 	default:
 		return remote.Profile{}, nil, fmt.Errorf("[%s] is type %q; fallbck can import %s", section, kv["type"], strings.Join(remote.Backends, ", "))
 	}
-	for _, k := range rcloneRefused[typ] {
+	refused := rcloneRefused[typ]
+	if typ == remote.BackendAzureFiles {
+		refused = rcloneRefused[remote.BackendAzure]
+	}
+	for _, k := range refused {
 		if v := strings.TrimSpace(kv[k]); v != "" && !strings.EqualFold(v, "false") {
 			return remote.Profile{}, nil, fmt.Errorf("[%s] sets %s, which an agent profile doesn't support; create the profile with flags instead", section, k)
 		}
@@ -140,7 +145,7 @@ func profileFromRclone(section string, kv map[string]string) (remote.Profile, *r
 		} else {
 			p.Secrets.AccessKeyID, p.Secrets.SecretAccessKey = kv["access_key_id"], kv["secret_access_key"]
 		}
-	case remote.BackendAzure:
+	case remote.BackendAzure, remote.BackendAzureFiles:
 		r.Account, r.Endpoint = kv["account"], kv["endpoint"]
 		if r.Account == "" {
 			// a SAS URL names its account: https://<account>.blob.core.windows.net/...
@@ -156,8 +161,23 @@ func profileFromRclone(section string, kv map[string]string) (remote.Profile, *r
 			p.Endpoint = r.Account
 		}
 		p.Secrets.AccountKey, p.Secrets.SASURL = kv["key"], kv["sas_url"]
-	case remote.BackendSFTP, remote.BackendSMB:
+	case remote.BackendSFTP, remote.BackendSMB, remote.BackendFTP:
 		r.Host, r.Port, r.User, r.Domain = kv["host"], port, kv["user"], kv["domain"]
+		if typ == remote.BackendFTP {
+			switch {
+			case strings.EqualFold(kv["tls"], "true"):
+				r.TLS = remote.FTPTLSImplicit
+				if port == 0 {
+					// rclone keeps port 21 for implicit TLS too; the profile needs it
+					port = 21
+					r.Port = port
+				}
+			case strings.EqualFold(kv["explicit_tls"], "true"):
+				r.TLS = remote.FTPTLSExplicit
+			default:
+				r.TLS = remote.FTPTLSNone
+			}
+		}
 		if r.User == "" {
 			r.User = os.Getenv("USER") // rclone's default
 		}
@@ -222,6 +242,7 @@ func remoteBody(r *remote.Remote, knownHostsFile string) map[string]any {
 	set("port", r.Port)
 	set("user", r.User)
 	set("domain", r.Domain)
+	set("tls", r.TLS)
 	set("url", r.URL)
 	set("vendor", r.Vendor)
 	if r.Backend == remote.BackendSFTP {

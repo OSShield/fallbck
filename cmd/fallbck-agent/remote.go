@@ -40,14 +40,14 @@ func remoteCommand(args []string) error {
 
 const remoteUsage = `Usage:
   fallbck-agent remote profile create --name <name> --backend s3 --endpoint <url|aws> (--access-key-id <id> (--ask-secret | --secret-file <path>) | --env-auth)
-  fallbck-agent remote profile create --name <name> --backend azureblob --endpoint <account|url> (--ask-secret | --ask-sas-url | --secret-file <path>)
+  fallbck-agent remote profile create --name <name> --backend azureblob|azurefiles --endpoint <account|url> (--ask-secret | --ask-sas-url | --secret-file <path>)
   fallbck-agent remote profile create --name <name> --backend sftp --endpoint <host[:port]> (--ask-secret | --secret-file <path> | --key-file <pem> [--store-key])
-  fallbck-agent remote profile create --name <name> --backend smb --endpoint <host[:port]> (--ask-secret | --secret-file <path>)
+  fallbck-agent remote profile create --name <name> --backend smb|ftp --endpoint <host[:port]> (--ask-secret | --secret-file <path>)
   fallbck-agent remote profile create --name <name> --backend webdav --endpoint <url> (--ask-secret | --ask-token | --secret-file <path>)
   fallbck-agent remote profile create --name <name> --from-rclone-conf <rclone.conf> [--section <section>] [flags above to override]
   fallbck-agent remote profile list
   fallbck-agent remote profile delete --name <name>
-  fallbck-agent remote profile test --name <name> --root <root> [--user <user>] [--region <region>] [--domain <domain>] [--host-key "<type> <base64>"]
+  fallbck-agent remote profile test --name <name> --root <root> [--user <user>] [--region <region>] [--domain <domain>] [--host-key "<type> <base64>"] [--tls explicit|implicit|none]
 Every command takes --config <agent.yaml> (default: the enrolled agent's file). A job uses a
 profile by naming it; the agent uses it only when the profile's backend and endpoint equal the
 job's remote, so a changed remote can't send the credential anywhere else. Credentials are
@@ -56,12 +56,13 @@ the server. --ask-* reads from the terminal without echo, or one line from stand
 piped. --secret-file holds the S3 secret access key, the Azure account key or the password;
 secret and key files are read at every run, and --store-key copies the SFTP key into the
 store instead. --env-auth (S3) uses the agent's environment or instance role.
---from-rclone-conf imports an rclone remote of type s3, azureblob, sftp, smb or webdav, including
+An FTP profile for implicit TLS names port 990 (--endpoint host:990).
+--from-rclone-conf imports an rclone remote of type s3, azureblob, azurefiles, sftp, smb, ftp or webdav, including
 its obscured password; an encrypted file is opened with RCLONE_CONFIG_PASS or a prompt. The
 credential is copied into the store (an SFTP key_file is still read at every run, unless
 --store-key), and the matching remote for the server is printed.
-test lists the start of a root (S3 bucket, Azure container, SMB share, SFTP or WebDAV path)
-with the user, region or domain the remote has. Without --host-key, SFTP prints the server's
+test lists the start of a root (S3 bucket, Azure container, SMB or Azure Files share, SFTP, FTP
+or WebDAV path) with the user, region, domain or FTP TLS mode the remote has. Without --host-key, SFTP prints the server's
 host key and trusts it for the test only: compare its fingerprint before adding it to the remote.
 `
 
@@ -74,20 +75,21 @@ func remoteProfileCommand(args []string) error {
 	configPath := fs.String("config", "", "Path to agent.yaml")
 	name := fs.String("name", "", "Profile name (jobs reference it)")
 	backend := fs.String("backend", "", strings.Join(remote.Backends, ", "))
-	endpoint := fs.String("endpoint", "", "Where the credential may be sent: S3 endpoint URL or aws, Azure account or URL, SFTP/SMB host[:port], WebDAV URL")
+	endpoint := fs.String("endpoint", "", "Where the credential may be sent: S3 endpoint URL or aws, Azure account or URL, SFTP/SMB/FTP host[:port], WebDAV URL")
 	accessKeyID := fs.String("access-key-id", "", "s3: the access key id")
 	askSecret := fs.Bool("ask-secret", false, "prompt for the secret access key, account key or password")
-	askSAS := fs.Bool("ask-sas-url", false, "azureblob: prompt for a SAS URL instead of the account key")
+	askSAS := fs.Bool("ask-sas-url", false, "azureblob, azurefiles: prompt for a SAS URL instead of the account key")
 	askToken := fs.Bool("ask-token", false, "webdav: prompt for a bearer token instead of a password")
 	secretFile := fs.String("secret-file", "", "file holding the secret access key, account key or password (read at every run)")
 	keyFile := fs.String("key-file", "", "sftp: unencrypted private key (read at every run)")
 	storeKey := fs.Bool("store-key", false, "sftp: copy the key into the encrypted store instead of reading the file at every run")
 	envAuth := fs.Bool("env-auth", false, "s3: use the agent's environment or instance role (no stored credential)")
 	root := fs.String("root", "", "test: the root to list")
-	user := fs.String("user", "", "test: the user (sftp, smb, webdav)")
+	user := fs.String("user", "", "test: the user (sftp, smb, ftp, webdav)")
 	region := fs.String("region", "", "test: the region (s3)")
 	domain := fs.String("domain", "", "test: the domain (smb)")
 	hostKey := fs.String("host-key", "", "test: the SFTP server's host key (\"<type> <base64>\")")
+	ftpTLS := fs.String("tls", "", "test: the FTP TLS mode (explicit, implicit or none; default explicit)")
 	fromConf := fs.String("from-rclone-conf", "", "create: import the backend, endpoint and credential from this rclone.conf")
 	section := fs.String("section", "", "create: the rclone.conf section (default: --name)")
 	if err := fs.Parse(args[1:]); err != nil {
@@ -151,7 +153,7 @@ func remoteProfileCommand(args []string) error {
 				p.Secrets.BearerToken = v
 			case strings.EqualFold(*backend, remote.BackendS3):
 				p.Secrets.SecretAccessKey = v
-			case strings.EqualFold(*backend, remote.BackendAzure):
+			case strings.EqualFold(*backend, remote.BackendAzure), strings.EqualFold(*backend, remote.BackendAzureFiles):
 				p.Secrets.AccountKey = v
 			default:
 				p.Secrets.Password = v
@@ -215,7 +217,7 @@ func remoteProfileCommand(args []string) error {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
-		return testRemoteProfile(ctx, p, *root, *user, *region, *domain, *hostKey)
+		return testRemoteProfile(ctx, p, *root, *user, *region, *domain, *hostKey, *ftpTLS)
 	default:
 		return fmt.Errorf("unknown profile command %q\n%s", args[0], remoteUsage)
 	}
@@ -251,8 +253,8 @@ func importRcloneProfile(path, section string, flagged remote.Profile) (remote.P
 
 // testRemoteProfile opens the profile's endpoint as a run would and lists the first
 // objects of root
-func testRemoteProfile(ctx context.Context, p *remote.Profile, root, user, region, domain, hostKey string) error {
-	r, err := profileRemote(ctx, p, user, region, domain, hostKey)
+func testRemoteProfile(ctx context.Context, p *remote.Profile, root, user, region, domain, hostKey, tls string) error {
+	r, err := profileRemote(ctx, p, user, region, domain, hostKey, tls)
 	if err != nil {
 		return err
 	}
@@ -304,16 +306,17 @@ func testRemoteProfile(ctx context.Context, p *remote.Profile, root, user, regio
 // profileRemote builds the remote a test talks to from the profile's endpoint and
 // the settings the server's remote would carry. Without a host key, an SFTP
 // server's key is fetched, printed and trusted for this test only.
-func profileRemote(ctx context.Context, p *remote.Profile, user, region, domain, hostKey string) (*remote.Remote, error) {
-	r := &remote.Remote{Name: "test", Backend: p.Backend, AuthMethod: remote.AuthAgent, User: user, Region: region, Domain: domain}
+func profileRemote(ctx context.Context, p *remote.Profile, user, region, domain, hostKey, tls string) (*remote.Remote, error) {
+	r := &remote.Remote{Name: "test", Backend: p.Backend, AuthMethod: remote.AuthAgent, User: user, Region: region, Domain: domain, TLS: tls}
 	switch p.Backend {
 	case remote.BackendS3:
 		if p.Endpoint != (&remote.Remote{Backend: remote.BackendS3}).Identity() {
 			r.Endpoint, r.PathStyle = p.Endpoint, true
 		}
-	case remote.BackendAzure:
+	case remote.BackendAzure, remote.BackendAzureFiles:
 		host := strings.TrimPrefix(p.Endpoint, "https://")
-		if acct, ok := strings.CutSuffix(host, ".blob.core.windows.net"); ok {
+		if acct, ok := strings.CutSuffix(host, ".core.windows.net"); ok && !strings.Contains(acct, ":") {
+			acct, _, _ = strings.Cut(acct, ".")
 			r.Account = acct
 		} else {
 			// an emulator or private endpoint: http://host:port/<account>
@@ -323,7 +326,7 @@ func profileRemote(ctx context.Context, p *remote.Profile, user, region, domain,
 				return nil, errors.New("--user is the storage account name for an Azure endpoint URL")
 			}
 		}
-	case remote.BackendSFTP, remote.BackendSMB:
+	case remote.BackendSFTP, remote.BackendSMB, remote.BackendFTP:
 		hostport := p.Endpoint[strings.Index(p.Endpoint, "://")+3:]
 		host, port, err := net.SplitHostPort(hostport)
 		if err != nil {

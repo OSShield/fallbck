@@ -58,6 +58,12 @@ func TestRemoteValidate(t *testing.T) {
 			KnownHosts: []string{hostKey}, Secrets: Secrets{Password: "p"}}, "sftp://[2001:db8::1]:2222"},
 		"smb": {Remote{Name: "files", Backend: "smb", Host: "fs01", User: "svc", Domain: "CORP",
 			Secrets: Secrets{Password: "p"}}, "smb://fs01:445"},
+		"azure files": {Remote{Name: "af", Backend: "azurefiles", Account: "contosodata",
+			Secrets: Secrets{SASURL: "https://contosodata.file.core.windows.net/?sv=2024&sig=x"}}, "https://contosodata.file.core.windows.net"},
+		"ftp explicit": {Remote{Name: "ftp", Backend: "ftp", Host: "FTP.example.com", User: "b",
+			Secrets: Secrets{Password: "p"}}, "ftp://ftp.example.com:21"},
+		"ftp implicit": {Remote{Name: "ftp", Backend: "ftp", Host: "ftp.example.com", User: "b", TLS: "Implicit",
+			Secrets: Secrets{Password: "p"}}, "ftp://ftp.example.com:990"},
 		"webdav anonymous": {Remote{Name: "dav", Backend: "webdav", URL: "https://Cloud.example.com/remote.php/dav/files/alice/"}, "https://cloud.example.com"},
 		"agent-held": {Remote{Name: "a", Backend: "s3", AuthMethod: "Agent",
 			Secrets: Secrets{AccessKeyID: "dropped", SecretAccessKey: "dropped"}}, "https://s3.amazonaws.com"},
@@ -117,6 +123,9 @@ func TestRemoteValidate(t *testing.T) {
 		"sftp key and pass":  {Name: "x", Backend: "sftp", Host: "h", User: "u", KnownHosts: []string{hostKey}, Secrets: Secrets{KeyPEM: keyPEM, Password: "p"}},
 		"host with port":     {Name: "x", Backend: "smb", Host: "fs01:445", Secrets: Secrets{Password: "p"}},
 		"port range":         {Name: "x", Backend: "smb", Host: "fs01", Port: 70000, Secrets: Secrets{Password: "p"}},
+		"blob sas on files":  {Name: "x", Backend: "azurefiles", Account: "contoso", Secrets: Secrets{SASURL: "https://contoso.blob.core.windows.net/?sig=x"}},
+		"ftp no user":        {Name: "x", Backend: "ftp", Host: "h", Secrets: Secrets{Password: "p"}},
+		"ftp bad tls":        {Name: "x", Backend: "ftp", Host: "h", User: "u", TLS: "starttls", Secrets: Secrets{Password: "p"}},
 		"bad vendor":         {Name: "x", Backend: "webdav", URL: "https://e", Vendor: "dropbox"},
 		"dav pass and token": {Name: "x", Backend: "webdav", URL: "https://e", Secrets: Secrets{Password: "p", BearerToken: "t"}},
 	}
@@ -191,6 +200,9 @@ func TestSpecValidateFor(t *testing.T) {
 		{"container", Spec{RemoteID: id, Roots: []string{"backups"}}, &Remote{Backend: BackendAzure}, true},
 		{"share", Spec{RemoteID: id, Roots: []string{"Data$/x"}}, &Remote{Backend: BackendSMB}, true},
 		{"no share: every share", Spec{RemoteID: id}, &Remote{Backend: BackendSMB}, true},
+		{"azure files share", Spec{RemoteID: id, Roots: []string{"profiles/alice"}}, &Remote{Backend: BackendAzureFiles}, true},
+		{"azure files bad share", Spec{RemoteID: id, Roots: []string{"Profiles"}}, &Remote{Backend: BackendAzureFiles}, false},
+		{"azure files needs roots", Spec{RemoteID: id}, &Remote{Backend: BackendAzureFiles}, false},
 		{"agent-held needs profile", Spec{RemoteID: id, Roots: []string{"bkt"}}, &Remote{Backend: BackendS3, AuthMethod: AuthAgent}, false},
 		{"agent-held with profile", Spec{RemoteID: id, Roots: []string{"bkt"}, Profile: "p"}, &Remote{Backend: BackendS3, AuthMethod: AuthAgent}, true},
 		{"missing remote", Spec{RemoteID: id}, nil, false},
@@ -248,6 +260,8 @@ func TestProfile(t *testing.T) {
 		"sftp key file": {Profile{Backend: "sftp", Endpoint: "NAS:2222", KeyFile: keyFile}, "sftp://nas:2222"},
 		"sftp default":  {Profile{Backend: "sftp", Endpoint: "nas", Secrets: Secrets{Password: "p"}}, "sftp://nas:22"},
 		"smb file":      {Profile{Backend: "smb", Endpoint: "fs01", SecretFile: secretFile}, "smb://fs01:445"},
+		"files account": {Profile{Backend: "azurefiles", Endpoint: "contoso", Secrets: Secrets{AccountKey: "k"}}, "https://contoso.file.core.windows.net"},
+		"ftp":           {Profile{Backend: "ftp", Endpoint: "ftp.example.com", SecretFile: secretFile}, "ftp://ftp.example.com:21"},
 		"webdav token":  {Profile{Backend: "webdav", Endpoint: "https://cloud.example.com/remote.php/dav", Secrets: Secrets{BearerToken: "t"}}, "https://cloud.example.com"},
 	}
 	for name, c := range ok {
@@ -313,5 +327,27 @@ func TestProfile(t *testing.T) {
 	_ = smb.Validate()
 	if err := smb.Matches(&Remote{Backend: "sftp", Host: "fs01", Port: 445}); err == nil {
 		t.Error("profile matched another backend")
+	}
+
+	// An Azure Files profile is for the account's file service, not its blobs
+	files := ok["files account"].p
+	_ = files.Validate()
+	if err := files.Matches(&Remote{Backend: "azurefiles", Account: "contoso"}); err != nil {
+		t.Errorf("azure files: %v", err)
+	}
+	if err := files.Matches(&Remote{Backend: "azureblob", Account: "contoso"}); err == nil {
+		t.Error("an azure files profile matched the account's blob service")
+	}
+	// FTP: implicit TLS moves the default port, so a host-only profile doesn't match
+	ftp := ok["ftp"].p
+	_ = ftp.Validate()
+	explicit := &Remote{Name: "f", Backend: "ftp", Host: "ftp.example.com", User: "u", AuthMethod: AuthAgent}
+	implicit := &Remote{Name: "f", Backend: "ftp", Host: "ftp.example.com", User: "u", AuthMethod: AuthAgent, TLS: FTPTLSImplicit}
+	_, _ = explicit.Validate(), implicit.Validate()
+	if err := ftp.Matches(explicit); err != nil {
+		t.Errorf("ftp: %v", err)
+	}
+	if err := ftp.Matches(implicit); err == nil {
+		t.Error("a port 21 profile matched an implicit-TLS remote on 990")
 	}
 }

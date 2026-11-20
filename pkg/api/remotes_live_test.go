@@ -172,6 +172,20 @@ func TestLiveRemotesAPI(t *testing.T) {
 		t.Errorf("sftp without host key: %d %s", code, resp)
 	}
 
+	// FTP's TLS mode survives the round trip through the database
+	code, resp = call(t, h, http.MethodPost, "/api/v1/remotes", map[string]any{"name": "ftps", "backend": "ftp", "host": "ftp.example.com", "user": "u",
+		"tls": "implicit", "labels": map[string]string{"team": "a"}, "secrets": map[string]string{"password": "p"}})
+	var ftp remote.Remote
+	if code != http.StatusCreated || json.Unmarshal(resp, &ftp) != nil {
+		t.Fatalf("ftp: %d %s", code, resp)
+	}
+	if got, _ := d.GetRemoteByID(ctx, ftp.ID, db.Unscoped); got == nil || got.TLS != remote.FTPTLSImplicit || got.Identity() != "ftp://ftp.example.com:990" {
+		t.Errorf("ftp after save: %+v", got)
+	}
+	if code, _ := call(t, admin, http.MethodDelete, "/api/v1/remotes/"+ftp.ID.String(), nil); code != http.StatusNoContent && code != http.StatusOK {
+		t.Errorf("delete ftp: %d", code)
+	}
+
 	// An update without a credential keeps it
 	update := map[string]any{"name": "minio", "backend": "s3", "endpoint": "http://minio:9001", "labels": map[string]string{"team": "a"}}
 	if code, resp := call(t, h, http.MethodPut, path, update); code != http.StatusOK || !bytes.Contains(resp, []byte(`"has_secret":true`)) {
