@@ -57,7 +57,7 @@ MinIO takes the same policy (`mc admin policy create`). Wasabi and R2 have their
 
 The SAS has to be for the remote's own storage account.
 
-**Azure Files.** The same as Blob, with **File** as the allowed service and Container and Object as the resource types. A SAS made for Blob doesn't work on Files.
+**Azure Files.** The same as Blob, with **File** as the allowed service. A SAS made for Blob doesn't work on Files.
 
 **SFTP, SMB, FTP and WebDAV.** A user with read access to the paths. On SFTP, that's a password or an unencrypted private key.
 
@@ -177,7 +177,7 @@ Through the API:
 
 | Field | Default | |
 |---|---|---|
-| `roots` | every bucket, container or share; the whole remote on SFTP, FTP and WebDAV; required on Azure Files | What to back up (see the table at the top). Roots can't overlap. |
+| `roots` | every bucket, container or share; the whole remote on SFTP, FTP and WebDAV | What to back up (see the table at the top). Roots can't overlap. |
 | `include` | everything | Globs on paths below a root. `*` doesn't cross `/`. A pattern that matches a directory takes everything below it. |
 | `exclude` | nothing | Same syntax. Excludes win over includes. |
 | `split` | `single` | `single`: one snapshot per run, each root a directory in it. `per_root`: one snapshot group per root. |
@@ -186,7 +186,7 @@ Through the API:
 
 `POST` it to `/api/v1/jobs`.
 
-Leave `roots` out on S3, Azure or SMB and the job backs up every bucket, container or share the credential can see. The agent lists them again at the start of every run, so a new bucket is in the next backup without touching the job, and a deleted one just drops out. SMB shares ending in `$` (`IPC$`, `C$`) are skipped. The credential needs the right to list them; see step 2. Azure Files can't do this yet: name the shares. There's no way to exclude a bucket yet, so give the job a credential that only sees what you want backed up, or list the roots.
+Leave `roots` out on S3, Azure Blob, Azure Files or SMB and the job backs up every bucket, container or share the credential can see. The agent lists them again at the start of every run, so a new bucket is in the next backup without touching the job, and a deleted one just drops out. SMB shares ending in `$` (`IPC$`, `C$`) are skipped. The credential needs the right to list them; see step 2. There's no way to exclude a bucket yet, so give the job a credential that only sees what you want backed up, or list the roots.
 
 ## What lands on PBS
 

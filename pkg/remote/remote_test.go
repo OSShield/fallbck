@@ -202,7 +202,7 @@ func TestSpecValidateFor(t *testing.T) {
 		{"no share: every share", Spec{RemoteID: id}, &Remote{Backend: BackendSMB}, true},
 		{"azure files share", Spec{RemoteID: id, Roots: []string{"profiles/alice"}}, &Remote{Backend: BackendAzureFiles}, true},
 		{"azure files bad share", Spec{RemoteID: id, Roots: []string{"Profiles"}}, &Remote{Backend: BackendAzureFiles}, false},
-		{"azure files needs roots", Spec{RemoteID: id}, &Remote{Backend: BackendAzureFiles}, false},
+		{"azure files every share", Spec{RemoteID: id}, &Remote{Backend: BackendAzureFiles}, true},
 		{"agent-held needs profile", Spec{RemoteID: id, Roots: []string{"bkt"}}, &Remote{Backend: BackendS3, AuthMethod: AuthAgent}, false},
 		{"agent-held with profile", Spec{RemoteID: id, Roots: []string{"bkt"}, Profile: "p"}, &Remote{Backend: BackendS3, AuthMethod: AuthAgent}, true},
 		{"missing remote", Spec{RemoteID: id}, nil, false},

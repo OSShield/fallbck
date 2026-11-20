@@ -19,7 +19,7 @@ require (
 	github.com/osshield/gopbs v0.4.0-alpha.1
 	github.com/rclone/rclone v1.74.3
 	github.com/robfig/cron/v3 v3.0.1
-	github.com/scheiblingco/librc v0.1.0
+	github.com/scheiblingco/librc v0.1.1
 	github.com/sigstore/sigstore-go v1.3.0
 	github.com/stretchr/testify v1.12.1
 	github.com/temporalio/ui-server/v2 v2.55.0

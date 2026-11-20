@@ -182,8 +182,7 @@ func (s *Spec) EffConcurrency() int {
 // bucket, container or share (found at each run), and what those are called
 func DiscoversRoots(backend string) (what string, ok bool) {
 	what, check := rootKind(backend)
-	// ponytail: librc v0.1.0 has no azurefiles.ListShares; add it there to drop this
-	return what, check != nil && backend != BackendAzureFiles
+	return what, check != nil
 }
 
 // rootKind names what the first segment of a root is on the backend, and checks it

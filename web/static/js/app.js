@@ -703,7 +703,7 @@ function agentRunsRemote(backends, backend) {
 const REMOTE_ROOT_HINTS = {
   s3: ['Buckets (one per line, optional)', 'Bucket, optionally with a prefix: <code>bucket</code> or <code>bucket/prefix</code>. Empty backs up every bucket the credential can see, found again at every run.'],
   azureblob: ['Containers (one per line, optional)', 'Container, optionally with a prefix: <code>container</code> or <code>container/prefix</code>. Empty backs up every container the credential can see, found again at every run.'],
-  azurefiles: ['Shares (one per line)', 'Share, optionally with a path: <code>share</code> or <code>share/dir</code>. At least one: the agent can\'t list an account\'s shares yet.'],
+  azurefiles: ['Shares (one per line, optional)', 'Share, optionally with a path: <code>share</code> or <code>share/dir</code>. Empty backs up every share the credential can see, found again at every run.'],
   smb: ['Shares (one per line, optional)', 'Share, optionally with a path: <code>share</code> or <code>share/dir</code>. Empty backs up every share the user can see (except the ones ending in $), found again at every run.'],
   sftp: ['Paths (one per line, optional)', 'Absolute paths on the server, e.g. <code>srv/data</code> for /srv/data. Empty backs up from /.'],
   ftp: ['Paths (one per line, optional)', 'Absolute paths on the server, e.g. <code>pub/data</code> for /pub/data. Empty backs up from /.'],
@@ -719,7 +719,6 @@ function updateRemoteJob(form) {
   const [label, hint] = REMOTE_ROOT_HINTS[opt ? opt.dataset.backend : 's3'];
   box.querySelector('.remote-roots-label').innerText = label;
   box.querySelector('.remote-roots-hint').innerHTML = hint;
-  form.elements['remote_roots'].required = !!opt && opt.dataset.backend === 'azurefiles';
   const agentAuth = opt && opt.dataset.auth === 'agent';
   box.querySelector('.remote-profile-label').innerText = 'Agent credential profile' + (agentAuth ? ' (required: the remote keeps its credential on the agents)' : ' (optional)');
   form.elements['remote_profile'].required = !!agentAuth;

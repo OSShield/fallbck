@@ -15,7 +15,6 @@ import (
 	"strconv"
 	"strings"
 
-	rclonefs "github.com/rclone/rclone/fs"
 	libfs "github.com/scheiblingco/librc/fs"
 	"github.com/scheiblingco/librc/remote/azure"
 	"github.com/scheiblingco/librc/remote/azurefiles"
@@ -72,11 +71,10 @@ func (s *Session) Open(ctx context.Context, root string) (remote.Source, error) 
 	case spec.BackendS3:
 		// The listing's LastModified as the mtime: rclone otherwise HEADs every
 		// object for its mtime metadata (and uses the current time when that fails,
-		// which would defeat reuse). The backend keeps the config of this context.
-		// ponytail: set through rclone directly, belongs in librc's s3.Config
-		ctx, ci := rclonefs.AddConfig(ctx)
-		ci.UseServerModTime = true
-		f, err = s3.New(ctx, s.s3Config(root))
+		// which would defeat reuse)
+		cfg := s.s3Config(root)
+		cfg.UseServerModTime = true
+		f, err = s3.New(ctx, cfg)
 	case spec.BackendAzure:
 		f, err = azure.New(ctx, s.azureConfig(root))
 	case spec.BackendSFTP:
@@ -87,8 +85,7 @@ func (s *Session) Open(ctx context.Context, root string) (remote.Source, error) 
 			KeyPEM: c.KeyPEM, KnownHostsFile: s.knownHosts, Root: "/" + root})
 	case spec.BackendAzureFiles:
 		share, path, _ := strings.Cut(root, "/")
-		f, err = azurefiles.New(ctx, azurefiles.Config{Name: name, ShareName: share, Root: path, Account: r.Account,
-			Key: c.AccountKey, SASUrl: c.SASURL, Endpoint: r.Endpoint})
+		f, err = azurefiles.New(ctx, s.azureFilesConfig(share, path))
 	case spec.BackendSMB:
 		f, err = smb.New(ctx, s.smbConfig(root))
 	case spec.BackendFTP:
@@ -119,6 +116,8 @@ func (s *Session) Discover(ctx context.Context) ([]string, error) {
 		names, err = s3.ListBuckets(ctx, s.s3Config(""))
 	case spec.BackendAzure:
 		names, err = azure.ListContainers(ctx, s.azureConfig(""))
+	case spec.BackendAzureFiles:
+		names, err = azurefiles.ListShares(ctx, s.azureFilesConfig("", ""))
 	case spec.BackendSMB:
 		names, err = smb.ListShares(ctx, s.smbConfig(""))
 	default:
@@ -146,6 +145,12 @@ func (s *Session) s3Config(bucket string) s3.Config {
 func (s *Session) azureConfig(container string) azure.Config {
 	r, c := s.remote, s.creds
 	return azure.Config{Name: "fallbck-" + r.Backend, Container: container, Account: r.Account, Key: c.AccountKey, SASUrl: c.SASURL, Endpoint: r.Endpoint}
+}
+
+func (s *Session) azureFilesConfig(share, path string) azurefiles.Config {
+	r, c := s.remote, s.creds
+	return azurefiles.Config{Name: "fallbck-" + r.Backend, ShareName: share, Root: path, Account: r.Account,
+		Key: c.AccountKey, SASUrl: c.SASURL, Endpoint: r.Endpoint}
 }
 
 func (s *Session) smbConfig(share string) smb.Config {

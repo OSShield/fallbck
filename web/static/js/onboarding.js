@@ -898,7 +898,7 @@ function obRenderReview() {
     const rc = p.remote_config;
     const opt = remoteJobRemote(document.getElementById('job-form'));
     rows.push(['Remote', opt ? `${opt.dataset.name} (${opt.dataset.backend}, ${opt.dataset.identity})` : '-'],
-      ['Roots', rc.roots.join(', ') || ({ s3: 'every bucket, found at every run', azureblob: 'every container, found at every run', smb: 'every share, found at every run' })[opt && opt.dataset.backend] || 'the whole remote'],
+      ['Roots', rc.roots.join(', ') || ({ s3: 'every bucket, found at every run', azureblob: 'every container, found at every run', azurefiles: 'every share, found at every run', smb: 'every share, found at every run' })[opt && opt.dataset.backend] || 'the whole remote'],
       ['Snapshots', rc.split === 'per_root' ? 'one per root' : 'one, a directory per root'],
       ['Credential', rc.profile ? `agent credential profile ${rc.profile}` : "the remote's"]);
   }
