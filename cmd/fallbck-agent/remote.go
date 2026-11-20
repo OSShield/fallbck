@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -43,6 +44,7 @@ const remoteUsage = `Usage:
   fallbck-agent remote profile create --name <name> --backend sftp --endpoint <host[:port]> (--ask-secret | --secret-file <path> | --key-file <pem> [--store-key])
   fallbck-agent remote profile create --name <name> --backend smb --endpoint <host[:port]> (--ask-secret | --secret-file <path>)
   fallbck-agent remote profile create --name <name> --backend webdav --endpoint <url> (--ask-secret | --ask-token | --secret-file <path>)
+  fallbck-agent remote profile create --name <name> --from-rclone-conf <rclone.conf> [--section <section>] [flags above to override]
   fallbck-agent remote profile list
   fallbck-agent remote profile delete --name <name>
   fallbck-agent remote profile test --name <name> --root <root> [--user <user>] [--region <region>] [--domain <domain>] [--host-key "<type> <base64>"]
@@ -54,6 +56,10 @@ the server. --ask-* reads from the terminal without echo, or one line from stand
 piped. --secret-file holds the S3 secret access key, the Azure account key or the password;
 secret and key files are read at every run, and --store-key copies the SFTP key into the
 store instead. --env-auth (S3) uses the agent's environment or instance role.
+--from-rclone-conf imports an rclone remote of type s3, azureblob, sftp, smb or webdav, including
+its obscured password; an encrypted file is opened with RCLONE_CONFIG_PASS or a prompt. The
+credential is copied into the store (an SFTP key_file is still read at every run, unless
+--store-key), and the matching remote for the server is printed.
 test lists the start of a root (S3 bucket, Azure container, SMB share, SFTP or WebDAV path)
 with the user, region or domain the remote has. Without --host-key, SFTP prints the server's
 host key and trusts it for the test only: compare its fingerprint before adding it to the remote.
@@ -82,6 +88,8 @@ func remoteProfileCommand(args []string) error {
 	region := fs.String("region", "", "test: the region (s3)")
 	domain := fs.String("domain", "", "test: the domain (smb)")
 	hostKey := fs.String("host-key", "", "test: the SFTP server's host key (\"<type> <base64>\")")
+	fromConf := fs.String("from-rclone-conf", "", "create: import the backend, endpoint and credential from this rclone.conf")
+	section := fs.String("section", "", "create: the rclone.conf section (default: --name)")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -97,11 +105,21 @@ func remoteProfileCommand(args []string) error {
 
 	switch args[0] {
 	case "create", "update", "set":
-		if *name == "" || *backend == "" {
-			return errors.New("--name and --backend are required")
+		if *name == "" || (*backend == "" && *fromConf == "") {
+			return errors.New("--name and --backend (or --from-rclone-conf) are required")
 		}
 		p := remote.Profile{Backend: *backend, Endpoint: *endpoint, SecretFile: *secretFile, KeyFile: *keyFile, EnvAuth: *envAuth,
 			Secrets: remote.Secrets{AccessKeyID: *accessKeyID}}
+		var imported *remote.Remote
+		if *fromConf != "" {
+			if *section == "" {
+				*section = *name
+			}
+			if p, imported, err = importRcloneProfile(*fromConf, *section, p); err != nil {
+				return err
+			}
+			*backend = p.Backend
+		}
 		if *storeKey {
 			if p.KeyFile == "" {
 				return errors.New("--store-key needs --key-file")
@@ -145,6 +163,13 @@ func remoteProfileCommand(args []string) error {
 		n := naming.NormalizeProfileName(*name)
 		fmt.Printf("Remote profile %q saved to %s (encrypted). The agent reports it with its next inventory summary.\n", n, store.Path())
 		fmt.Println("Check it with: fallbck-agent remote profile test --name " + n + " --root <root>")
+		if imported != nil {
+			fmt.Println("\nThe matching remote for the server (POST /api/v1/remotes, or the same fields in the web UI):")
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetEscapeHTML(false)
+			enc.SetIndent("", "  ")
+			_ = enc.Encode(remoteBody(imported, ""))
+		}
 		return nil
 	case "list", "ls":
 		profiles, err := store.LoadRemote()
@@ -194,6 +219,34 @@ func remoteProfileCommand(args []string) error {
 	default:
 		return fmt.Errorf("unknown profile command %q\n%s", args[0], remoteUsage)
 	}
+}
+
+// importRcloneProfile reads an rclone.conf section into a profile; the flags in
+// flagged (backend, endpoint, credential sources) override what the section says
+func importRcloneProfile(path, section string, flagged remote.Profile) (remote.Profile, *remote.Remote, error) {
+	kv, err := loadRcloneSection(path, section, func() (string, error) { return readPassword("rclone config password: ") })
+	if err != nil {
+		return remote.Profile{}, nil, err
+	}
+	p, r, err := profileFromRclone(section, kv)
+	if err != nil {
+		return remote.Profile{}, nil, err
+	}
+	if flagged.Backend != "" && !strings.EqualFold(flagged.Backend, p.Backend) {
+		return remote.Profile{}, nil, fmt.Errorf("--backend %s, but [%s] is %s", flagged.Backend, section, p.Backend)
+	}
+	if flagged.Endpoint != "" {
+		p.Endpoint = flagged.Endpoint
+	}
+	if flagged.Secrets.AccessKeyID != "" {
+		p.Secrets.AccessKeyID = flagged.Secrets.AccessKeyID
+	}
+	if flagged.SecretFile != "" || flagged.KeyFile != "" || flagged.EnvAuth {
+		// another credential source replaces the section's secret
+		p.Secrets = remote.Secrets{AccessKeyID: p.Secrets.AccessKeyID}
+		p.SecretFile, p.KeyFile, p.EnvAuth = flagged.SecretFile, flagged.KeyFile, flagged.EnvAuth
+	}
+	return p, r, nil
 }
 
 // testRemoteProfile opens the profile's endpoint as a run would and lists the first

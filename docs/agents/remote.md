@@ -115,6 +115,20 @@ Where the credential comes from:
 - `--key-file` (SFTP) reads a private key at every run. Add `--store-key` to copy it into the store instead.
 - `--env-auth` (S3) stores nothing and uses the agent's environment or instance role: `AWS_ACCESS_KEY_ID` and friends, an EC2 instance profile, or IRSA.
 
+### Import from rclone.conf
+
+Already using rclone on that machine? Import a remote from its config instead of typing it in again:
+
+```bash
+fallbck-agent remote profile create --name minio --from-rclone-conf ~/.config/rclone/rclone.conf
+```
+
+The section defaults to `--name`; pick another with `--section`. The import takes the backend, the endpoint and the credential, and reveals rclone's obscured passwords. An encrypted config opens with `RCLONE_CONFIG_PASS`, or the agent asks for the password. Flags you add win over the section, so `--secret-file` or `--env-auth` replace its secret. The credential is copied into the store, so later changes to rclone.conf don't reach the profile. An SFTP `key_file` is still read at every run, unless you add `--store-key`. If the section has both a key and a password, the profile keeps the key.
+
+It then prints the matching remote as JSON for `POST /api/v1/remotes`, with `auth_method` set to `agent`. Its endpoint is the one the profile is bound to. For SFTP, you still need to fill in `known_hosts`.
+
+It only imports sections of type `s3`, `azureblob`, `sftp`, `smb` and `webdav`, and refuses anything it can't do the same way. That covers wrapper remotes such as `crypt` and `alias` (import the section they point to), S3 profiles and session tokens, Azure managed identities and service principals, SFTP through an `ssh` command, an agent or an encrypted key, and Kerberos on SMB. S3 providers other than AWS need `endpoint` written out, because rclone fills it in itself. Azure endpoints in the emulator form (`<url>/<account>`) aren't accepted, the same as for remotes.
+
 `profile test` opens the root the way a run would and lists the first ten entries. Give it what the remote has that the profile doesn't: `--root`, plus `--user`, `--region` or `--domain` where they apply. For an Azure endpoint URL, `--user` is the account name. For SFTP, pass the server's key with `--host-key`. Without it, the agent fetches the key, prints its fingerprint and trusts it for that one test.
 
 The agent's status page warns when a job names a profile the agent doesn't have, a profile made for another endpoint, or a backend the agent can't read.
