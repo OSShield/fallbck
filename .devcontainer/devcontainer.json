@@ -4,6 +4,9 @@
   "service": "dev",
   "workspaceFolder": "/workspaces/fallbck",
   "remoteUser": "vscode",
+  // Codespaces: the first build and the full stack (Temporal, PBS, SQL Server) are
+  // too much for the default 2-core machine. Local VS Code ignores this.
+  "hostRequirements": { "cpus": 4, "memory": "16gb" },
   // Named volumes start out owned by root. SQL Server (uid 10001) writes into
   // mssql-backup and the agent reads and deletes there, so that one is open to both.
   "postCreateCommand": "sudo chown -R vscode: /var/lib/fallbck /go/pkg/mod /home/vscode/.cache && sudo chmod 777 /mnt/mssql-backup",
