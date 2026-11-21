@@ -14,6 +14,7 @@ import (
 	"github.com/osshield/fallbck/pkg/m365"
 	"github.com/osshield/fallbck/pkg/pbs"
 	"github.com/osshield/fallbck/pkg/pvebackup"
+	"github.com/osshield/fallbck/pkg/remote"
 	"github.com/osshield/fallbck/pkg/vcs"
 )
 
@@ -37,6 +38,9 @@ const (
 	// JobTypeVCS mirrors git repositories (GitLab projects or a list of URLs); it
 	// runs on any filesystem agent that reported a recent enough git
 	JobTypeVCS = "vcs"
+	// JobTypeRemote backs up S3, Azure Blob, SFTP, SMB or WebDAV storage (a remote)
+	// through rclone; it runs on any filesystem agent that reports the backend
+	JobTypeRemote = "remote"
 )
 
 // NormalizeAgentType maps "" to filesystem and reports unknown values
@@ -53,9 +57,11 @@ func NormalizeAgentType(t string) (string, bool) {
 }
 
 // NormalizeJobType maps "" to filesystem and accepts the job-only types pve, docker,
-// m365 and vcs
+// m365, vcs and remote
 func NormalizeJobType(t string) (string, bool) {
 	switch t {
+	case JobTypeRemote:
+		return JobTypeRemote, true
 	case JobTypePVE:
 		return JobTypePVE, true
 	case JobTypeDocker:
@@ -73,7 +79,7 @@ func NormalizeJobType(t string) (string, bool) {
 // kubernetes agent (dumped from a pod inside the cluster) or on a filesystem agent
 // (the combined agent, when it reports database client tools), Proxmox VE / Docker
 // host jobs, which run on the filesystem agent installed on the host, and Microsoft
-// 365 and VCS jobs, which any filesystem agent runs.
+// 365, VCS and remote jobs, which any filesystem agent runs.
 func JobAllowedOnAgent(jobType, agentType string) bool {
 	jobType, _ = NormalizeJobType(jobType)
 	agentType, _ = NormalizeAgentType(agentType)
@@ -83,7 +89,7 @@ func JobAllowedOnAgent(jobType, agentType string) bool {
 	switch jobType {
 	case JobTypeDatabase:
 		return agentType == AgentTypeKubernetes || agentType == AgentTypeFilesystem
-	case JobTypePVE, JobTypeDocker, JobTypeM365, JobTypeVCS:
+	case JobTypePVE, JobTypeDocker, JobTypeM365, JobTypeVCS, JobTypeRemote:
 		return agentType == AgentTypeFilesystem
 	}
 	return false
@@ -101,6 +107,8 @@ type AgentCapabilities struct {
 	GitLFS     bool
 	// VCSProviders are the VCS providers the agent can list repositories of
 	VCSProviders []string
+	// RemoteBackends are the remote backends the agent can back up
+	RemoteBackends []string
 	// Version is the running binary's version (empty keeps the stored one)
 	Version string
 	// SelfUpdate / UpdateError: see Agent
@@ -155,6 +163,12 @@ func (a *Agent) CanRunVCSProvider(provider string) bool {
 	return provider == vcs.ProviderGit || slices.Contains(a.VCSProviders, provider)
 }
 
+// CanRunRemoteBackend reports whether this agent can run remote jobs of the backend
+// (agents that predate remote jobs report none)
+func (a *Agent) CanRunRemoteBackend(backend string) bool {
+	return a.CanRunJob(JobTypeRemote) && slices.Contains(a.RemoteBackends, backend)
+}
+
 // CanRunJob reports whether this agent may run a job of jobType, including the
 // capability flags a filesystem agent reports (Proxmox VE node, Docker daemon,
 // database client tools, git)
@@ -176,6 +190,8 @@ func (a *Agent) CanRunJob(jobType string) bool {
 		return a.DBTools
 	case JobTypeVCS:
 		return vcs.GitVersionOK(a.GitVersion)
+	case JobTypeRemote:
+		return len(a.RemoteBackends) > 0
 	}
 	return true
 }
@@ -228,6 +244,9 @@ type Agent struct {
 	// VCSProviders are the VCS providers the agent can list repositories of (see
 	// CanRunVCSProvider)
 	VCSProviders []string `json:"vcs_providers" db:"vcs_providers"`
+	// RemoteBackends are the remote backends the agent can back up (see
+	// CanRunRemoteBackend)
+	RemoteBackends []string `json:"remote_backends" db:"remote_backends"`
 	// Inventory is the compact summary the agent attaches to a heartbeat every few
 	// minutes (inventory.Summary); InventoryDetail the on-demand full inventory
 	Inventory         json.RawMessage `json:"inventory,omitempty" db:"inventory"`
@@ -443,8 +462,11 @@ type BackupJob struct {
 	// VCSConfig is the VCS job specification (its ConnectionID is also the
 	// vcs_connection_id column, so a connection cannot be deleted while jobs use it)
 	VCSConfig *vcs.Spec `json:"vcs_config,omitempty" db:"vcs_config"`
-	CreatedAt time.Time `json:"created_at" db:"created_at"`
-	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
+	// RemoteConfig is the remote job specification (its RemoteID is also the
+	// remote_id column, so a remote cannot be deleted while jobs use it)
+	RemoteConfig *remote.Spec `json:"remote_config,omitempty" db:"remote_config"`
+	CreatedAt    time.Time    `json:"created_at" db:"created_at"`
+	UpdatedAt    time.Time    `json:"updated_at" db:"updated_at"`
 	// Labels place the job and all of its runs in access scopes. On update, an
 	// absent field (nil) keeps the stored labels; {} clears them.
 	Labels Labels `json:"labels"`
@@ -554,6 +576,9 @@ func (j *BackupJob) IsM365() bool { return j.JobType == JobTypeM365 }
 // IsVCS reports whether the job is a VCS (git repositories) backup
 func (j *BackupJob) IsVCS() bool { return j.JobType == JobTypeVCS }
 
+// IsRemote reports whether the job is a remote (rclone) backup
+func (j *BackupJob) IsRemote() bool { return j.JobType == JobTypeRemote }
+
 // Sanitize redacts the stored database password (HasPassword tells whether one exists)
 func (j *BackupJob) Sanitize() *BackupJob {
 	if j.JobType == "" {
@@ -584,6 +609,9 @@ func (j *BackupJob) Summary() string {
 	}
 	if j.IsVCS() {
 		return j.VCSConfig.Summary()
+	}
+	if j.IsRemote() {
+		return j.RemoteConfig.Summary()
 	}
 	return strings.Join(j.BackupPaths, ", ")
 }

@@ -1,0 +1,159 @@
+{{/* Remote fields (the Remotes page modal). Elements with data-backends show only
+for those backends; remote-secret-opts only while the server holds the credential. */}}
+{{define "remote-fields"}}
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+  <div class="form-group">
+    <label>Name</label>
+    <input type="text" name="remote_name" class="form-control" placeholder="minio" required>
+    <span class="form-text">Also the default snapshot group prefix: remote-&lt;name&gt;.</span>
+  </div>
+  <div class="form-group">
+    <label>Backend</label>
+    <select name="remote_backend" class="form-control" onchange="updateRemoteFields(this.form)">
+      <option value="s3" selected>S3 (AWS, MinIO, Wasabi, Cloudflare R2, …)</option>
+      <option value="azureblob">Azure Blob Storage</option>
+      <option value="azurefiles">Azure Files</option>
+      <option value="sftp">SFTP (also Hetzner Storage Box)</option>
+      <option value="smb">SMB / CIFS</option>
+      <option value="ftp">FTP / FTPS</option>
+      <option value="webdav">WebDAV</option>
+    </select>
+  </div>
+</div>
+
+<div data-backends="s3" style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+  <div class="form-group">
+    <label>Provider</label>
+    <select name="remote_provider" class="form-control">
+      <option value="">Detect (AWS without an endpoint, else Other)</option>
+      <option value="AWS">AWS</option>
+      <option value="Minio">MinIO</option>
+      <option value="Wasabi">Wasabi</option>
+      <option value="Cloudflare">Cloudflare R2</option>
+      <option value="Other">Other</option>
+    </select>
+  </div>
+  <div class="form-group">
+    <label>Region</label>
+    <input type="text" name="remote_region" class="form-control" placeholder="eu-north-1">
+  </div>
+</div>
+<div data-backends="azureblob azurefiles" class="form-group">
+  <label>Storage account</label>
+  <input type="text" name="remote_account" class="form-control" placeholder="contosobackup">
+</div>
+<div data-backends="s3 azureblob azurefiles" class="form-group">
+  <label>Endpoint</label>
+  <input type="text" name="remote_endpoint" class="form-control" placeholder="https://minio.example.com:9000">
+  <span class="form-text">Leave empty for AWS or Azure itself. The credential is only ever sent here.</span>
+  <label data-backends="s3" style="display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 13px;"><input type="checkbox" name="remote_path_style"> Path-style requests (MinIO and most self-hosted S3)</label>
+</div>
+
+<div data-backends="sftp" style="display: flex; flex-direction: row; align-items: center; justify-content: flex-start; gap: 12px; margin-bottom: 16px;">
+  <button type="button" class="btn btn-secondary btn-sm" style="width: auto; flex: none;" onclick="hetznerPreset(this.form)">Hetzner Storage Box</button>
+  <span class="form-text" style="margin: 0;">Fills in the host and port from the user below (u123456, or a sub-account like u123456-sub1).</span>
+</div>
+<div data-backends="sftp smb ftp" style="display: grid; grid-template-columns: 2fr 1fr; gap: 16px;">
+  <div class="form-group">
+    <label>Host</label>
+    <input type="text" name="remote_host" class="form-control" placeholder="nas.example.com">
+  </div>
+  <div class="form-group">
+    <label>Port</label>
+    <input type="number" name="remote_port" class="form-control" min="1" max="65535" placeholder="default">
+  </div>
+</div>
+<div data-backends="webdav" style="display: grid; grid-template-columns: 2fr 1fr; gap: 16px;">
+  <div class="form-group">
+    <label>URL</label>
+    <input type="text" name="remote_url" class="form-control" placeholder="https://cloud.example.com/remote.php/dav/files/backup">
+  </div>
+  <div class="form-group">
+    <label>Vendor</label>
+    <select name="remote_vendor" class="form-control">
+      <option value="other">Other</option>
+      <option value="nextcloud">Nextcloud</option>
+      <option value="owncloud">ownCloud</option>
+      <option value="infinitescale">ownCloud Infinite Scale</option>
+      <option value="sharepoint">SharePoint</option>
+      <option value="sharepoint-ntlm">SharePoint (NTLM)</option>
+      <option value="fastmail">Fastmail</option>
+      <option value="rclone">rclone serve webdav</option>
+    </select>
+  </div>
+</div>
+<div data-backends="sftp smb ftp webdav" style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+  <div class="form-group">
+    <label>User</label>
+    <input type="text" name="remote_user" class="form-control">
+  </div>
+  <div class="form-group" data-backends="smb">
+    <label>Domain</label>
+    <input type="text" name="remote_domain" class="form-control" placeholder="WORKGROUP">
+  </div>
+  <div class="form-group" data-backends="ftp">
+    <label>TLS</label>
+    <select name="remote_tls" class="form-control">
+      <option value="explicit" selected>Explicit (AUTH TLS on port 21)</option>
+      <option value="implicit">Implicit (port 990)</option>
+      <option value="none">None: password in clear text</option>
+    </select>
+    <span class="form-text">The certificate must be valid for the host and trusted by the agent's system; self-signed ones are refused.</span>
+  </div>
+</div>
+<div data-backends="sftp" class="form-group">
+  <label>Host keys (known_hosts lines)</label>
+  <textarea name="remote_known_hosts" class="form-control" rows="3" placeholder="ssh-ed25519 AAAAC3Nz…" style="font-family: var(--font-mono); font-size: 11px;"></textarea>
+  <span class="form-text">Required: the agent only talks to a server it can verify. Get them with <code>ssh-keyscan -p &lt;port&gt; &lt;host&gt;</code>, or from <code>fallbck-agent remote profile test</code>.</span>
+</div>
+
+<div class="form-group">
+  <label>Credential</label>
+  <select name="remote_auth_method" class="form-control" onchange="updateRemoteFields(this.form)">
+    <option value="stored" selected>Sealed on the server, handed to the agent per run</option>
+    <option value="agent">Kept on the agents (credential profiles)</option>
+  </select>
+  <span class="form-text">Read-only credentials are enough: the agent never writes to the remote.</span>
+</div>
+<div class="remote-agent-opts" hidden style="background-color: var(--bg-subtle); padding: 14px; border-radius: var(--radius-sm); margin-bottom: 16px; font-size: 13px;">
+  The server holds no credential for this remote. Every job on it names an agent credential profile, created on the agent with <code>fallbck-agent remote profile create --name &lt;name&gt; --backend &lt;backend&gt; --endpoint &lt;endpoint&gt; --ask-secret</code>. The profile's endpoint has to match this remote; <em>Test</em> on the list shows the command that checks it.
+</div>
+<div class="remote-secret-opts" style="display: flex; flex-direction: column; gap: 18px;">
+  <div data-backends="s3" style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+    <div class="form-group">
+      <label>Access key ID</label>
+      <input type="text" name="remote_access_key_id" class="form-control" autocomplete="off">
+    </div>
+    <div class="form-group">
+      <label>Secret access key</label>
+      <input type="password" name="remote_secret_access_key" class="form-control remote-secret" autocomplete="new-password">
+      <span class="form-text">To change the credential, enter both.</span>
+    </div>
+  </div>
+  <div data-backends="azureblob azurefiles" style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+    <div class="form-group">
+      <label>Account key</label>
+      <input type="password" name="remote_account_key" class="form-control remote-secret" autocomplete="new-password">
+    </div>
+    <div class="form-group">
+      <label>or SAS URL</label>
+      <input type="password" name="remote_sas_url" class="form-control remote-secret" autocomplete="new-password">
+      <span class="form-text">Read and list permissions on the account's containers or shares.</span>
+    </div>
+  </div>
+  <div data-backends="sftp smb ftp webdav" class="form-group">
+    <label>Password</label>
+    <input type="password" name="remote_password" class="form-control remote-secret" autocomplete="new-password">
+  </div>
+  <div data-backends="sftp" class="form-group">
+    <label>or private key (PEM or OpenSSH, unencrypted)</label>
+    <textarea name="remote_key_pem" class="form-control remote-secret" rows="3" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" style="font-family: var(--font-mono); font-size: 11px;"></textarea>
+  </div>
+  <div data-backends="webdav" class="form-group">
+    <label>or bearer token</label>
+    <input type="password" name="remote_bearer_token" class="form-control remote-secret" autocomplete="new-password">
+  </div>
+  <span class="form-text remote-secret-hint">Sealed on the server with its master key; never shown again.</span>
+</div>
+{{template "labels-field" "remote_labels"}}
+{{end}}

@@ -16,6 +16,7 @@ import (
 	"github.com/osshield/fallbck/pkg/dbbackup"
 	"github.com/osshield/fallbck/pkg/inventory"
 	"github.com/osshield/fallbck/pkg/m365"
+	"github.com/osshield/fallbck/pkg/remote"
 	"github.com/osshield/fallbck/pkg/vcs"
 )
 
@@ -57,6 +58,9 @@ type Input struct {
 	// Tenants maps Microsoft 365 tenant id → tenant, to check that a job's agent
 	// credential profile is for its tenant (nil skips that check)
 	Tenants map[uuid.UUID]*m365.Tenant
+	// Remotes maps remote id → remote, to check the agent's backend and that a
+	// job's agent credential profile is for its remote (nil skips those checks)
+	Remotes map[uuid.UUID]*remote.Remote
 	// ServerVersion is compared with the agent's version ("dev" disables the check)
 	ServerVersion string
 	Now           time.Time
@@ -154,7 +158,7 @@ func Evaluate(in Input) []Alert {
 		if !j.Enabled {
 			continue
 		}
-		if reason := cannotRun(a, summary, j, in.ConnectionURLs, in.ConnectionProviders, in.Tenants); reason != "" {
+		if reason := cannotRun(a, summary, j, in.ConnectionURLs, in.ConnectionProviders, in.Tenants, in.Remotes); reason != "" {
 			add(LevelDanger, fmt.Sprintf("Job %q cannot run on this agent", j.Name), reason, j)
 		} else if p := vcsProfileOf(summary, j); p != nil && p.TokenExpires != nil && p.TokenExpires.Sub(in.Now) < vcs.ExpiryWarning {
 			add(LevelWarning, fmt.Sprintf("The token of VCS profile %q expires soon", p.Name),
@@ -188,7 +192,7 @@ func rank(l Level) int {
 }
 
 // cannotRun explains why the agent cannot execute the job, or "" when it can
-func cannotRun(a *db.Agent, summary *inventory.Summary, j *db.BackupJob, connectionURLs, connectionProviders map[uuid.UUID]string, tenants map[uuid.UUID]*m365.Tenant) string {
+func cannotRun(a *db.Agent, summary *inventory.Summary, j *db.BackupJob, connectionURLs, connectionProviders map[uuid.UUID]string, tenants map[uuid.UUID]*m365.Tenant, remotes map[uuid.UUID]*remote.Remote) string {
 	jobType, _ := db.NormalizeJobType(j.JobType)
 	if !a.CanRunJob(jobType) {
 		switch jobType {
@@ -203,6 +207,10 @@ func cannotRun(a *db.Agent, summary *inventory.Summary, j *db.BackupJob, connect
 				return fmt.Sprintf("The agent found no git; VCS jobs need git %d.%d or newer.", vcs.MinGitMajor, vcs.MinGitMinor)
 			}
 			return fmt.Sprintf("The agent has git %s; VCS jobs need %d.%d or newer.", a.GitVersion, vcs.MinGitMajor, vcs.MinGitMinor)
+		case db.JobTypeRemote:
+			if t, _ := db.NormalizeAgentType(a.AgentType); t == db.AgentTypeFilesystem {
+				return "The agent predates remote jobs; update it."
+			}
 		}
 		return fmt.Sprintf("A %s agent cannot run %s jobs.", a.AgentType, jobType)
 	}
@@ -210,6 +218,33 @@ func cannotRun(a *db.Agent, summary *inventory.Summary, j *db.BackupJob, connect
 		if provider, ok := connectionProviders[j.VCSConfig.ConnectionID]; ok && !a.CanRunVCSProvider(provider) {
 			return fmt.Sprintf("The agent does not support %s connections yet; update it.", provider)
 		}
+	}
+	if jobType == db.JobTypeRemote && j.RemoteConfig != nil {
+		r := remotes[j.RemoteConfig.RemoteID]
+		if r != nil && !a.CanRunRemoteBackend(r.Backend) {
+			return fmt.Sprintf("The agent cannot back up %s remotes; update it.", r.Backend)
+		}
+		name := j.RemoteConfig.Profile
+		if name == "" || summary == nil {
+			return ""
+		}
+		var p *remote.ProfileSummary
+		for i := range summary.RemoteProfiles {
+			if summary.RemoteProfiles[i].Name == name {
+				p = &summary.RemoteProfiles[i]
+			}
+		}
+		switch {
+		case p == nil:
+			hint := "--backend <backend> --endpoint <endpoint>"
+			if r != nil {
+				hint = "--backend " + r.Backend + " --endpoint " + r.Identity()
+			}
+			return fmt.Sprintf("Remote credential profile %q is not configured on the agent (fallbck-agent remote profile create --name %s %s ...).", name, name, hint)
+		case r != nil && (p.Backend != r.Backend || p.Endpoint != r.Identity()):
+			return fmt.Sprintf("Remote credential profile %q is for %s %s, but the job's remote is %s %s; the agent will not send the profile's credential there.", name, p.Backend, p.Endpoint, r.Backend, r.Identity())
+		}
+		return ""
 	}
 	if jobType == db.JobTypeM365 && j.M365Config != nil && j.M365Config.Profile != "" && summary != nil {
 		name := j.M365Config.Profile

@@ -17,7 +17,7 @@ By default agents never see a PBS token or a PBS address. They send everything t
 
 - For each run the server creates a **backup ticket**, a short-lived JWT that names the agent, target, datastore, namespace and snapshot. The agent can't pick any of those.
 - The server opens the PBS session for exactly that snapshot and just pipes the bytes over to PBS. It doesn't parse the backup protocol, and on an encrypted target the bytes it pipes are ciphertext.
-- Jobs that write several snapshots (M365, Kubernetes volumes) mint a sub-ticket for each one. A sub-ticket's group has to extend the job's group, so an agent can't write into another job's snapshots.
+- Jobs that write several snapshots (M365, Kubernetes volumes, remote storage split per root) mint a sub-ticket for each one. A sub-ticket's group has to extend the job's group, so an agent can't write into another job's snapshots.
 
 The exception is **direct PBS** (`direct_pbs`). It's a per-job switch you flip on the server, and only then does the agent get the target's token for that run. An agent can't turn it on for itself.
 
@@ -42,7 +42,7 @@ Let's be straight about the limitation here: the server holds the encryption key
 
 ## Secrets at rest
 
-- **Master key.** PBS tokens, encryption keys, Microsoft 365 client secrets and certificate private keys, and VCS tokens and GitHub App keys are all sealed with the server's master key (AES-256-GCM). The master key lives in a file or an environment variable, not in the database, so a database dump on its own doesn't give them up.
+- **Master key.** PBS tokens, encryption keys, Microsoft 365 client secrets and certificate private keys, VCS tokens and GitHub App keys, and remote storage credentials are all sealed with the server's master key (AES-256-GCM). The master key lives in a file or an environment variable, not in the database, so a database dump on its own doesn't give them up.
 - **Hashed tokens.** API keys and enrollment tokens are stored as hashes. You see the raw value once, when it's created.
 - **Redacted job specs.** Database passwords are stripped out of the job spec that goes to the agent. The agent fetches them with its ticket at run time, so they never sit in Temporal history.
 
@@ -55,6 +55,8 @@ Sometimes the server shouldn't know a credential at all. Keep it on the agent:
 - Databases can also use passwordless local auth, where there's no secret at all.
 - **Kubernetes** jobs read database credentials from Secrets in the cluster. They only read Secrets labelled `fallbck.io/allow-db-credentials: "true"`, and only to reach a Service in the same namespace. Worker pods get short-lived credentials from a per-run Secret and have no Kubernetes API access.
 - **Microsoft 365 credential profiles** ([Microsoft 365](../agents/m365.md#keep-the-credential-on-the-agent)) keep the app's secret or certificate in the same store. A profile only works for the tenant and app IDs it was made for, so a compromised server can't point it at another tenant. Mark a tenant "Kept on the agents" and the server holds no credential for it at all.
+- **Remote storage credential profiles** ([Remote storage](../agents/remote.md#4-keep-the-credential-on-the-agent-optional)) keep S3 keys, Azure keys and SAS URLs, and SFTP, SMB and WebDAV passwords and keys in the same store. A profile only works for the endpoint it was made for, so a compromised server can't redirect it to a host of its own. Mark a remote "Kept on the agents" and the server holds no credential for it. S3 profiles can also use the agent's instance role and store nothing.
+- Remote storage jobs only list and read. Give them a [read-only credential](../agents/remote.md#2-use-a-read-only-credential), and even a stolen one can't wipe the source.
 
 ## Who can do what
 
@@ -74,7 +76,7 @@ That stops mistakes and casual tampering, not someone who holds the server's dat
 
 ## No phoning home
 
-At runtime the server and agents talk to PBS, your IdP and whatever you back up (Microsoft 365, GitLab, GitHub). On top of that, the server fetches its matching agent release from GitHub so agents can update themselves. There's no telemetry and no license server.
+At runtime the server and agents talk to PBS, your IdP and whatever you back up (Microsoft 365, GitLab, GitHub, the remote storage of remote jobs; the server itself never connects to remote storage). On top of that, the server fetches its matching agent release from GitHub so agents can update themselves. There's no telemetry and no license server.
 
 ## What you still have to protect
 

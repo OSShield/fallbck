@@ -12,7 +12,7 @@
     />
   </picture>
 
-Application-aware backups for filesystems, databases, Kubernetes, Proxmox VE and Docker hosts, and Microsoft 365, straight into Proxmox Backup Server.
+Application-aware backups for filesystems, databases, Kubernetes, Proxmox VE and Docker hosts, Microsoft 365, git repositories and remote storage, straight into Proxmox Backup Server.
 
 FallBCK sits as a backup orchestrator between Proxmox Backup Server and a few custom agents, and coordinates backups, schedules, targets and monitors the jobs. Traffic either goes from the agents directly into PBS, or you can route it via a tunnel built in to FallBCK Server.
 
@@ -47,7 +47,7 @@ All below features are free and open source. There is no enterprise plan, there 
   - Deployment via Docker Compose, Kubernetes, Package repositories (APK, DEB, RPM, WinGet) or as a standalone binary
   - The agent connects to the server to receive and execute backup jobs, no firewalls have to be opened from server to client
   - Can back up directly to PBS, or through a tunnel via FallBCK to a PBS instance
-  - Secure client-side credential storage (databases, Git, Microsoft 365) as an option, so those credentials never touch the server side
+  - Secure client-side credential storage (databases, Git, Microsoft 365, remote storage) as an option, so those credentials never touch the server side
 
 
 ## Security
@@ -58,7 +58,7 @@ While we keep FallBCK as secure as possible, we built the entire software on the
 - **Agents only dial out.** You don't open any ports towards your hosts. Agents call out to FallBCK , are limited to their own job queue, and they only install updates from signed releases (Sigstore).
 - **Client-side encryption.** Data is encrypted on the agent before it leaves the host, so PBS and anything in between only ever see ciphertext. The key is a symmetric AES-256 key on a key ring: one key per ring, shared by every target and job on it, so they dedup against each other. The server keeps it sealed and hands it to the agent for each run, and the agent only holds it in memory for that run. You get it out as a passphrase-protected key file for restores. That means whoever owns the server *and* its master key can decrypt, so protect those. An optional RSA master key is a recovery net, not a lock: FallBCK only ever stores its public half, wraps each snapshot's key with it, and the private half stays with you, offline.
 - **Secrets are sealed.** PBS tokens, encryption keys and source credentials are sealed with a master key that's kept outside the database. API keys and enrollment tokens are stored as hashes.
-- **Credentials can stay on the agent.** Database, Git and Microsoft 365 credential profiles live in the agent's encrypted store, and the server only learns their names when defined agent-side.
+- **Credentials can stay on the agent.** Database, Git, Microsoft 365 and remote storage credential profiles live in the agent's encrypted store, and the server only learns their names when defined agent-side.
 - **Access control.** SSO only (OIDC), RBAC with label-scoped bindings and no implicit admin. API keys can't reach further than whoever made them, and sessions can be revoked within 30 seconds.
 - **Append-only audit log.** The database refuses updates and deletes on it, even from the server's own database user.
 
@@ -80,6 +80,7 @@ The details, including the trade-offs, are in [Security](https://docs.fallbck.eu
 | Containers | Databases | Supports backups of databases inside containers, same databases as above, with the credentials fetched from a kubernetes secret | Restore files or archives from PBS UI or CLI and run the script included in the backup for automatic restore, or copy/restore files manually as needed |
 | Cloud | Microsoft 365 [Beta] | Backup of Microsoft 365 data including Outlook, OneDrive, Sharepoint, Teams and Entra data | Saved as much as possible as the native format, automatic restore functionality and documentation is still under active development |
 | Code | Git repositories [Beta] | Mirrors of git repositories over HTTPS (GitLab groups, GitHub owners, stars and gists, or plain URLs): all branches, tags, merge/pull request heads and Git LFS objects, one snapshot per run | Restore the archive from PBS UI or CLI and run the included script to push a repository into an empty one |
+| Cloud | Remote storage [Beta] | Read-only backup of S3 buckets, Azure Blob containers, Azure Files shares and SFTP (Hetzner Storage Box too), SMB, FTP and WebDAV servers, one snapshot per run or one per bucket, container or share | Restore the archive from PBS UI or CLI and copy it back with rclone, the cloud CLI or plain scp |
 
 
 ## LLM Usage
@@ -129,7 +130,8 @@ These are the future backup sources that are currently planned. If you miss any,
 
 - VCS (Gitea, Forgejo, etc.)
   - GitLab and GitHub are done
-- Cloud storage (via librclone, so all/most supported providers like S3-compatible, Azure blob, Mega, Dropbox)
+- Cloud storage (via librclone)
+  - S3, Azure Blob, Azure Files, SFTP, SMB, FTP and WebDAV are done; more rclone backends (Dropbox, Google Drive, Mega, …) as people ask for them
 - Google Workspace (Gmail, Drive, Calendar, Contacts, etc.)
 - Build a better, responsive UI for the web interface
 - Other hypervisors

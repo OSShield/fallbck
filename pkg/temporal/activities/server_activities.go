@@ -8,6 +8,7 @@ import (
 	"github.com/osshield/fallbck/pkg/k8sbackup"
 	"github.com/osshield/fallbck/pkg/m365"
 	"github.com/osshield/fallbck/pkg/pvebackup"
+	"github.com/osshield/fallbck/pkg/remote"
 	"github.com/osshield/fallbck/pkg/vcs"
 	sdktemporal "go.temporal.io/sdk/temporal"
 	"log/slog"
@@ -109,6 +110,7 @@ func (s *ServerActivities) PrepareBackupSession(ctx context.Context, jobID uuid.
 	var dockerSpec *dockerbackup.Spec
 	var m365Spec *m365.Spec
 	var vcsSpec *vcs.Spec
+	var remoteSpec *remote.Spec
 	passwordOnServer := false
 	if jobType == db.JobTypeM365 {
 		if job.M365Config == nil {
@@ -141,6 +143,23 @@ func (s *ServerActivities) PrepareBackupSession(ctx context.Context, jobID uuid.
 		claims.BackupID = vcsSpec.BackupID
 		if claims.BackupID == "" {
 			claims.BackupID = vcs.DefaultBackupID(conn.Name)
+		}
+	}
+	if jobType == db.JobTypeRemote {
+		if job.RemoteConfig == nil {
+			return nil, sdktemporal.NewNonRetryableApplicationError("remote job has no configuration", "job_invalid", nil)
+		}
+		remoteSpec = job.RemoteConfig
+		rem, err := s.DB.GetRemoteByID(ctx, remoteSpec.RemoteID, db.Unscoped)
+		if err != nil {
+			return nil, sdktemporal.NewNonRetryableApplicationError(
+				fmt.Sprintf("the remote of job %s no longer exists", job.Name), "job_invalid", nil)
+		}
+		// The job's own group: the run's snapshot, and the prefix of every root's
+		// group when the job splits per root (sub-tickets)
+		claims.BackupID = remoteSpec.BackupID
+		if claims.BackupID == "" {
+			claims.BackupID = remote.DefaultBackupID(rem.Name)
 		}
 	}
 	if jobType == db.JobTypeDocker {
@@ -238,6 +257,7 @@ func (s *ServerActivities) PrepareBackupSession(ctx context.Context, jobID uuid.
 		DockerConfig:       dockerSpec,
 		M365Config:         m365Spec,
 		VCSConfig:          vcsSpec,
+		RemoteConfig:       remoteSpec,
 		BackupPaths:        job.BackupPaths,
 		ExcludePaths:       job.ExcludePaths,
 		OneFileSystem:      job.OneFileSystem && job.JobType == db.JobTypeFilesystem,

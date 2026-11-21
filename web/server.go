@@ -21,6 +21,7 @@ import (
 	"github.com/osshield/fallbck/pkg/config"
 	"github.com/osshield/fallbck/pkg/db"
 	"github.com/osshield/fallbck/pkg/m365"
+	"github.com/osshield/fallbck/pkg/remote"
 	temporalui "github.com/osshield/fallbck/pkg/temporal/ui"
 	"github.com/osshield/fallbck/pkg/vcs"
 )
@@ -107,6 +108,7 @@ func (u *UIHandler) RegisterRoutes(r chi.Router) {
 		r.With(need(auth.PermTargetsRead)).Get("/targets", u.HandleTargets)
 		r.With(need(auth.PermTenantsRead)).Get("/tenants", u.HandleTenants)
 		r.With(need(auth.PermConnectionsRead)).Get("/vcs", u.HandleConnections)
+		r.With(need(auth.PermRemotesRead)).Get("/remotes", u.HandleRemotes)
 		r.With(need(auth.PermJobsRead)).Get("/jobs", u.HandleJobs)
 		r.With(need(auth.PermJobsRead)).Get("/kubernetes", u.HandleKubernetes)
 		r.With(need(auth.PermJobsRead)).Get("/runs", u.HandleRuns)
@@ -609,7 +611,16 @@ func (u *UIHandler) HandleAgentDetail(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	alerts := agenthealth.Evaluate(agenthealth.Input{Agent: agent, Jobs: jobs, LastRuns: last, ConnectionURLs: connectionURLs, ConnectionProviders: connectionProviders, Tenants: tenants, ServerVersion: u.deps.Version, Now: now})
+	// and remote jobs against their remote's backend and, with a profile, its identity
+	remotes := map[uuid.UUID]*remote.Remote{}
+	for _, j := range jobs {
+		if j.IsRemote() && j.RemoteConfig != nil && remotes[j.RemoteConfig.RemoteID] == nil {
+			if rem, err := u.DB.GetRemoteByID(ctx, j.RemoteConfig.RemoteID, db.Unscoped); err == nil {
+				remotes[rem.ID] = rem
+			}
+		}
+	}
+	alerts := agenthealth.Evaluate(agenthealth.Input{Agent: agent, Jobs: jobs, LastRuns: last, ConnectionURLs: connectionURLs, ConnectionProviders: connectionProviders, Tenants: tenants, Remotes: remotes, ServerVersion: u.deps.Version, Now: now})
 
 	behind, bok := agenthealth.VersionBehind(agent.Version, u.deps.Version)
 	u.renderPage(w, r, "agent_detail.html", map[string]interface{}{
@@ -639,11 +650,13 @@ func (u *UIHandler) HandleOnboarding(w http.ResponseWriter, r *http.Request) {
 	var targets []*db.BackupTarget
 	var tenants []*m365.Tenant
 	var connections []*vcs.Connection
+	var remotes []*remote.Remote
 	if u.DB != nil {
 		agents, _ = u.DB.ListAgents(ctx, scope(r, auth.PermAgentsRead))
 		targets, _ = u.DB.ListTargets(ctx, scope(r, auth.PermTargetsRead))
 		tenants, _ = u.DB.ListTenants(ctx, scope(r, auth.PermTenantsRead))
 		connections, _ = u.DB.ListConnections(ctx, scope(r, auth.PermConnectionsRead))
+		remotes, _ = u.DB.ListRemotes(ctx, scope(r, auth.PermRemotesRead))
 	}
 	u.renderPage(w, r, "onboarding.html", map[string]interface{}{
 		"Title":       "Set up a new server",
@@ -653,6 +666,7 @@ func (u *UIHandler) HandleOnboarding(w http.ResponseWriter, r *http.Request) {
 		"Targets":     targets,
 		"Tenants":     tenants,
 		"Connections": connections,
+		"Remotes":     remotes,
 	})
 }
 
@@ -696,6 +710,20 @@ func (u *UIHandler) HandleConnections(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// HandleRemotes lists the storage remotes (S3, Azure Blob and Files, SFTP, SMB, FTP, WebDAV)
+// remote jobs back up
+func (u *UIHandler) HandleRemotes(w http.ResponseWriter, r *http.Request) {
+	var remotes []*remote.Remote
+	if u.DB != nil {
+		remotes, _ = u.DB.ListRemotes(r.Context(), scope(r, auth.PermRemotesRead))
+	}
+	u.renderPage(w, r, "remotes.html", map[string]interface{}{
+		"Title":     "Remotes",
+		"ActiveNav": "remotes",
+		"Remotes":   remotes,
+	})
+}
+
 func (u *UIHandler) HandleJobs(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var jobs []*db.BackupJob
@@ -703,6 +731,7 @@ func (u *UIHandler) HandleJobs(w http.ResponseWriter, r *http.Request) {
 	var targets []*db.BackupTarget
 	var tenants []*m365.Tenant
 	var connections []*vcs.Connection
+	var remotes []*remote.Remote
 
 	if u.DB != nil {
 		jobs, _ = u.DB.ListJobs(ctx, scope(r, auth.PermJobsRead))
@@ -710,6 +739,11 @@ func (u *UIHandler) HandleJobs(w http.ResponseWriter, r *http.Request) {
 		targets, _ = u.DB.ListTargets(ctx, scope(r, auth.PermTargetsRead))
 		tenants, _ = u.DB.ListTenants(ctx, scope(r, auth.PermTenantsRead))
 		connections, _ = u.DB.ListConnections(ctx, scope(r, auth.PermConnectionsRead))
+		remotes, _ = u.DB.ListRemotes(ctx, scope(r, auth.PermRemotesRead))
+	}
+	remoteNames := map[uuid.UUID]string{}
+	for _, rem := range remotes {
+		remoteNames[rem.ID] = rem.Name
 	}
 	// Every job type is listed here (filtered client-side); the newest run per job feeds
 	// the last-run column and filter
@@ -731,6 +765,8 @@ func (u *UIHandler) HandleJobs(w http.ResponseWriter, r *http.Request) {
 		"Targets":       targets,
 		"Tenants":       tenants,
 		"Connections":   connections,
+		"Remotes":       remotes,
+		"RemoteNames":   remoteNames,
 	})
 }
 

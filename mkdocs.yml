@@ -12,9 +12,7 @@ theme:
   name: material
   logo: assets/fallbck-horizontal.svg
   favicon: assets/fallbck-icon.svg
-  font:
-    text: Barlow
-    code: JetBrains Mono
+  font: false
   features:
     - navigation.sections
     - navigation.top
@@ -61,6 +59,7 @@ nav:
       - Docker hosts: agents/docker.md
       - Microsoft 365: agents/m365.md
       - Git repositories: agents/vcs.md
+      - Remote storage: agents/remote.md
   - Running it:
       - Access control: operations/access.md
       - Encryption: operations/encryption.md

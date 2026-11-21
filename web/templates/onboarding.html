@@ -90,29 +90,33 @@
             <div class="wizard-option-title">Git repositories</div>
             <div class="wizard-option-desc">A fallbck-agent with git mirrors GitLab groups, GitHub owners, stars and gists, or a list of HTTPS repositories: branches, tags, merge request heads, LFS objects and wikis, fetched incrementally into one snapshot per run.</div>
           </div>
+          <div class="wizard-option" role="button" tabindex="0" data-kind="type" data-value="remote" onclick="obSelect(this)" onkeydown="obKey(event, this)">
+            <div class="wizard-option-title">Remote storage</div>
+            <div class="wizard-option-desc">Any fallbck-agent that can reach the storage reads S3 buckets, Azure Blob containers, Azure Files shares, SFTP, SMB, FTP and WebDAV, read-only, into one snapshot per run or one per bucket, container or share.</div>
+          </div>
         </div>
       </div>
 
       <div class="wizard-page" data-step="2">
         <p class="wizard-lead">Where will the <span id="ob-type-label">agent</span> run?</p>
         <div id="ob-platform-options" class="wizard-options">
-          <div class="wizard-option" role="button" tabindex="0" data-kind="platform" data-value="debian" data-types="files,database,docker,m365,vcs" onclick="obSelect(this)" onkeydown="obKey(event, this)">
+          <div class="wizard-option" role="button" tabindex="0" data-kind="platform" data-value="debian" data-types="files,database,docker,m365,vcs,remote" onclick="obSelect(this)" onkeydown="obKey(event, this)">
             <div class="wizard-option-title">Debian / Ubuntu</div>
             <div class="wizard-option-desc">apt package from deb.osshield.eu, managed by systemd.</div>
           </div>
-          <div class="wizard-option" role="button" tabindex="0" data-kind="platform" data-value="rhel" data-types="files,database,docker,m365,vcs" onclick="obSelect(this)" onkeydown="obKey(event, this)">
+          <div class="wizard-option" role="button" tabindex="0" data-kind="platform" data-value="rhel" data-types="files,database,docker,m365,vcs,remote" onclick="obSelect(this)" onkeydown="obKey(event, this)">
             <div class="wizard-option-title">RHEL / Rocky / Alma / Fedora</div>
             <div class="wizard-option-desc">rpm package from rpm.osshield.eu, managed by systemd.</div>
           </div>
-          <div class="wizard-option" role="button" tabindex="0" data-kind="platform" data-value="alpine" data-types="files,database,docker,m365,vcs" onclick="obSelect(this)" onkeydown="obKey(event, this)">
+          <div class="wizard-option" role="button" tabindex="0" data-kind="platform" data-value="alpine" data-types="files,database,docker,m365,vcs,remote" onclick="obSelect(this)" onkeydown="obKey(event, this)">
             <div class="wizard-option-title">Alpine Linux</div>
             <div class="wizard-option-desc">apk package from alpine.osshield.eu, managed by OpenRC.</div>
           </div>
-          <div class="wizard-option" role="button" tabindex="0" data-kind="platform" data-value="linux-other" data-types="files,database,docker,m365,vcs" onclick="obSelect(this)" onkeydown="obKey(event, this)">
+          <div class="wizard-option" role="button" tabindex="0" data-kind="platform" data-value="linux-other" data-types="files,database,docker,m365,vcs,remote" onclick="obSelect(this)" onkeydown="obKey(event, this)">
             <div class="wizard-option-title">Other Linux</div>
             <div class="wizard-option-desc">Static binary from the GitHub release with a hand-installed systemd or OpenRC service.</div>
           </div>
-          <div class="wizard-option" role="button" tabindex="0" data-kind="platform" data-value="windows" data-types="files,database,m365,vcs" onclick="obSelect(this)" onkeydown="obKey(event, this)">
+          <div class="wizard-option" role="button" tabindex="0" data-kind="platform" data-value="windows" data-types="files,database,m365,vcs,remote" onclick="obSelect(this)" onkeydown="obKey(event, this)">
             <div class="wizard-option-title">Windows</div>
             <div class="wizard-option-desc">MSI installer from the GitHub release or winget, runs as a Windows service with Volume Shadow Copies. Also the agent for Microsoft SQL Server on this host.</div>
           </div>
@@ -120,7 +124,7 @@
             <div class="wizard-option-title">Kubernetes cluster</div>
             <div class="wizard-option-desc">Helm chart from helm.osshield.eu installed into the fallbck namespace of the target cluster.</div>
           </div>
-          <div class="wizard-option" role="button" tabindex="0" data-kind="platform" data-value="docker-container" data-types="docker,database,m365" onclick="obSelect(this)" onkeydown="obKey(event, this)">
+          <div class="wizard-option" role="button" tabindex="0" data-kind="platform" data-value="docker-container" data-types="docker,database,m365,remote" onclick="obSelect(this)" onkeydown="obKey(event, this)">
             <div class="wizard-option-title">Docker container</div>
             <div class="wizard-option-desc">The agent container image (compose snippet): as root with the Docker socket mounted for Docker host backups, or the tools flavour for databases reachable over the network.</div>
           </div>
@@ -189,6 +193,10 @@
             <div class="wizard-option-title">Git repositories</div>
             <div class="wizard-option-desc">GitLab groups, GitHub owners, stars and gists, or a list of repository URLs from a git connection, mirrored with LFS objects and wikis.</div>
           </div>
+          <div class="wizard-option" role="button" tabindex="0" data-kind="backup" data-value="remote" onclick="obSelect(this)" onkeydown="obKey(event, this)">
+            <div class="wizard-option-title">Remote storage</div>
+            <div class="wizard-option-desc">S3 buckets, Azure Blob containers, Azure Files or SMB shares, SFTP, FTP or WebDAV paths of a remote, read-only.</div>
+          </div>
           <div class="wizard-option" role="button" tabindex="0" data-kind="backup" data-value="kubernetes" onclick="obSelect(this)" onkeydown="obKey(event, this)">
             <div class="wizard-option-title">Kubernetes cluster</div>
             <div class="wizard-option-desc">All API resources plus persistent volumes, one snapshot group per PVC.</div>
@@ -253,6 +261,8 @@
           {{template "job-fields-m365" .}}
           {{template "job-fields-vcs" .}}
           <p id="ob-vcs-agent-note" class="wizard-note" style="color: var(--danger-text); margin: -8px 0 16px;" hidden></p>
+          {{template "job-fields-remote" .}}
+          <p id="ob-remote-agent-note" class="wizard-note" style="color: var(--danger-text); margin: 8px 0 16px;" hidden></p>
           {{template "job-fields-database" .}}
           <fieldset id="job-k8s-fields" style="border: 0; padding: 0; margin: 0;" hidden disabled>
             {{template "job-fields-kubernetes" .}}

@@ -1,0 +1,52 @@
+{{/* Remote storage job fields. */}}
+{{define "job-fields-remote"}}
+<fieldset id="job-remote-fields" style="border: 0; padding: 0; margin: 0;" hidden disabled>
+  <div style="background-color: var(--bg-subtle); padding: 14px; border-radius: var(--radius-sm); margin-bottom: 16px; font-size: 13px;">
+    The agent lists the roots and reads every object; nothing is ever written to the remote. Objects keep their size and modification time, so later runs reuse unchanged data in PBS. With <em>one snapshot per root</em> each root gets its own snapshot group (<code>&lt;job group&gt;-&lt;root&gt;</code>) and the job's own group holds the run manifest.
+  </div>
+  <div class="form-group">
+    <label>Remote</label>
+    <div style="display: flex; gap: 8px; align-items: center;">
+      <select name="remote_id" class="form-control" required onchange="updateRemoteJob(this.form)">
+        <option value="">-- Choose remote --</option>
+        {{range .Remotes}}<option value="{{.ID}}" data-name="{{.Name}}" data-backend="{{.Backend}}" data-auth="{{.AuthMethod}}" data-identity="{{.Identity}}">{{.Name}} ({{.Backend}}, {{.Identity}}{{if eq .AuthMethod "agent"}}, credential on the agents{{end}})</option>{{end}}
+      </select>
+      <a href="/remotes" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">Manage remotes</a>
+    </div>
+  </div>
+  <div class="form-group">
+    <label class="remote-roots-label">Roots (one per line)</label>
+    <textarea name="remote_roots" class="form-control" rows="3" placeholder="photos&#10;archive/2026"></textarea>
+    <span class="form-text remote-roots-hint">Bucket, optionally with a prefix: <code>bucket</code> or <code>bucket/prefix</code>.</span>
+  </div>
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+    <div class="form-group">
+      <label>Include (globs below a root, optional)</label>
+      <textarea name="remote_include" class="form-control" rows="2" placeholder="2026/*&#10;*.pdf"></textarea>
+    </div>
+    <div class="form-group">
+      <label>Exclude (globs below a root, optional)</label>
+      <textarea name="remote_exclude" class="form-control" rows="2" placeholder="tmp&#10;*.part"></textarea>
+    </div>
+  </div>
+  <span class="form-text" style="display: block; margin: 6px 0 16px;"><code>*</code> doesn't cross <code>/</code>; a pattern that matches a directory takes everything below it.</span>
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+    <div class="form-group">
+      <label>Snapshots</label>
+      <select name="remote_split" class="form-control">
+        <option value="single">One snapshot, a directory per root</option>
+        <option value="per_root">One snapshot per root</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Snapshot group (optional, default remote-&lt;remote name&gt;)</label>
+      <input type="text" name="remote_backup_id" class="form-control" placeholder="remote-minio">
+    </div>
+  </div>
+  <div class="form-group">
+    <label class="remote-profile-label">Agent credential profile (optional)</label>
+    <input type="text" name="remote_profile" class="form-control" placeholder="minio">
+    <span class="form-text">Use a credential kept on the agent (<code class="remote-profile-cmd">fallbck-agent remote profile create</code>) instead of the remote's; the server never hands out its credential for such a job.</span>
+  </div>
+</fieldset>
+{{end}}

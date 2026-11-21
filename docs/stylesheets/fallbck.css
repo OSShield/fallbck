@@ -1,7 +1,7 @@
 /* FallBCK docs theme for MkDocs Material.
    Industry design system: steel accent on a light technical ground, Barlow Condensed
    headings over Barlow, square hairline frames with "+" registration marks. */
-@import url("https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@400;600&display=swap");
+@import url("fonts.css");
 
 :root,
 [data-md-color-scheme="default"] {

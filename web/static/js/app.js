@@ -634,20 +634,23 @@ function setJobTypeIn(form, type) {
   const isDocker = type === 'docker';
   const isM365 = type === 'm365';
   const isVCS = type === 'vcs';
+  const isRemote = type === 'remote';
   const isK8s = type === 'kubernetes'; // cluster jobs: only the onboarding form carries that fieldset
   const show = (id, on) => {
     const el = form.querySelector('#' + id);
     if (el) { el.hidden = !on; el.disabled = !on; }
   };
-  show('job-fs-fields', !isDB && !isPVE && !isDocker && !isK8s && !isM365 && !isVCS);
+  show('job-fs-fields', !isDB && !isPVE && !isDocker && !isK8s && !isM365 && !isVCS && !isRemote);
   show('job-db-fields', isDB);
   show('job-pve-fields', isPVE);
   show('job-docker-fields', isDocker);
   show('job-m365-fields', isM365);
   show('job-vcs-fields', isVCS);
+  show('job-remote-fields', isRemote);
   show('job-k8s-fields', isK8s);
-  show('job-backup-group', !isDB && !isM365 && !isVCS); // those carry the group in their own config
+  show('job-backup-group', !isDB && !isM365 && !isVCS && !isRemote); // those carry the group in their own config
   if (isVCS) updateVCSProvider(form);
+  if (isRemote) updateRemoteJob(form);
   filterJobAgents(form, type);
   if (form.elements['db_engine']) setDBEngine(form.elements['db_engine'].value, form);
   else updateDBTarget(form);
@@ -675,11 +678,77 @@ function filterJobAgents(form, type) {
     if (type === 'pve') match = agentType === 'filesystem' && opt.dataset.pve === 'true';
     if (type === 'docker') match = agentType === 'filesystem' && opt.dataset.docker === 'true';
     if (type === 'm365') match = agentType === 'filesystem'; // any agent with internet access
+    if (type === 'remote') match = agentType === 'filesystem' && agentRunsRemote((opt.dataset.remoteBackends || '').split(',').filter(Boolean), remoteJobBackend(form));
     if (type === 'vcs') match = agentType === 'filesystem' && agentRunsVCS(opt.dataset.vcs === 'true', opt.dataset.vcsProviders, vcsProvider(form));
     opt.hidden = !match; opt.disabled = !match;
     if (match && opt.selected) keep = true;
   }
   if (!keep) sel.value = '';
+}
+
+// ---- Remote storage jobs ----
+
+// remoteJobRemote is the selected remote's option in a job form (null = none)
+function remoteJobRemote(form) {
+  const sel = form.elements['remote_id'];
+  return sel && sel.value ? sel.selectedOptions[0] : null;
+}
+function remoteJobBackend(form) { const o = remoteJobRemote(form); return o ? o.dataset.backend : ''; }
+
+// agentRunsRemote mirrors db.Agent.CanRunRemoteBackend ('' = any backend)
+function agentRunsRemote(backends, backend) {
+  return backends.length > 0 && (!backend || backends.includes(backend));
+}
+
+const REMOTE_ROOT_HINTS = {
+  s3: ['Buckets (one per line, optional)', 'Bucket, optionally with a prefix: <code>bucket</code> or <code>bucket/prefix</code>. Empty backs up every bucket the credential can see, found again at every run.'],
+  azureblob: ['Containers (one per line, optional)', 'Container, optionally with a prefix: <code>container</code> or <code>container/prefix</code>. Empty backs up every container the credential can see, found again at every run.'],
+  azurefiles: ['Shares (one per line, optional)', 'Share, optionally with a path: <code>share</code> or <code>share/dir</code>. Empty backs up every share the credential can see, found again at every run.'],
+  smb: ['Shares (one per line, optional)', 'Share, optionally with a path: <code>share</code> or <code>share/dir</code>. Empty backs up every share the user can see (except the ones ending in $), found again at every run.'],
+  sftp: ['Paths (one per line, optional)', 'Absolute paths on the server, e.g. <code>srv/data</code> for /srv/data. Empty backs up from /.'],
+  ftp: ['Paths (one per line, optional)', 'Absolute paths on the server, e.g. <code>pub/data</code> for /pub/data. Empty backs up from /.'],
+  webdav: ['Paths (one per line, optional)', 'Paths below the remote\'s URL. Empty backs up everything below it.'],
+};
+
+// updateRemoteJob fits the roots and profile fields to the selected remote and
+// limits the agents to those that can read its backend
+function updateRemoteJob(form) {
+  const opt = remoteJobRemote(form);
+  const box = form.querySelector('#job-remote-fields');
+  if (!box) return;
+  const [label, hint] = REMOTE_ROOT_HINTS[opt ? opt.dataset.backend : 's3'];
+  box.querySelector('.remote-roots-label').innerText = label;
+  box.querySelector('.remote-roots-hint').innerHTML = hint;
+  const agentAuth = opt && opt.dataset.auth === 'agent';
+  box.querySelector('.remote-profile-label').innerText = 'Agent credential profile' + (agentAuth ? ' (required: the remote keeps its credential on the agents)' : ' (optional)');
+  form.elements['remote_profile'].required = !!agentAuth;
+  box.querySelector('.remote-profile-cmd').innerText = opt ? `fallbck-agent remote profile create --name <name> --backend ${opt.dataset.backend} --endpoint ${opt.dataset.identity} ...` : 'fallbck-agent remote profile create';
+  const typeEl = form.elements['job_type'];
+  if ((typeEl ? typeEl.value : form.dataset.jobType) === 'remote') filterJobAgents(form, 'remote');
+  if (typeof obRemoteAgentNote === 'function') obRemoteAgentNote(form);
+}
+
+function loadRemoteIntoForm(form, rc) {
+  form.elements['remote_id'].value = rc.remote_id || '';
+  form.elements['remote_roots'].value = (rc.roots || []).join('\n');
+  form.elements['remote_include'].value = (rc.include || []).join('\n');
+  form.elements['remote_exclude'].value = (rc.exclude || []).join('\n');
+  form.elements['remote_split'].value = rc.split || 'single';
+  form.elements['remote_backup_id'].value = rc.backup_id || '';
+  form.elements['remote_profile'].value = rc.profile || '';
+  updateRemoteJob(form);
+}
+
+function buildRemoteConfig(form, fd) {
+  return {
+    remote_id: fd.get('remote_id') || '',
+    roots: formLines(fd, 'remote_roots'),
+    include: formLines(fd, 'remote_include'),
+    exclude: formLines(fd, 'remote_exclude'),
+    split: fd.get('remote_split') || 'single',
+    backup_id: (fd.get('remote_backup_id') || '').trim(),
+    profile: (fd.get('remote_profile') || '').trim()
+  };
 }
 
 // ---- Git repository (VCS) jobs ----
@@ -914,6 +983,7 @@ function loadJobIntoForm(form, job) {
     form.elements['m365_profile'].value = mc.profile || '';
   }
   if (jobType === 'vcs') loadVCSIntoForm(form, job.vcs_config || {});
+  if (jobType === 'remote') loadRemoteIntoForm(form, job.remote_config || {});
   if (jobType === 'database' && job.db_config) {
     const dc = job.db_config;
     form.elements['db_engine'].value = dc.engine || 'postgres';
@@ -1034,6 +1104,12 @@ function buildJobPayload(form) {
     payload.backup_paths = [];
     payload.exclude_paths = [];
     payload.vcs_config = buildVCSConfig(form, fd);
+  }
+
+  if (payload.job_type === 'remote') {
+    payload.backup_paths = [];
+    payload.exclude_paths = [];
+    payload.remote_config = buildRemoteConfig(form, fd);
   }
 
   if (payload.job_type === 'database') {
@@ -1544,7 +1620,7 @@ function renderRun(run) {
   }
   const d = run.details || {};
   const type = d.type || 'filesystem';
-  const typeLabel = { filesystem: 'Filesystem', database: 'Database', kubernetes: 'Kubernetes', pve: 'Proxmox VE host', docker: 'Docker host', m365: 'Microsoft 365', vcs: 'Git repositories' }[type] || type;
+  const typeLabel = { filesystem: 'Filesystem', database: 'Database', kubernetes: 'Kubernetes', pve: 'Proxmox VE host', docker: 'Docker host', m365: 'Microsoft 365', vcs: 'Git repositories', remote: 'Remote storage' }[type] || type;
 
   const active = RUN_ACTIVE.includes(run.status);
   let html = '';
@@ -1573,7 +1649,7 @@ function renderRun(run) {
   // Live progress while running; after a failed or cancelled run, the last reported
   // per-item statuses are what remains when the agent never produced a detail blob
   const m = d.manifest || {};
-  const hasItemDetail = (m.volumes && m.volumes.length) || (m.databases && m.databases.length) || (m.units && m.units.length) || (m.repositories && m.repositories.length) || d.archives;
+  const hasItemDetail = (m.volumes && m.volumes.length) || (m.databases && m.databases.length) || (m.units && m.units.length) || (m.repositories && m.repositories.length) || (m.roots && m.roots.length) || d.archives;
   const items = run.progress && run.progress.items ? Object.keys(run.progress.items).length : 0;
   if (active && run.progress) html += renderProgress(run.progress);
   else if (!active && items && !hasItemDetail) html += renderProgress(run.progress, true);
@@ -1584,6 +1660,7 @@ function renderRun(run) {
   else if (type === 'docker') html += renderDockerDetail(d.manifest || {});
   else if (type === 'm365') html += renderM365Detail(d.manifest || {});
   else if (type === 'vcs') html += renderVCSDetail(d.manifest || {});
+  else if (type === 'remote') html += renderRemoteDetail(d.manifest || {});
   else if (d.archives || d.paths) html += renderFsDetail(d);
 
   if (run.log_tail) html += rdCard('Agent log (captured at the run)', rdPre(run.log_tail));
@@ -1797,6 +1874,40 @@ function renderM365Detail(m) {
 
 // Git repositories: the source, one row per repository, warnings and the restore
 // notes
+// Remote storage: the remote, one row per root (with its own snapshot when the job
+// splits per root), warnings
+function renderRemoteDetail(m) {
+  let html = '';
+  const r = m.remote || {}, t = m.totals || {}, spec = m.spec || {};
+  const roots = m.roots || [];
+  const perRoot = spec.split === 'per_root';
+  const rows = [
+    ['Remote', `${rdEsc(r.name || '-')} <span style="color:var(--text-muted);font-size:12px;">${rdEsc(r.backend || '')}</span>`],
+    ['Endpoint', rdMono(r.identity || '-')],
+    ['Credential', r.profile ? `agent credential profile ${rdMono(r.profile)}` : "the remote's"],
+    ['Roots', `${t.roots || 0}` + (t.failed ? ` (${t.failed} failed)` : '') + (m.discovered ? ', found at the start of the run (the job lists none)' : '')],
+    ['Objects', `${t.objects || 0} (${rdBytes(t.bytes)})`],
+    ['Snapshots', perRoot ? 'one per root' : 'one, a directory per root'],
+    ['Group', rdMono((m.job || {}).group || '-')],
+  ];
+  if ((spec.include || []).length) rows.push(['Include', rdChips(spec.include)]);
+  if ((spec.exclude || []).length) rows.push(['Exclude', rdChips(spec.exclude)]);
+  html += rdCard('Remote storage', rdKV(rows));
+  if (roots.length) {
+    const head = ['Root', 'Status', 'Objects', 'Size'];
+    if (perRoot) head.push('Snapshot');
+    head.push('Notes');
+    html += rdCard(`Roots (${roots.length})`, rdTable(head, roots.map(x => {
+      const row = [rdMono(x.root || '/'), rdStatus(x.status), String(x.objects || 0), rdBytes(x.bytes)];
+      if (perRoot) row.push(x.snapshot_id ? rdMono(x.snapshot_id) : rdMono(x.group || '-'));
+      row.push([x.error, x.note].filter(Boolean).map(n => rdEsc(n.split('\n')[0].slice(0, 200))).join('<br>') || '-');
+      return row;
+    })));
+  }
+  if (m.warnings && m.warnings.length) html += rdCard(`Warnings (${m.warnings.length})`, '<ul style="margin:0 0 0 18px;font-size:13px;">' + m.warnings.slice(0, 200).map(w => `<li>${rdEsc(w)}</li>`).join('') + '</ul>' + (m.warnings.length > 200 ? `<p style="font-size:13px;color:var(--text-muted);">and ${m.warnings.length - 200} more in the raw details</p>` : ''));
+  return html;
+}
+
 function renderVCSDetail(m) {
   let html = '';
   const src = m.source || {}, gen = m.generator || {}, t = m.totals || {};
@@ -2032,6 +2143,188 @@ async function testTenant(id, btn) {
   }
 }
 
+
+// ===== Remotes ================================================================
+// The remote fields live in the Remotes page modal (form#remote-form). Elements
+// with data-backends show for those backends only.
+
+function remoteForm() { return document.getElementById('remote-form'); }
+function remoteField(form, name) { return form.querySelector(`[name="remote_${name}"]`); }
+
+function updateRemoteFields(form) {
+  const backend = remoteField(form, 'backend').value;
+  form.querySelectorAll('[data-backends]').forEach(el => { el.hidden = !el.dataset.backends.split(' ').includes(backend); });
+  const agent = remoteField(form, 'auth_method').value === 'agent';
+  form.querySelector('.remote-secret-opts').hidden = agent;
+  form.querySelector('.remote-agent-opts').hidden = !agent;
+}
+
+function buildRemotePayload(form) {
+  const v = (name) => (remoteField(form, name).value || '').trim();
+  const backend = v('backend');
+  // only the backend's own fields: the server clears the rest anyway
+  const r = { name: v('name'), backend, auth_method: v('auth_method'), labels: formLabels(form, 'remote_labels') };
+  const secrets = {};
+  const take = (names, into) => names.forEach(n => { const x = v(n); if (x) into[n] = x; });
+  switch (backend) {
+    case 's3':
+      take(['provider', 'region', 'endpoint'], r);
+      r.path_style = remoteField(form, 'path_style').checked;
+      take(['access_key_id', 'secret_access_key'], secrets);
+      break;
+    case 'azureblob':
+    case 'azurefiles':
+      take(['account', 'endpoint'], r);
+      take(['account_key', 'sas_url'], secrets);
+      break;
+    case 'sftp':
+    case 'smb':
+    case 'ftp':
+      take(['host', 'user'], r);
+      if (v('port')) r.port = Number(v('port'));
+      if (backend === 'smb') take(['domain'], r);
+      else if (backend === 'ftp') take(['tls'], r);
+      else r.known_hosts = v('known_hosts').split('\n').map(l => l.trim()).filter(Boolean);
+      take(backend === 'sftp' ? ['password', 'key_pem'] : ['password'], secrets);
+      break;
+    case 'webdav':
+      take(['url', 'vendor', 'user'], r);
+      take(['password', 'bearer_token'], secrets);
+      break;
+  }
+  // no credential fields filled in keeps the stored one on update
+  if (r.auth_method !== 'agent' && Object.keys(secrets).length) r.secrets = secrets;
+  return r;
+}
+
+function resetRemoteFields(form) {
+  form.reset();
+  form.dataset.remoteId = '';
+  form.querySelectorAll('.remote-secret').forEach(el => { el.placeholder = el.tagName === 'TEXTAREA' ? '-----BEGIN OPENSSH PRIVATE KEY-----' : ''; });
+  updateRemoteFields(form);
+}
+
+function loadRemoteIntoFields(form, r) {
+  resetRemoteFields(form);
+  for (const k of ['name', 'backend', 'auth_method', 'provider', 'region', 'endpoint', 'account', 'host', 'user', 'domain', 'tls', 'url', 'vendor']) {
+    if (r[k] !== undefined && r[k] !== null) remoteField(form, k).value = r[k];
+  }
+  if (r.port) remoteField(form, 'port').value = r.port;
+  remoteField(form, 'path_style').checked = !!r.path_style;
+  remoteField(form, 'known_hosts').value = (r.known_hosts || []).join('\n');
+  setFormLabels(form, r.labels, 'remote_labels');
+  if (r.has_secret) form.querySelectorAll('.remote-secret').forEach(el => { el.placeholder = 'leave blank to keep the stored credential'; });
+  updateRemoteFields(form);
+}
+
+// hetznerPreset fills in a Hetzner Storage Box: SFTP on port 23 at
+// <main account>.your-storagebox.de (a sub-account logs in on its main account's host)
+function hetznerPreset(form) {
+  const user = remoteField(form, 'user');
+  const main = (user.value || '').trim().replace(/-sub\d+$/, '');
+  if (!/^u\d+$/.test(main)) {
+    showToast('Enter the Storage Box user first (u123456 or u123456-sub1)', 'error');
+    user.focus();
+    return;
+  }
+  remoteField(form, 'host').value = `${main}.your-storagebox.de`;
+  remoteField(form, 'port').value = 23;
+}
+
+function newRemote() {
+  const form = remoteForm();
+  resetRemoteFields(form);
+  document.getElementById('remote-modal-title').innerText = 'Add Remote';
+  openModal('modal-remote');
+}
+
+async function getRemote(id) {
+  const resp = await apiFetch(`/api/v1/remotes/${id}`);
+  if (!resp.ok) throw new Error('Failed to load remote');
+  return resp.json();
+}
+
+async function editRemote(id) {
+  try {
+    const form = remoteForm();
+    loadRemoteIntoFields(form, await getRemote(id));
+    form.dataset.remoteId = id;
+    document.getElementById('remote-modal-title').innerText = 'Edit Remote';
+    openModal('modal-remote');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function submitRemoteForm(e) {
+  e.preventDefault();
+  const form = e.target;
+  const id = form.dataset.remoteId || '';
+  try {
+    const resp = await apiFetch(id ? `/api/v1/remotes/${id}` : '/api/v1/remotes', {
+      method: id ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(buildRemotePayload(form))
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.error || 'Failed to save remote');
+    showToast(`Remote ${data.name} saved`, 'success');
+    closeModal('modal-remote');
+    setTimeout(() => window.location.reload(), 600);
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+// remoteTestCommand is the agent command that checks a remote: the server never
+// connects to one (see testRemote)
+function remoteTestCommand(r) {
+  const q = (s) => /^[A-Za-z0-9_.:\/@=+-]+$/.test(s) ? s : `'${String(s).replace(/'/g, `'\\''`)}'`;
+  const name = r.auth_method === 'agent' ? '<profile>' : 'test';
+  let endpoint, root, cred = '--ask-secret';
+  const test = [];
+  switch (r.backend) {
+    case 's3':
+      endpoint = r.endpoint || 'aws'; root = '<bucket>';
+      cred = '--access-key-id <access key id> --ask-secret';
+      if (r.region) test.push(`--region ${q(r.region)}`);
+      break;
+    case 'azureblob':
+    case 'azurefiles':
+      endpoint = r.endpoint || r.account; root = r.backend === 'azurefiles' ? '<share>' : '<container>';
+      if (r.endpoint) test.push(`--user ${q(r.account)}`);
+      break;
+    case 'sftp':
+    case 'smb':
+    case 'ftp':
+      // an implicit-TLS FTP remote without a port is on 990, which the profile names
+      endpoint = r.host + (r.port ? ':' + r.port : (r.tls === 'implicit' ? ':990' : '')); root = r.backend === 'smb' ? '<share>' : '<path>';
+      if (r.tls && r.tls !== 'explicit') test.push(`--tls ${r.tls}`);
+      if (r.user) test.push(`--user ${q(r.user)}`);
+      if (r.domain) test.push(`--domain ${q(r.domain)}`);
+      if (r.known_hosts && r.known_hosts.length) test.push(`--host-key ${q(r.known_hosts[0])}`);
+      break;
+    case 'webdav':
+      endpoint = r.url; root = '<path>';
+      if (r.user) test.push(`--user ${q(r.user)}`);
+      break;
+  }
+  const lines = [];
+  if (r.auth_method !== 'agent') lines.push(`fallbck-agent remote profile create --name ${name} --backend ${r.backend} --endpoint ${q(endpoint)} ${cred}`);
+  lines.push(`fallbck-agent remote profile test --name ${name} --root ${root}${test.length ? ' ' + test.join(' ') : ''}`);
+  return lines.join('\n');
+}
+
+async function testRemote(id) {
+  try {
+    const r = await getRemote(id);
+    document.getElementById('remote-test-cmd').textContent = remoteTestCommand(r);
+    document.querySelector('#modal-remote-test .remote-test-stored').hidden = r.auth_method === 'agent';
+    openModal('modal-remote-test');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
 
 // ===== Git (VCS) connections ===================================================
 // The connection fields live in the Git Connections page modal (class

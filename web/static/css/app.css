@@ -1,9 +1,9 @@
 /* FallBCK Modern UI Design System */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import url('fonts.css');
 
 :root {
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --font-mono: 'JetBrains Mono', monospace;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
   /* Light Theme */
   --bg-primary: #f8fafc;
@@ -944,6 +944,8 @@ tr.job-row[hidden] {
 .conn-gitlab-opts[hidden],
 .conn-git-opts[hidden],
 .conn-github-opts[hidden],
-[data-providers][hidden] {
+[data-providers][hidden],
+[data-backends][hidden],
+.remote-secret-opts[hidden] {
   display: none !important;
 }

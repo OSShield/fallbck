@@ -1,0 +1,81 @@
+{{define "content"}}
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+  <p style="color: var(--text-muted); font-size: 14px;">S3, Azure Blob, Azure Files, SFTP, SMB, FTP and WebDAV storage that remote jobs back up. A job reads one or more roots (buckets, containers, shares or paths) of one remote through an agent.</p>
+</div>
+
+<div class="card">
+  <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+    <h3 class="card-title">Remotes ({{len .Remotes}})</h3>
+    <button class="btn btn-primary btn-sm" data-perm="remotes:write" onclick="newRemote()">Add Remote</button>
+  </div>
+  <div class="table-container">
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Backend</th>
+          <th>Endpoint</th>
+          <th>Credential</th>
+          <th>Jobs</th>
+          <th style="text-align: right;">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{if .Remotes}}
+          {{range .Remotes}}
+          <tr>
+            <td><strong>{{.Name}}</strong><br>{{template "label-chips" .Labels}}</td>
+            <td><span class="badge badge-info">{{.Backend}}</span></td>
+            <td><code style="font-size: 12px;">{{.Identity}}</code>{{if .User}} <span style="color: var(--text-dim); font-size: 12px;">as {{.User}}</span>{{end}}</td>
+            <td>{{if eq .AuthMethod "agent"}}<span class="badge badge-neutral" title="Jobs name an agent credential profile">on the agents</span>{{else if .HasSecret}}<span class="badge badge-success">stored</span>{{else}}<span class="badge badge-neutral">none</span>{{end}}</td>
+            <td>{{.Jobs}}</td>
+            <td style="text-align: right; display: flex; justify-content: flex-end; gap: 8px;">
+              <button class="btn btn-secondary btn-sm" onclick="testRemote('{{.ID}}')">Test</button>
+              <button class="btn btn-secondary btn-sm" data-perm="remotes:write" onclick="editRemote('{{.ID}}')">Edit</button>
+              <button class="btn btn-secondary btn-sm" data-perm="remotes:delete" style="color: var(--danger-text);" {{if .Jobs}}disabled title="Used by {{.Jobs}} job(s)"{{end}} onclick="deleteResource('remotes', '{{.ID}}')">Delete</button>
+            </td>
+          </tr>
+          {{end}}
+        {{else}}
+          <tr><td colspan="6"><div class="empty-state"><p>No remotes yet. A remote is a storage endpoint and, optionally, the credential to read it with; remote jobs reference it.</p></div></td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div id="modal-remote" class="modal-backdrop">
+  <div class="modal-content" style="max-width: 720px;">
+    <div class="modal-header">
+      <h3 id="remote-modal-title">Add Remote</h3>
+      <button class="close-btn" onclick="closeModal('modal-remote')">&times;</button>
+    </div>
+    <form id="remote-form" data-remote-id="" onsubmit="submitRemoteForm(event)">
+      <div class="modal-body">
+        {{template "remote-fields" .}}
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('modal-remote')">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save Remote</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="modal-remote-test" class="modal-backdrop">
+  <div class="modal-content" style="max-width: 720px;">
+    <div class="modal-header">
+      <h3>Test a remote</h3>
+      <button class="close-btn" onclick="closeModal('modal-remote-test')">&times;</button>
+    </div>
+    <div class="modal-body" style="font-size: 14px;">
+      <p>The server never connects to a remote itself: agents do. Check access on the agent that will run the job, with a credential profile for this remote:</p>
+      <pre id="remote-test-cmd" style="white-space: pre-wrap; word-break: break-all; font-size: 12px; background-color: var(--bg-subtle); padding: 12px; border-radius: var(--radius-sm);"></pre>
+      <p class="remote-test-stored" style="color: var(--text-muted); font-size: 13px;">This remote's credential is stored on the server; create the profile with the same credential for the test, then delete it again (<code>fallbck-agent remote profile delete --name test</code>). Every run also checks access before it reads anything.</p>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-secondary" onclick="closeModal('modal-remote-test')">Close</button>
+    </div>
+  </div>
+</div>
+{{end}}
