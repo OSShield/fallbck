@@ -12,9 +12,7 @@ theme:
   name: material
   logo: assets/fallbck-horizontal.svg
   favicon: assets/fallbck-icon.svg
-  font:
-    text: Barlow
-    code: JetBrains Mono
+  font: false
   features:
     - navigation.sections
     - navigation.top
