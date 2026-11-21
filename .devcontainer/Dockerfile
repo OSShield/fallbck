@@ -14,7 +14,7 @@ RUN apt-get update \
  && curl -fsSL https://www.mongodb.org/static/pgp/server-8.0.asc | gpg --dearmor -o /usr/share/keyrings/mongodb-8.0.gpg \
  && echo "deb [signed-by=/usr/share/keyrings/mongodb-8.0.gpg] https://repo.mongodb.org/apt/debian bookworm/mongodb-org/8.0 main" > /etc/apt/sources.list.d/mongodb-org-8.0.list \
  && apt-get update \
- && apt-get install -y --no-install-recommends postgresql-client-17 mariadb-client mongodb-database-tools \
+ && apt-get install -y --no-install-recommends postgresql-client-17 mariadb-client mongodb-database-tools socat \
  && rm -rf /var/lib/apt/lists/*
 
 # SQL Server writes its backup files 0640 as uid/gid 10001; this lets the agent read them

@@ -12,11 +12,13 @@
   "postCreateCommand": "sudo chown -R vscode: /var/lib/fallbck /go/pkg/mod /home/vscode/.cache && sudo chmod 777 /mnt/mssql-backup",
   // Builds and starts the server and the agent; run it again after code changes
   "postStartCommand": ".devcontainer/fallbck.sh",
-  "forwardPorts": [8080, 8233, "pbs:8007"],
+  // PBS is relayed to localhost:8007 by fallbck.sh: Codespaces can't forward
+  // another service's port ("pbs:8007")
+  "forwardPorts": [8080, 8233, 8007],
   "portsAttributes": {
     "8080": { "label": "FallBCK", "onAutoForward": "notify" },
     "8233": { "label": "Temporal UI" },
-    "pbs:8007": { "label": "PBS (root / demo)", "protocol": "https" }
+    "8007": { "label": "PBS (root / demo)", "protocol": "https" }
   },
   "customizations": {
     "vscode": {

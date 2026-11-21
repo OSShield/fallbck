@@ -33,6 +33,14 @@ start) ;;
 esac
 
 mkdir -p "$run"
+
+# PBS on localhost:8007, so it can be port-forwarded (Codespaces only forwards ports
+# of this container). TLS passes through untouched. Only socat goes to the
+# background: "a || b &" would background a subshell that keeps stdout open.
+if ! pgrep -x socat >/dev/null; then
+  setsid nohup socat TCP-LISTEN:8007,fork,reuseaddr TCP:pbs:8007 >"$run/pbs-relay.log" 2>&1 </dev/null &
+fi
+
 echo "Building..."
 go build -o "$run/fallbck-server.new" ./cmd/fallbck-server
 go build -o "$run/fallbck-agent.new" ./cmd/fallbck-agent
