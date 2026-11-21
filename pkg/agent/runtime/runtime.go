@@ -129,7 +129,7 @@ func LoadConfig(a Agent, configPath string) (*config.AgentConfig, string, error)
 		slog.Info("Agent not enrolled yet, enrolling with server", "server", cfg.ServerURL, "data_dir", cfg.DataDir, "agent_type", a.Type)
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		_, err := enrollment.Enroll(ctx, enrollment.Options{
-			ServerURL: cfg.ServerURL, Token: cfg.EnrollmentKey, DataDir: cfg.DataDir, AgentType: a.Type, Version: a.Version,
+			ServerURL: cfg.ServerURL, Token: cfg.EnrollmentKey, DataDir: cfg.DataDir, AgentType: a.Type, Version: a.Version, Hostname: cfg.Hostname,
 			CACertPath: cfg.ServerCACertPath, InsecureSkipVerify: cfg.InsecureSkipVerify,
 			DockerSocket: cfg.DockerBackup.EffSocket(), DBEngines: a.dbEngines(),
 			Git: a.Git,

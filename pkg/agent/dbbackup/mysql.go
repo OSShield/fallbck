@@ -51,8 +51,17 @@ func (mysqlEngine) Detect(ctx context.Context, r Runner, tools dbspec.ToolConfig
 				return info, err
 			}
 			b, ok := parseMySQLVersion(line)
-			if !ok {
+			switch {
+			case ok:
+			case logical == "dump":
 				return info, fmt.Errorf("%s: unrecognised version output %q", path, line)
+			default:
+				// The optional tools need only their flavor; Debian's MariaDB 10.11
+				// mariadb-binlog prints just its own "Ver 3.5"
+				b = Binary{Flavor: "mysql"}
+				if strings.HasPrefix(name, "mariadb") {
+					b.Flavor = "mariadb"
+				}
 			}
 			b.Path = path
 			info.Binaries[logical] = b
