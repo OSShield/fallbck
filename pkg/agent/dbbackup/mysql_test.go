@@ -294,3 +294,24 @@ func TestMySQLDetectDebianBinlog(t *testing.T) {
 		t.Error("an unreadable dump version was accepted")
 	}
 }
+
+// prefer and require don't verify the certificate; MariaDB's 11.4+ client would
+// unless told not to (a MySQL server's self-signed certificate then fails the dump)
+func TestMySQLConnArgsTLS(t *testing.T) {
+	args := func(flavor, mode string) string {
+		req := &DumpRequest{Creds: dbspec.Credentials{Host: "db", Port: 3306, TLS: dbspec.TLSSpec{Mode: mode}},
+			Tools: ToolInfo{Binaries: map[string]Binary{"dump": {Flavor: flavor}}}}
+		return strings.Join(mysqlConnArgs(req, "/s"), " ")
+	}
+	for _, mode := range []string{"", dbspec.TLSPrefer, dbspec.TLSRequire} {
+		if a := args("mariadb", mode); !strings.Contains(a, "--skip-ssl-verify-server-cert") {
+			t.Errorf("mariadb %q: %s", mode, a)
+		}
+		if a := args("mysql", mode); strings.Contains(a, "verify") {
+			t.Errorf("mysql %q: %s", mode, a)
+		}
+	}
+	if a := args("mariadb", dbspec.TLSVerifyFull); strings.Contains(a, "--skip-ssl-verify-server-cert") || !strings.Contains(a, "--ssl-verify-server-cert") {
+		t.Errorf("mariadb verify-full: %s", a)
+	}
+}

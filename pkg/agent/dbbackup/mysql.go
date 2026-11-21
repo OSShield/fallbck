@@ -208,8 +208,14 @@ func mysqlConnArgs(req *DumpRequest, secret string) []string {
 		args = append(args, "--host="+c.Host, fmt.Sprintf("--port=%d", c.Port), "--protocol=TCP")
 	}
 	tool := req.Tools.Binaries["dump"]
+	// MariaDB's client verifies the server certificate by default since 11.4, which
+	// would turn prefer and require into verify-full; older clients take the flag too
+	noVerify := "--skip-ssl-verify-server-cert"
 	switch c.TLS.Mode {
 	case "", dbspec.TLSPrefer:
+		if tool.Flavor != "mysql" {
+			args = append(args, noVerify)
+		}
 	case dbspec.TLSDisable:
 		if tool.Flavor == "mysql" {
 			args = append(args, "--ssl-mode=DISABLED")
@@ -220,7 +226,7 @@ func mysqlConnArgs(req *DumpRequest, secret string) []string {
 		if tool.Flavor == "mysql" {
 			args = append(args, "--ssl-mode=REQUIRED")
 		} else {
-			args = append(args, "--ssl")
+			args = append(args, "--ssl", noVerify)
 		}
 	case dbspec.TLSVerifyCA, dbspec.TLSVerifyFull:
 		if tool.Flavor == "mysql" {
