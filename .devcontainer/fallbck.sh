@@ -83,16 +83,16 @@ FALLBCK_DB_URL='postgres://fallbck:fallbck@postgres:5432/fallbck?sslmode=disable
 
 echo "Waiting for the server..."
 for _ in $(seq 120); do
-  curl -fs http://localhost:8080/api/v1/health >/dev/null && break
+  curl -fs ${PUBLIC_URL}/api/v1/health >/dev/null && break
   sleep 1
 done
-curl -fs http://localhost:8080/api/v1/health >/dev/null || {
+curl -fs ${PUBLIC_URL}/api/v1/health >/dev/null || {
   echo "The server didn't come up; tail of $run/server.log:" >&2
   tail -20 "$run/server.log" >&2
   exit 1
 }
 
-FALLBCK_AGENT_SERVER_URL=http://localhost:8080 \
+FALLBCK_AGENT_SERVER_URL=${PUBLIC_URL} \
   FALLBCK_AGENT_ENROLLMENT_KEY="$token" \
   FALLBCK_AGENT_DATA_DIR=/var/lib/fallbck/agent \
   setsid nohup "$run/fallbck-agent" run >"$run/agent.log" 2>&1 </dev/null &
@@ -101,7 +101,7 @@ echo "Starting the agent..."
 
 agents=fallbck-dev
 if [ -S /var/run/docker.sock ]; then
-  sudo env FALLBCK_AGENT_SERVER_URL=http://localhost:8080 \
+  sudo env FALLBCK_AGENT_SERVER_URL=${PUBLIC_URL} \
     FALLBCK_AGENT_ENROLLMENT_KEY="$token" \
     FALLBCK_AGENT_DATA_DIR=/var/lib/fallbck/docker-agent \
     FALLBCK_AGENT_HOSTNAME=fallbck-dev-docker \
@@ -109,4 +109,4 @@ if [ -S /var/run/docker.sock ]; then
   agents="$agents, fallbck-dev-docker"
 fi
 
-echo "FallBCK: http://localhost:8080 (agents $agents). Logs: $0 logs"
+echo "FallBCK: ${PUBLIC_URL} (agents $agents). Logs: $0 logs"
