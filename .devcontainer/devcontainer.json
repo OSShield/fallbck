@@ -16,9 +16,9 @@
   // another service's port ("pbs:8007")
   "forwardPorts": [8080, 8233, 8007],
   "portsAttributes": {
-    "8080": { "label": "FallBCK", "onAutoForward": "notify", "requireLocalPort": false },
-    "8233": { "label": "Temporal UI", "requireLocalPort": false },
-    "8007": { "label": "PBS (root / demo)", "protocol": "https", "requireLocalPort": false }
+    "8080": { "label": "FallBCK", "visibility": "public", "onAutoForward": "notify", "requireLocalPort": false },
+    "8233": { "label": "Temporal UI", "visibility": "public", "requireLocalPort": false },
+    "8007": { "label": "PBS (root / demo)", "visibility": "public", "protocol": "https", "requireLocalPort": false }
   },
   "customizations": {
     "vscode": {
