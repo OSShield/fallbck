@@ -92,7 +92,7 @@ curl -fs ${PUBLIC_URL}/api/v1/health >/dev/null || {
   exit 1
 }
 
-FALLBCK_AGENT_SERVER_URL=${PUBLIC_URL} \
+FALLBCK_AGENT_SERVER_URL=http://localhost:8080 \
   FALLBCK_AGENT_ENROLLMENT_KEY="$token" \
   FALLBCK_AGENT_DATA_DIR=/var/lib/fallbck/agent \
   setsid nohup "$run/fallbck-agent" run >"$run/agent.log" 2>&1 </dev/null &
@@ -101,7 +101,7 @@ echo "Starting the agent..."
 
 agents=fallbck-dev
 if [ -S /var/run/docker.sock ]; then
-  sudo env FALLBCK_AGENT_SERVER_URL=${PUBLIC_URL} \
+  sudo env FALLBCK_AGENT_SERVER_URL=http://localhost:8080 \
     FALLBCK_AGENT_ENROLLMENT_KEY="$token" \
     FALLBCK_AGENT_DATA_DIR=/var/lib/fallbck/docker-agent \
     FALLBCK_AGENT_HOSTNAME=fallbck-dev-docker \
