@@ -3,14 +3,17 @@ package k8sbackup
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	spec "github.com/osshield/fallbck/pkg/k8sbackup"
+	"github.com/osshield/fallbck/pkg/rundetail"
 	"github.com/osshield/fallbck/pkg/temporal"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -350,5 +353,140 @@ func TestBackupVolumePinsToVolumeAttachmentNode(t *testing.T) {
 				t.Errorf("worker not pinned to the attached node: %q", pod.Spec.NodeName)
 			}
 		}
+	}
+}
+
+// restrictedViolation mirrors the Pod Security "restricted" checks the workers can trip
+func restrictedViolation(pod *corev1.Pod) string {
+	psc := pod.Spec.SecurityContext
+	if psc == nil {
+		psc = &corev1.PodSecurityContext{}
+	}
+	if psc.SeccompProfile == nil || psc.SeccompProfile.Type != corev1.SeccompProfileTypeRuntimeDefault {
+		return "seccompProfile"
+	}
+	for _, ctr := range append(append([]corev1.Container{}, pod.Spec.Containers...), pod.Spec.InitContainers...) {
+		sc := ctr.SecurityContext
+		if sc == nil {
+			sc = &corev1.SecurityContext{}
+		}
+		nonRoot := (sc.RunAsNonRoot != nil && *sc.RunAsNonRoot) || (sc.RunAsNonRoot == nil && psc.RunAsNonRoot != nil && *psc.RunAsNonRoot)
+		if !nonRoot {
+			return "runAsNonRoot != true"
+		}
+		if (sc.RunAsUser != nil && *sc.RunAsUser == 0) || (sc.RunAsUser == nil && psc.RunAsUser != nil && *psc.RunAsUser == 0) {
+			return "runAsUser=0"
+		}
+		if sc.AllowPrivilegeEscalation == nil || *sc.AllowPrivilegeEscalation {
+			return "allowPrivilegeEscalation != false"
+		}
+		if sc.Capabilities == nil || len(sc.Capabilities.Add) > 0 {
+			return "unrestricted capabilities"
+		}
+	}
+	return ""
+}
+
+// enforceRestricted makes pod creation in ns behave like a "restricted" namespace
+func enforceRestricted(core *k8sfake.Clientset, ns string) {
+	core.PrependReactor("create", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		pod := action.(k8stesting.CreateAction).GetObject().(*corev1.Pod)
+		if action.GetNamespace() != ns {
+			return false, nil, nil
+		}
+		if v := restrictedViolation(pod); v != "" {
+			return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "pods"}, pod.Name,
+				errors.New(`violates PodSecurity "restricted:latest": `+v))
+		}
+		return false, nil, nil
+	})
+}
+
+func setAppUser(t *testing.T, core *k8sfake.Clientset, uid, fsGroup int64) {
+	t.Helper()
+	pod, err := core.CoreV1().Pods("app").Get(context.Background(), "db-0", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pod.Spec.SecurityContext = &corev1.PodSecurityContext{RunAsUser: &uid, FSGroup: &fsGroup}
+	pod.Spec.Containers = []corev1.Container{{Name: "app", VolumeMounts: []corev1.VolumeMount{{Name: "d", MountPath: "/var/www"}}}}
+	if _, err := core.CoreV1().Pods("app").Update(context.Background(), pod, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func createdWorkers(core *k8sfake.Clientset) []*corev1.Pod {
+	var out []*corev1.Pod
+	for _, a := range core.Actions() {
+		if a.GetVerb() == "create" && a.GetResource().Resource == "pods" {
+			out = append(out, a.(k8stesting.CreateAction).GetObject().(*corev1.Pod))
+		}
+	}
+	return out
+}
+
+func TestBackupVolumeRestrictedNamespaceRunsAsAppUser(t *testing.T) {
+	fastPolling(t)
+	c, core, _ := volumeClients(t)
+	setAppUser(t, core, 101, 102)
+	succeedPods(core, corev1.PodSucceeded, successMessage(t))
+	enforceRestricted(core, "app")
+
+	req := testRequest(spec.ModeLive)
+	req.Worker.PriorityClassName = "fallbck-backup"
+	res, err := BackupVolume(context.Background(), c, req)
+	if err != nil {
+		t.Fatalf("BackupVolume: %v", err)
+	}
+	if res.Status != "completed" || !strings.Contains(res.Note, "uid 101") {
+		t.Errorf("result: %+v", res)
+	}
+	pods := createdWorkers(core)
+	if len(pods) != 2 {
+		t.Fatalf("want the root attempt then the app-user retry, got %d creates", len(pods))
+	}
+	if *pods[0].Spec.Containers[0].SecurityContext.RunAsUser != 0 {
+		t.Error("first attempt must be the root worker (full coverage when admitted)")
+	}
+	psc := pods[1].Spec.SecurityContext
+	if psc == nil || *psc.RunAsUser != 101 || psc.FSGroup != nil || len(psc.SupplementalGroups) != 1 || psc.SupplementalGroups[0] != 102 {
+		t.Errorf("app-user worker pod securityContext: %+v (fsGroup must stay unset, it re-owns live files)", psc)
+	}
+	if pods[1].Spec.PriorityClassName != "fallbck-backup" {
+		t.Errorf("priority class %q", pods[1].Spec.PriorityClassName)
+	}
+	if pods[1].Spec.NodeName != "node-1" {
+		t.Error("app-user worker lost its node pin")
+	}
+}
+
+func TestBackupVolumeRestrictedAnnotationAndMissingIdentity(t *testing.T) {
+	fastPolling(t)
+	c, core, _ := volumeClients(t) // db-0 declares no user
+	succeedPods(core, corev1.PodSucceeded, successMessage(t))
+	enforceRestricted(core, "app")
+
+	_, err := BackupVolume(context.Background(), c, testRequest(spec.ModeLive))
+	if err == nil || !apierrors.IsForbidden(err) || !strings.Contains(err.Error(), annotationRunAsUser) {
+		t.Fatalf("want a Forbidden error pointing at the annotation, got %v", err)
+	}
+
+	pvc, _ := core.CoreV1().PersistentVolumeClaims("app").Get(context.Background(), "data", metav1.GetOptions{})
+	pvc.Annotations = map[string]string{annotationRunAsUser: "33", annotationRunAsGroup: "33"}
+	if _, err := core.CoreV1().PersistentVolumeClaims("app").Update(context.Background(), pvc, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := BackupVolume(context.Background(), c, testRequest(spec.ModeLive))
+	if err != nil || !strings.Contains(res.Note, "uid 33 (PVC annotation)") {
+		t.Fatalf("annotated PVC: %+v %v", res, err)
+	}
+}
+
+func TestSkippedEntriesNote(t *testing.T) {
+	details := rundetail.Marshal(rundetail.Filesystem{Type: rundetail.TypeFilesystem, Warnings: []rundetail.Warning{
+		{Path: "/data/a", Message: "skipped: permission denied"}, {Path: "/data/b", Message: "size changed while reading"},
+	}})
+	if n := skippedEntries(details); n != 1 {
+		t.Errorf("skippedEntries = %d", n)
 	}
 }

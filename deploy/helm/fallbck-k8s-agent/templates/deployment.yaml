@@ -44,6 +44,10 @@ spec:
               value: {{ .Values.stateSecretName | quote }}
             - name: FALLBCK_WORKER_IMAGE
               value: {{ include "fallbck-k8s-agent.workerImage" . | quote }}
+            {{- with .Values.workerPriorityClass.name }}
+            - name: FALLBCK_WORKER_PRIORITY_CLASS
+              value: {{ . | quote }}
+            {{- end }}
             - name: FALLBCK_WORKER_PULL_POLICY
               value: {{ .Values.worker.pullPolicy | quote }}
             - name: FALLBCK_WORKER_RESOURCES

@@ -36,6 +36,30 @@ Uploads run in short-lived worker pods in each volume's namespace, in parallel. 
 - annotate the PVC `fallbck.io/skip: "true"`, or
 - set *Skip PVCs matching label selector* on the job (`volumes.skip_label_selector`, e.g. `fallbck.io/skip-backup=true`).
 
+### Restricted namespaces
+
+Workers run as root with only `DAC_OVERRIDE`, so they can read files whatever their owner. Pod Security `baseline` lets that through, `restricted` doesn't. When the root worker gets rejected, the agent tries again as the app's own user:
+
+1. the PVC's `fallbck.io/run-as-user` (and optionally `fallbck.io/run-as-group`) annotation, else
+2. the `runAsUser`/`runAsGroup` of a running pod that mounts the PVC. Its `fsGroup` becomes a supplemental group. It's never set as the worker's `fsGroup`, because the kubelet would start re-owning files on your live volume.
+
+That backs up what the app can read, which is usually everything. Files it can't read get skipped and the run says how many in the volume's *Notes* column. If there's no pod and no annotation, the volume fails and tells you to add one.
+
+Want every file in those namespaces too? Exempt the agent's service account in the API server's PodSecurity config. The root worker is tried first, so it just starts working:
+
+```yaml
+exemptions:
+  usernames: [system:serviceaccount:<agent-namespace>:fallbck-k8s-agent]
+```
+
+That exemption covers every pod the account creates, not only workers. Set `admissionPolicy.enabled=true` so a leaked agent token can't use it to start privileged pods. The policy only allows PVC and emptyDir volumes, no host namespaces or ports, no privilege escalation and no capability but `DAC_OVERRIDE`.
+
+Database dump pods run as uid 999 and pass `restricted` as they are.
+
+### Quotas and policies
+
+A namespace ResourceQuota counts worker pods like any other pod. If it covers `limits.cpu`, workers without a CPU limit get rejected, and either way they have to fit in whatever the site has left. Every worker and dump pod carries the `fallbck-backup` PriorityClass, so you can scope the quota to leave them out. See [Worker priority class](../reference/helm.md#worker-priority-class).
+
 ### What lands on PBS
 
 - One snapshot per volume: `host/k8s-<cluster>-pvc-<ns>-<name>`

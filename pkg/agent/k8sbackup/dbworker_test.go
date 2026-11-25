@@ -19,9 +19,12 @@ import (
 func TestDBWorkerPodSpec(t *testing.T) {
 	pod := dbWorkerPod("fb-1", "clusterdb", map[string]string{labelRunID: "r1"}, DBWorkerConfig{
 		Image: "postgres:17", AgentImage: "cr.osshield.eu/fallbck/k8s-agent:1.2.3", ImagePullPolicy: "Always",
-		ResourcesJSON: `{"limits":{"memory":"1Gi"}}`, SpoolSizeLimit: "5Gi",
+		ResourcesJSON: `{"limits":{"memory":"1Gi"}}`, SpoolSizeLimit: "5Gi", PriorityClassName: "fallbck-backup",
 		Env: []corev1.EnvVar{{Name: EnvWorkerDBPassword, Value: "pw"}},
 	})
+	if pod.Spec.PriorityClassName != "fallbck-backup" {
+		t.Errorf("priority class %q", pod.Spec.PriorityClassName)
+	}
 	if pod.Spec.AutomountServiceAccountToken == nil || *pod.Spec.AutomountServiceAccountToken {
 		t.Error("dump pod must not get a service account token")
 	}
@@ -44,6 +47,12 @@ func TestDBWorkerPodSpec(t *testing.T) {
 	}
 	if main.SecurityContext == nil || main.SecurityContext.ReadOnlyRootFilesystem == nil || !*main.SecurityContext.ReadOnlyRootFilesystem {
 		t.Error("rootfs must be read-only")
+	}
+	if v := restrictedViolation(pod); v != "" {
+		t.Errorf("dump pod must pass Pod Security restricted: %s", v)
+	}
+	if *pod.Spec.SecurityContext.RunAsUser != 999 {
+		t.Errorf("dump pod should run as the engine images' uid 999: %+v", pod.Spec.SecurityContext)
 	}
 	env := map[string]string{}
 	for _, e := range main.Env {
