@@ -77,9 +77,19 @@
     </div>
   </div>
 
-  <div class="form-group">
-    <label>Databases (one per line, blank = all)</label>
-    <textarea name="db_databases" class="form-control" rows="2" placeholder="app&#10;shop"></textarea>
+  <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px;">
+    <div class="form-group">
+      <label>Databases (one per line, blank = all)</label>
+      <textarea name="db_databases" class="form-control" rows="2" placeholder="app&#10;shop"></textarea>
+    </div>
+    <div class="form-group">
+      <label>Exclude databases (one per line)</label>
+      <textarea name="db_exclude_databases" class="form-control" rows="2" placeholder="postgres"></textarea>
+    </div>
+    <div class="form-group">
+      <label>Extra dump arguments (one per line, not SQL Server)</label>
+      <textarea name="db_extra_args" class="form-control" rows="2" placeholder="--exclude-table-data=cron.job"></textarea>
+    </div>
   </div>
 
   <div style="display: grid; grid-template-columns: 1fr 2fr 1fr; gap: 16px;">
