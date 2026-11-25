@@ -1,0 +1,11 @@
+{{- if and .Values.workerPriorityClass.create .Values.workerPriorityClass.name }}
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: {{ .Values.workerPriorityClass.name }}
+  labels: {{- include "fallbck-k8s-agent.labels" . | nindent 4 }}
+value: 0
+preemptionPolicy: Never
+globalDefault: false
+description: FallBCK backup worker and database dump pods
+{{- end }}

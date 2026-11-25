@@ -69,9 +69,11 @@ worker:
   # Container securityContext for workers. Default (set by the agent when empty):
   # root with all capabilities dropped except DAC_OVERRIDE, read-only rootfs —
   # needed to read arbitrarily-owned PVC files and admitted by Pod Security "baseline".
-  # Override for "restricted" namespaces, e.g. run as the uid that owns the PVC data:
-  #   securityContext: {runAsUser: 991, runAsNonRoot: true, allowPrivilegeEscalation: false,
-  #                     readOnlyRootFilesystem: true, capabilities: {drop: ["ALL"]}}
+  # In a "restricted" namespace the agent retries as the user of the pod that mounts
+  # the PVC (or the PVC's fallbck.io/run-as-user / run-as-group annotations), which
+  # backs up what that user can read. Exempting the agent's service account from Pod
+  # Security admission (see admissionPolicy) keeps the root worker there too.
+  # Setting this disables both and applies to every namespace.
   securityContext: {}
 
   # Database jobs assigned to this agent run in a dump pod in the database's namespace:
@@ -92,8 +94,32 @@ worker:
       requests: {cpu: 100m, memory: 256Mi}
       limits: {memory: 2Gi}
     # Container securityContext for dump pods. Default (set by the agent when empty):
-    # root, all capabilities dropped, read-only rootfs (spool and /tmp are emptyDirs).
+    # uid/gid 999 (the engine user in the official images), all capabilities dropped,
+    # read-only rootfs, RuntimeDefault seccomp — admitted by Pod Security "restricted".
     securityContext: {}
+
+# PriorityClass on every volume worker and database dump pod, so cluster policy can
+# single them out. E.g. leave them out of a namespace ResourceQuota (which otherwise
+# demands limits.cpu and caps them at the site's headroom) with
+#   scopeSelector: {matchExpressions: [{scopeName: PriorityClass, operator: NotIn,
+#                                       values: [fallbck-backup]}]}
+# or match them in Kyverno / Gatekeeper exclusions. Value 0 and preemptionPolicy Never:
+# no scheduling advantage over ordinary pods. It's cluster-scoped, so a second agent
+# release in the same cluster sets create: false and reuses the name.
+workerPriorityClass:
+  create: true
+  name: fallbck-backup
+
+# Guard rails for a Pod Security admission exemption. If you exempt the agent's service
+# account (system:serviceaccount:<namespace>:fallbck-k8s-agent) in the API server's
+# PodSecurity configuration so workers keep full file access in "restricted" namespaces,
+# enable this: a ValidatingAdmissionPolicy (Kubernetes 1.30+) then holds every pod that
+# service account creates to what the workers need — only PVC and emptyDir volumes, no
+# host namespaces or ports, not privileged, no privilege escalation, no capability but
+# DAC_OVERRIDE, no Unconfined seccomp, labelled as a fallbck worker. Without it a leaked
+# agent token could start privileged pods anywhere.
+admissionPolicy:
+  enabled: false
 
 resources:
   requests: {cpu: 100m, memory: 256Mi}

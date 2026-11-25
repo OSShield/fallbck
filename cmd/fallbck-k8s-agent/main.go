@@ -213,6 +213,7 @@ func runAgent(logging *runtime.Logging) {
 			acts.WorkerMaxProcs = n
 		}
 		acts.WorkerSecurityContextJSON = os.Getenv("FALLBCK_WORKER_SECURITY_CONTEXT")
+		acts.WorkerPriorityClass = os.Getenv("FALLBCK_WORKER_PRIORITY_CLASS")
 		// Database jobs: dump pods on upstream engine images
 		acts.DBPassword = runtime.DBPasswordFetcher(cfg, store)
 		acts.DBWorkerResourcesJSON = os.Getenv("FALLBCK_DB_WORKER_RESOURCES")
