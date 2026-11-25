@@ -94,7 +94,13 @@ During the course of the project, and for ongoing maintenance, AI coding assista
 ## Quick start (with PBS included)
 You can run our demo instance from the compose.yml in the `demo` directory. It will set up FallBCK, register a single agent in a container, connect to an ephemeral (single-use) PBS instance and allow you to click around and see the functionality without any risk to your existing environment.
 
-## Quick start (local, no login)
+## Quick start demo (devcontainer)
+
+We have added a devcontainer configuration so that you can quickly spin up an environment with PBS, a database, FallBCK server and an agent along with optional backup sources like databases, webdav/sftp and more.
+
+To use it, open the project in a compatible editor (e.g., VS Code) and choose to open it in the devcontainer. The environment will be built and started automatically, providing you with a ready-to-use development setup. You can also create a codespace directly in Github to start everything automatically.
+
+## Quick start demo (local, no login)
 If you want to set up a fresh instance, use the compose file in the `deploy` directory instead. Do note that PBS provides no functionality for username/password login, and requires an OpenID Connect server to handle authentication. It can also be switched off entirely.
 
 ```bash
@@ -114,11 +120,13 @@ For a real install (TLS, SSO, reverse proxy), see [Production install](https://d
 
 ## Hacking on it
 
+You can either use a devcontainer or set up everything locally on your machine.
+
 ```bash
 go build ./... && go test ./...
 ```
 
-More in [Development](https://docs.fallbck.eu/development/). The docs source is in [`docs/`](docs/).
+More in [Development](https://docs.fallbck.eu/development/). The docs source is in the [`docs/`](docs/) folder.
 
 
 ## Roadmap

@@ -1,0 +1,163 @@
+# Dev stack: a Go workspace that runs the server and two agents from this checkout
+# (see fallbck.sh), plus the demo's throwaway PBS and a Postgres. Nothing is published
+# on the host; devcontainer.json forwards the ports.
+services:
+  dev:
+    build: .
+    hostname: fallbck-dev
+    command: sleep infinity
+    # reaps the server and agent after a restart; without it they stay zombies
+    init: true
+    volumes:
+      - ..:/workspaces/fallbck:cached
+      # Enable this to mount the host Docker socket to be able to test the docker backups
+      # Disabled by default because it breaks container isolation. 
+      # - /var/run/docker.sock:/var/run/docker.sock
+      # server and agent state: master key, JWT secret, Temporal, agent identity.
+      # It lives and dies with pg-data: a new master key can't open the old secrets.
+      - fallbck-data:/var/lib/fallbck
+      - go-mod:/go/pkg/mod
+      - go-cache:/home/vscode/.cache
+      # SQL Server's backup files (optional mssql service, below)
+      - mssql-backup:/mnt/mssql-backup
+    environment:
+      # Only for the live DB tests; the server's own settings are in fallbck.sh so
+      # they don't leak into tests that check config defaults
+      FALLBCK_TEST_DATABASE_URL: postgres://fallbck:fallbck@postgres:5432/fallbck_test?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+      pbs:
+        condition: service_started
+
+  pbs:
+    image: ghcr.io/osshield/ephemeral-pbs:basic
+    hostname: pbs.localhost
+    tmpfs:
+      - /run
+    environment:
+      TZ: Europe/Stockholm
+      PASSWORD: demo
+      POSTFIX: "N"
+
+  postgres:
+    image: postgres:17-alpine
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fallbck -d fallbck"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    environment:
+      POSTGRES_USER: fallbck
+      POSTGRES_PASSWORD: fallbck
+      POSTGRES_DB: fallbck
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+      - ./test-db.sql:/docker-entrypoint-initdb.d/test-db.sql:ro
+
+  # ---- Optional services ----------------------------------------------------------
+  # Each sits behind a profile and only starts when that profile is on. Name them in
+  # .devcontainer/.env (gitignored), then rebuild the container; the volumes are kept:
+  #
+  #   COMPOSE_PROFILES=mariadb,mongodb
+  #   MYSQL_TAG=8.4
+  #
+  # Profiles: mariadb, mysql, mongodb, mssql, remote. The database versions can be
+  # changed with MARIADB_TAG, MYSQL_TAG, MONGO_TAG and MSSQL_TAG. Database jobs use the
+  # service name as the host and take the password in the job. All of it is throwaway
+  # test data with throwaway passwords.
+
+  # MariaDB with binary logging, so jobs can include binlogs. root / fallbck, port 3306.
+  mariadb:
+    image: mariadb:${MARIADB_TAG:-11.4}
+    profiles: [mariadb]
+    command: ["--log-bin=binlog", "--server-id=1"]
+    environment:
+      MARIADB_ROOT_PASSWORD: fallbck
+      MARIADB_DATABASE: shop
+
+  # MySQL, binary logging on by default. root / fallbck, port 3306 (host "mysql").
+  # The dev container only has MariaDB's client tools, the same as the agent image.
+  # 8.0 because 8.4 removed SHOW MASTER STATUS, which mariadb-dump still runs, so
+  # dumps from MySQL 8.4 and later fail. MYSQL_TAG=8.4 reproduces that.
+  mysql:
+    image: mysql:${MYSQL_TAG:-8.0}
+    profiles: [mysql]
+    environment:
+      MYSQL_ROOT_PASSWORD: fallbck
+      MYSQL_DATABASE: shop
+
+  # MongoDB as a one-node replica set, because mongodump --oplog needs an oplog.
+  # No auth, port 27017. 4.4 because 5.0 and later need a CPU with AVX; on one that
+  # has it, MONGO_TAG=8 works too.
+  mongodb:
+    image: mongo:${MONGO_TAG:-4.4}
+    profiles: [mongodb]
+    command: ["--replSet", "rs0", "--bind_ip_all"]
+    healthcheck:
+      # Healthy once it's the primary. Until then it initiates the replica set:
+      # rs.status() returns ok 0 on the old shell and throws on mongosh.
+      test:
+        - CMD-SHELL
+        - >-
+          $$(command -v mongosh || command -v mongo) --quiet --eval
+          'if (db.isMaster().ismaster) quit(0);
+          try { if (!rs.status().ok) throw 0 } catch (e) { rs.initiate({_id: "rs0", members: [{_id: 0, host: "mongodb:27017"}]}) }
+          quit(1)'
+      interval: 5s
+      retries: 20
+
+  # SQL Server. sa / Fallbck-dev1 (it wants a complex password), port 1433. It writes
+  # backups itself: give the job backup_dir /var/opt/mssql/backup (its view) and
+  # agent_dir /mnt/mssql-backup (the dev container's view of the same volume).
+  mssql:
+    image: mcr.microsoft.com/mssql/server:${MSSQL_TAG:-2022-latest}
+    profiles: [mssql]
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: Fallbck-dev1
+    volumes:
+      - mssql-backup:/var/opt/mssql/backup
+
+  # Remote storage for remote jobs, all fallbck / fallbck. Kept in tmpfs, so a
+  # restart empties them.
+  # S3: endpoint http://s3:9000, path-style, access key fallbck, secret fallbck-secret.
+  # One bucket, photos, with a file in it.
+  s3:
+    image: rclone/rclone:1.74.3
+    profiles: [remote]
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["mkdir -p /data/photos && echo hello > /data/photos/hello.txt && exec rclone serve s3 /data --addr :9000 --auth-key fallbck,fallbck-secret"]
+    tmpfs:
+      - /data
+
+  # SFTP: sftp:22, writable dir /upload. Host key: ssh-keyscan sftp
+  sftp:
+    image: atmoz/sftp:latest
+    profiles: [remote]
+    command: fallbck:fallbck:1001::upload
+
+  # SMB: host smb, share "share"
+  smb:
+    image: dperson/samba:latest
+    profiles: [remote]
+    command: >-
+      -u "fallbck;fallbck"
+      -s "share;/share;yes;no;no;fallbck"
+    tmpfs:
+      - /share
+
+  # WebDAV: http://webdav:8080
+  webdav:
+    image: rclone/rclone:1.74.3
+    profiles: [remote]
+    command: ["serve", "webdav", "/data", "--addr", ":8080", "--user", "fallbck", "--pass", "fallbck"]
+    tmpfs:
+      - /data
+
+volumes:
+  fallbck-data:
+  pg-data:
+  go-mod:
+  go-cache:
+  mssql-backup:

@@ -51,8 +51,17 @@ func (mysqlEngine) Detect(ctx context.Context, r Runner, tools dbspec.ToolConfig
 				return info, err
 			}
 			b, ok := parseMySQLVersion(line)
-			if !ok {
+			switch {
+			case ok:
+			case logical == "dump":
 				return info, fmt.Errorf("%s: unrecognised version output %q", path, line)
+			default:
+				// The optional tools need only their flavor; Debian's MariaDB 10.11
+				// mariadb-binlog prints just its own "Ver 3.5"
+				b = Binary{Flavor: "mysql"}
+				if strings.HasPrefix(name, "mariadb") {
+					b.Flavor = "mariadb"
+				}
 			}
 			b.Path = path
 			info.Binaries[logical] = b
@@ -199,8 +208,14 @@ func mysqlConnArgs(req *DumpRequest, secret string) []string {
 		args = append(args, "--host="+c.Host, fmt.Sprintf("--port=%d", c.Port), "--protocol=TCP")
 	}
 	tool := req.Tools.Binaries["dump"]
+	// MariaDB's client verifies the server certificate by default since 11.4, which
+	// would turn prefer and require into verify-full; older clients take the flag too
+	noVerify := "--skip-ssl-verify-server-cert"
 	switch c.TLS.Mode {
 	case "", dbspec.TLSPrefer:
+		if tool.Flavor != "mysql" {
+			args = append(args, noVerify)
+		}
 	case dbspec.TLSDisable:
 		if tool.Flavor == "mysql" {
 			args = append(args, "--ssl-mode=DISABLED")
@@ -211,7 +226,7 @@ func mysqlConnArgs(req *DumpRequest, secret string) []string {
 		if tool.Flavor == "mysql" {
 			args = append(args, "--ssl-mode=REQUIRED")
 		} else {
-			args = append(args, "--ssl")
+			args = append(args, "--ssl", noVerify)
 		}
 	case dbspec.TLSVerifyCA, dbspec.TLSVerifyFull:
 		if tool.Flavor == "mysql" {
