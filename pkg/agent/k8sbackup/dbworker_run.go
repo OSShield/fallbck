@@ -29,8 +29,8 @@ func runDBWorker(ctx context.Context) workerOutcome {
 	if user := os.Getenv(EnvWorkerDBUser); user != "" {
 		spec.User = user
 	}
-	// Engines and the manifest work with a concrete host; resolve the Service name here
-	spec.Host = spec.EffectiveHost()
+	// Leave spec.Host alone: credential resolution goes through EffectiveHost(), and a
+	// filled-in host would fail Validate for secret_name targets
 	password := os.Getenv(EnvWorkerDBPassword)
 
 	var prev *dbspec.JobState
