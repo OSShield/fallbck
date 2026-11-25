@@ -7,11 +7,13 @@ import (
 	"hash/crc32"
 	"io"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
 	dbspec "github.com/osshield/fallbck/pkg/dbbackup"
 	spec "github.com/osshield/fallbck/pkg/k8sbackup"
+	"github.com/osshield/fallbck/pkg/rundetail"
 	"github.com/osshield/fallbck/pkg/temporal"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -43,6 +45,7 @@ type WorkerConfig struct {
 	// Resources / SecurityContext are corev1 JSON blobs from the Helm chart (optional)
 	ResourcesJSON       string
 	SecurityContextJSON string
+	PriorityClassName   string
 	// Env carries the worker credentials and session (built by the activity)
 	Env []corev1.EnvVar
 }
@@ -164,8 +167,27 @@ func BackupVolume(ctx context.Context, c *Clients, req VolumeBackupRequest) (*sp
 		return res, err
 	}
 	cleanup.secret = name
-	pod := workerPod(name, plan.Namespace, mountPVC, readOnlyMount, nodeName, labels, req.Worker)
-	if _, err := c.Core.CoreV1().Pods(plan.Namespace).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
+	createPod := func(id *workerIdentity) error {
+		pod := workerPod(name, plan.Namespace, mountPVC, readOnlyMount, nodeName, labels, req.Worker, id)
+		_, err := c.Core.CoreV1().Pods(plan.Namespace).Create(ctx, pod, metav1.CreateOptions{})
+		return err
+	}
+	// The root worker reads every file. A namespace enforcing Pod Security "restricted"
+	// rejects it; retry as the app's own user, which reads what the app can read. With
+	// an admission exemption for the agent the root worker is admitted and this never runs.
+	err := createPod(nil)
+	if isPodSecurityRejection(err) && req.Worker.SecurityContextJSON == "" {
+		id, idErr := restrictedIdentity(ctx, c, plan)
+		if idErr != nil {
+			err = fmt.Errorf("%w; %v", err, idErr)
+		} else {
+			slog.Info("Pod Security rejected the root worker; running as the app's user",
+				"pvc", plan.Namespace+"/"+plan.PVCName, "uid", id.UID, "source", id.Source)
+			res.Note = fmt.Sprintf("Pod Security restricted: read as uid %d (%s), files that user cannot read are skipped", id.UID, id.Source)
+			err = createPod(id)
+		}
+	}
+	if err != nil {
 		res.Status = "failed"
 		res.Error = err.Error()
 		return res, fmt.Errorf("creating worker pod for %s/%s: %w", plan.Namespace, plan.PVCName, err)
@@ -197,6 +219,9 @@ func BackupVolume(ctx context.Context, c *Clients, req VolumeBackupRequest) (*sp
 	res.BytesUploaded = outcome.Result.BytesUploaded
 	res.ChunkCount = outcome.Result.ChunkCount
 	res.DedupRatio = outcome.Result.DedupRatio
+	if n := skippedEntries(outcome.Result.Details); n > 0 {
+		res.Note = strings.TrimPrefix(res.Note+fmt.Sprintf("; %d unreadable entries skipped (see the worker log)", n), "; ")
+	}
 	return res, nil
 }
 
@@ -299,9 +324,17 @@ func attachedNode(ctx context.Context, c *Clients, ns, pvcName, pvName string) s
 			}
 		}
 	}
+	if pod := mountingPod(ctx, c, ns, pvcName); pod != nil {
+		return pod.Spec.NodeName
+	}
+	return ""
+}
+
+// mountingPod returns a scheduled, unfinished pod that mounts the PVC (nil if none)
+func mountingPod(ctx context.Context, c *Clients, ns, pvcName string) *corev1.Pod {
 	pods, err := c.Core.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return ""
+		return nil
 	}
 	for i := range pods.Items {
 		pod := &pods.Items[i]
@@ -309,24 +342,139 @@ func attachedNode(ctx context.Context, c *Clients, ns, pvcName, pvName string) s
 		if pod.Spec.NodeName == "" || pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
 			continue
 		}
-		for _, v := range pod.Spec.Volumes {
-			if v.PersistentVolumeClaim != nil && v.PersistentVolumeClaim.ClaimName == pvcName {
-				return pod.Spec.NodeName
-			}
+		if claimVolume(pod, pvcName) != "" {
+			return pod
+		}
+	}
+	return nil
+}
+
+// claimVolume is the name of the pod volume that mounts the PVC ("" if none)
+func claimVolume(pod *corev1.Pod, pvcName string) string {
+	for _, v := range pod.Spec.Volumes {
+		if v.PersistentVolumeClaim != nil && v.PersistentVolumeClaim.ClaimName == pvcName {
+			return v.Name
 		}
 	}
 	return ""
 }
 
+// ---- restricted namespaces --------------------------------------------------
+
+// PVC annotations that pin the worker's identity in a Pod Security "restricted"
+// namespace (for PVCs no running pod mounts, or a pod that sets its user in the image)
+const (
+	annotationRunAsUser  = "fallbck.io/run-as-user"
+	annotationRunAsGroup = "fallbck.io/run-as-group"
+)
+
+// workerIdentity runs the worker non-root as the app's user (nil = root worker)
+type workerIdentity struct {
+	UID    int64
+	GID    *int64
+	Groups []int64
+	Source string
+}
+
+func isPodSecurityRejection(err error) bool {
+	return err != nil && apierrors.IsForbidden(err) && strings.Contains(err.Error(), "violates PodSecurity")
+}
+
+// restrictedIdentity picks the user the worker runs as when root is not admitted: the
+// PVC's fallbck.io/run-as-user annotation, else the user of the pod that mounts it
+func restrictedIdentity(ctx context.Context, c *Clients, plan spec.VolumePlan) (*workerIdentity, error) {
+	if pvc, err := c.Core.CoreV1().PersistentVolumeClaims(plan.Namespace).Get(ctx, plan.PVCName, metav1.GetOptions{}); err == nil {
+		if v := pvc.Annotations[annotationRunAsUser]; v != "" {
+			uid, err := strconv.ParseInt(v, 10, 64)
+			if err != nil || uid <= 0 {
+				return nil, fmt.Errorf("PVC annotation %s=%q must be a non-root uid", annotationRunAsUser, v)
+			}
+			id := &workerIdentity{UID: uid, Source: "PVC annotation"}
+			if v := pvc.Annotations[annotationRunAsGroup]; v != "" {
+				gid, err := strconv.ParseInt(v, 10, 64)
+				if err != nil || gid < 0 {
+					return nil, fmt.Errorf("PVC annotation %s=%q must be a gid", annotationRunAsGroup, v)
+				}
+				id.GID, id.Groups = &gid, []int64{gid}
+			}
+			return id, nil
+		}
+	}
+	if pod := mountingPod(ctx, c, plan.Namespace, plan.PVCName); pod != nil {
+		if id := podIdentity(pod, plan.PVCName); id != nil {
+			return id, nil
+		}
+	}
+	return nil, fmt.Errorf("no running pod mounting %s/%s declares runAsUser; annotate the PVC with %s=<uid> (and optionally %s=<gid>), or exempt the agent's service account from Pod Security admission",
+		plan.Namespace, plan.PVCName, annotationRunAsUser, annotationRunAsGroup)
+}
+
+// podIdentity reads the user of the container that mounts the PVC (container settings
+// override the pod's). The pod's fsGroup becomes a supplemental group, never the
+// worker's fsGroup: that could make the kubelet re-own files on the live volume.
+func podIdentity(pod *corev1.Pod, pvcName string) *workerIdentity {
+	vol := claimVolume(pod, pvcName)
+	psc := pod.Spec.SecurityContext
+	if psc == nil {
+		psc = &corev1.PodSecurityContext{}
+	}
+	uid, gid := psc.RunAsUser, psc.RunAsGroup
+	for _, ctr := range append(append([]corev1.Container{}, pod.Spec.Containers...), pod.Spec.InitContainers...) {
+		mounts := false
+		for _, m := range ctr.VolumeMounts {
+			mounts = mounts || m.Name == vol
+		}
+		if !mounts {
+			continue
+		}
+		if sc := ctr.SecurityContext; sc != nil {
+			if sc.RunAsUser != nil {
+				uid = sc.RunAsUser
+			}
+			if sc.RunAsGroup != nil {
+				gid = sc.RunAsGroup
+			}
+		}
+		break
+	}
+	if uid == nil || *uid == 0 {
+		return nil
+	}
+	id := &workerIdentity{UID: *uid, GID: gid, Source: "pod " + pod.Name}
+	if gid != nil {
+		id.Groups = append(id.Groups, *gid)
+	}
+	if psc.FSGroup != nil {
+		id.Groups = append(id.Groups, *psc.FSGroup)
+	}
+	id.Groups = append(id.Groups, psc.SupplementalGroups...)
+	return id
+}
+
+// skippedEntries counts the archiver's "skipped" warnings in a filesystem run detail
+func skippedEntries(details json.RawMessage) int {
+	var fs rundetail.Filesystem
+	if len(details) == 0 || json.Unmarshal(details, &fs) != nil {
+		return 0
+	}
+	n := 0
+	for _, w := range fs.Warnings {
+		if strings.HasPrefix(w.Message, "skipped") {
+			n++
+		}
+	}
+	return n
+}
+
 // ---- worker pod -------------------------------------------------------------
 
-func workerPod(name, ns, claim string, readOnly bool, nodeName string, labels map[string]string, w WorkerConfig) *corev1.Pod {
+func workerPod(name, ns, claim string, readOnly bool, nodeName string, labels map[string]string, w WorkerConfig, id *workerIdentity) *corev1.Pod {
 	// Default: root with every capability dropped except DAC_OVERRIDE — PVC file
 	// ownership is arbitrary and a non-root worker would fail on root-owned files.
 	// DAC_OVERRIDE (not DAC_READ_SEARCH) because it is in the Pod Security "baseline"
 	// allow-list, so the worker is admitted in baseline namespaces; the PVC is mounted
-	// read-only, so the write bypass it also grants is moot. Overridable via the Helm
-	// chart for "restricted" namespaces (run as the PVC owner's uid).
+	// read-only, so the write bypass it also grants is moot. With an identity (Pod
+	// Security "restricted" namespace) it runs non-root as the app's user instead.
 	rootUser := int64(0)
 	no := false
 	yes := true
@@ -335,6 +483,18 @@ func workerPod(name, ns, claim string, readOnly bool, nodeName string, labels ma
 		AllowPrivilegeEscalation: &no,
 		ReadOnlyRootFilesystem:   &yes,
 		Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}, Add: []corev1.Capability{"DAC_OVERRIDE"}},
+	}
+	var podSecCtx *corev1.PodSecurityContext
+	if id != nil {
+		secCtx.RunAsUser = nil
+		secCtx.Capabilities = &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}
+		podSecCtx = &corev1.PodSecurityContext{
+			RunAsNonRoot:       &yes,
+			RunAsUser:          &id.UID,
+			RunAsGroup:         id.GID,
+			SupplementalGroups: id.Groups,
+			SeccompProfile:     &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+		}
 	}
 	if w.SecurityContextJSON != "" {
 		var override corev1.SecurityContext
@@ -351,6 +511,8 @@ func workerPod(name, ns, claim string, readOnly bool, nodeName string, labels ma
 		Spec: corev1.PodSpec{
 			RestartPolicy:                corev1.RestartPolicyNever,
 			NodeName:                     nodeName,
+			PriorityClassName:            w.PriorityClassName,
+			SecurityContext:              podSecCtx,
 			AutomountServiceAccountToken: &no,
 			Containers: []corev1.Container{{
 				Name:                     "worker",

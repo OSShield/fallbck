@@ -14,6 +14,7 @@ import (
 	"github.com/osshield/fallbck/pkg/temporal"
 	"go.temporal.io/sdk/activity"
 	sdktemporal "go.temporal.io/sdk/temporal"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
 // heartbeatInterval paces the liveness heartbeats; well under the workflow's 60s
@@ -176,5 +177,9 @@ func backupFailure(ctx context.Context, err error, pt *phaseTracker, logTail fun
 		return sdktemporal.NewNonRetryableApplicationError(msg, ErrTypeBackupFailed, nil, details)
 	}
 	msg := fmt.Sprintf("%v [phase: %s]", err, pt.Current())
+	if apierrors.IsForbidden(err) {
+		// RBAC or Pod Security admission refused a Kubernetes object: a retry gets the same answer
+		return sdktemporal.NewNonRetryableApplicationError(msg, ErrTypeBackupFailed, nil, details)
+	}
 	return sdktemporal.NewApplicationError(msg, ErrTypeBackupFailed, details)
 }

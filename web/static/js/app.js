@@ -1966,12 +1966,12 @@ function renderK8sDetail(m) {
     rdEsc(v.namespace + '/' + v.pvc), rdEsc(v.mode || ''), rdEsc(v.consistency || ''),
     rdStatus(v.status === 'completed' ? 'completed' : v.status === 'skipped' || v.status === 'cancelled' ? 'cancelled' : 'failed'),
     rdBytes(v.bytes_uploaded), v.snapshot_id ? rdMono(rdShort(v.snapshot_id.split('/').pop())) : '-',
-    v.error ? `<span style="color:var(--danger-text);">${rdEsc(v.error.split('\n')[0].slice(0, 160))}</span>` : '',
+    v.error ? `<span style="color:var(--danger-text);">${rdEsc(v.error.split('\n')[0].slice(0, 160))}</span>` : rdEsc(v.note || ''),
   ]);
   const okCount = vols.filter(v => v.status === 'completed').length;
   const failCount = vols.filter(v => v.status === 'failed').length;
   html += rdCard(`Persistent volumes (${okCount}/${vols.length} ok${failCount ? `, ${failCount} failed` : ''})`,
-    rdTable(['PVC', 'Mode', 'Consistency', 'Status', 'Uploaded', 'Snapshot', 'Error'], vrows));
+    rdTable(['PVC', 'Mode', 'Consistency', 'Status', 'Uploaded', 'Snapshot', 'Notes'], vrows));
   if (m.partial) return html;
 
   const counts = res.counts || {};

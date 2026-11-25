@@ -25,7 +25,8 @@ type DBWorkerConfig struct {
 	ResourcesJSON       string
 	SecurityContextJSON string
 	// SpoolSizeLimit bounds the spool emptyDir (Kubernetes quantity; "" = unbounded)
-	SpoolSizeLimit string
+	SpoolSizeLimit    string
+	PriorityClassName string
 	// Env carries the worker credentials, session and previous state
 	Env []corev1.EnvVar
 }
@@ -103,19 +104,28 @@ func BackupDatabase(ctx context.Context, c *Clients, req DBBackupRequest) (*DBBa
 func dbWorkerPod(name, ns string, labels map[string]string, w DBWorkerConfig) *corev1.Pod {
 	no := false
 	yes := true
-	rootUser := int64(0)
-	// The engine images expect root (or their own user); the dump only needs the
-	// client tools and network, so drop every capability and keep the rootfs read-only
+	// The dump only needs the client tools and network: non-root, no capabilities,
+	// read-only rootfs, RuntimeDefault seccomp, so Pod Security "restricted" admits it.
+	// uid/gid 999 is the engine user in the official postgres, mysql, mariadb and mongo
+	// images. ponytail: a custom tools image without uid 999 still runs (HOME is /tmp),
+	// set worker.db.securityContext if its client insists on a passwd entry.
+	engineUser := int64(999)
 	secCtx := &corev1.SecurityContext{
-		RunAsUser:                &rootUser,
 		AllowPrivilegeEscalation: &no,
 		ReadOnlyRootFilesystem:   &yes,
 		Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
 	}
+	podSecCtx := &corev1.PodSecurityContext{
+		RunAsNonRoot:   &yes,
+		RunAsUser:      &engineUser,
+		RunAsGroup:     &engineUser,
+		SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+	}
 	if w.SecurityContextJSON != "" {
 		var override corev1.SecurityContext
 		if err := json.Unmarshal([]byte(w.SecurityContextJSON), &override); err == nil {
-			secCtx = &override
+			// The override owns the user; a pod-level runAsNonRoot could contradict it
+			secCtx, podSecCtx = &override, nil
 		}
 	}
 	var resources corev1.ResourceRequirements
@@ -141,12 +151,14 @@ func dbWorkerPod(name, ns string, labels map[string]string, w DBWorkerConfig) *c
 		Spec: corev1.PodSpec{
 			RestartPolicy:                corev1.RestartPolicyNever,
 			AutomountServiceAccountToken: &no,
+			SecurityContext:              podSecCtx,
+			PriorityClassName:            w.PriorityClassName,
 			InitContainers: []corev1.Container{{
 				Name:            "fallbck-binary",
 				Image:           w.AgentImage,
 				ImagePullPolicy: pullPolicy(w.ImagePullPolicy),
 				Command:         []string{"cp", "/usr/local/bin/fallbck-k8s-agent", binary},
-				SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &no, Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},
+				SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &no, ReadOnlyRootFilesystem: &yes, Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},
 				VolumeMounts:    []corev1.VolumeMount{{Name: "fallbck", MountPath: binaryMount}},
 			}},
 			Containers: []corev1.Container{{

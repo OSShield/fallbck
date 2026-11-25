@@ -1,0 +1,53 @@
+{{- if .Values.admissionPolicy.enabled }}
+{{- $name := printf "%s-%s-workers" (include "fallbck-k8s-agent.name" .) .Release.Namespace }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $name }}
+  labels: {{- include "fallbck-k8s-agent.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods"]
+  # Only pods the agent creates itself (workers and dump pods); its own Deployment pod
+  # is created by the ReplicaSet controller and is not matched
+  matchConditions:
+    - name: created-by-agent
+      expression: >-
+        request.userInfo.username == 'system:serviceaccount:{{ .Release.Namespace }}:{{ include "fallbck-k8s-agent.name" . }}'
+  variables:
+    - name: containers
+      expression: "object.spec.containers + object.spec.?initContainers.orValue([])"
+  validations:
+    - expression: "object.metadata.?labels['app.kubernetes.io/managed-by'].orValue('') == 'fallbck'"
+      message: "fallbck agent pods must carry app.kubernetes.io/managed-by=fallbck"
+    - expression: "object.spec.?volumes.orValue([]).all(v, has(v.persistentVolumeClaim) || has(v.emptyDir))"
+      message: "fallbck agent pods may only mount PVCs and emptyDirs"
+    - expression: "!object.spec.?hostNetwork.orValue(false) && !object.spec.?hostPID.orValue(false) && !object.spec.?hostIPC.orValue(false)"
+      message: "fallbck agent pods may not use host namespaces"
+    - expression: "variables.containers.all(c, c.?ports.orValue([]).all(p, p.?hostPort.orValue(0) == 0))"
+      message: "fallbck agent pods may not use host ports"
+    - expression: "variables.containers.all(c, !c.?securityContext.?privileged.orValue(false))"
+      message: "fallbck agent pods may not be privileged"
+    - expression: "variables.containers.all(c, c.?securityContext.?allowPrivilegeEscalation.orValue(true) == false)"
+      message: "fallbck agent pods must set allowPrivilegeEscalation=false"
+    - expression: "variables.containers.all(c, c.?securityContext.?capabilities.?add.orValue([]).all(cap, cap == 'DAC_OVERRIDE'))"
+      message: "fallbck agent pods may add no capability but DAC_OVERRIDE"
+    - expression: >-
+        object.spec.?securityContext.?seccompProfile.?type.orValue('') != 'Unconfined' &&
+        variables.containers.all(c, c.?securityContext.?seccompProfile.?type.orValue('') != 'Unconfined')
+      message: "fallbck agent pods may not run with seccomp Unconfined"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $name }}
+  labels: {{- include "fallbck-k8s-agent.labels" . | nindent 4 }}
+spec:
+  policyName: {{ $name }}
+  validationActions: [Deny]
+{{- end }}

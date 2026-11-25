@@ -53,6 +53,8 @@ type VolumeResult struct {
 	DedupRatio    float64 `json:"dedup_ratio,omitempty"`
 	DurationMS    int64   `json:"duration_ms,omitempty"`
 	Error         string  `json:"error,omitempty"`
+	// Note flags a completed volume that may be incomplete (non-root worker, skipped files)
+	Note string `json:"note,omitempty"`
 }
 
 // Manifest is stored as blob k8s-manifest.blob on the resources snapshot and as a file

@@ -141,6 +141,7 @@ func (a *K8sAgentActivities) ExecuteKubernetesDatabaseBackup(ctx context.Context
 			ResourcesJSON:       a.DBWorkerResourcesJSON,
 			SecurityContextJSON: a.DBWorkerSecurityContextJSON,
 			SpoolSizeLimit:      a.DBWorkerSpoolSize,
+			PriorityClassName:   a.WorkerPriorityClass,
 			Env:                 env,
 		},
 		Progress: pt.Set,

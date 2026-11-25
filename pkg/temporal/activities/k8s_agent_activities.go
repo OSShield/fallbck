@@ -41,6 +41,9 @@ type K8sAgentActivities struct {
 	WorkerImagePullPolicy     string
 	WorkerResourcesJSON       string
 	WorkerSecurityContextJSON string
+	// WorkerPriorityClass is set on volume worker and dump pods ("" = none), so quotas
+	// and policies can single them out
+	WorkerPriorityClass string
 	// WorkerMaxProcs bounds gopbs concurrency (GOMAXPROCS) inside worker pods; 0 = 2
 	WorkerMaxProcs int
 	// Credentials fetches PBS connection details for jobs in direct mode
@@ -294,7 +297,7 @@ func (a *K8sAgentActivities) BackupKubernetesVolume(ctx context.Context, session
 			return
 		}
 		setItem(rundetail.ProgressItem{Name: pvcName, Kind: "pvc", Mode: res.Mode, Consistency: res.Consistency,
-			Status: res.Status, BytesUploaded: res.BytesUploaded, SnapshotID: res.SnapshotID, Error: res.Error})
+			Status: res.Status, BytesUploaded: res.BytesUploaded, SnapshotID: res.SnapshotID, Note: res.Note, Error: res.Error})
 	}
 	defer stopVolProgress()
 
@@ -323,6 +326,7 @@ func (a *K8sAgentActivities) BackupKubernetesVolume(ctx context.Context, session
 			ImagePullPolicy:     a.WorkerImagePullPolicy,
 			ResourcesJSON:       a.WorkerResourcesJSON,
 			SecurityContextJSON: a.WorkerSecurityContextJSON,
+			PriorityClassName:   a.WorkerPriorityClass,
 			Env:                 env,
 		},
 		Progress: pt.Set,
