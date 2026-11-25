@@ -115,6 +115,11 @@ func (a *K8sAgentActivities) ExecuteKubernetesDatabaseBackup(ctx context.Context
 	env = append(env,
 		corev1.EnvVar{Name: k8sagent.EnvWorkerHostname, Value: a.Config.Hostname},
 		corev1.EnvVar{Name: k8sagent.EnvWorkerAgentVersion, Value: a.Version},
+		// The engine image's CA store is not guaranteed, postgres:16 ships only a snakeoil
+		// cert, which hides the embedded roots, so the server TLS check fails. Use the
+		// roots built into the agent binary. a tools image whose system store
+		// holds a private CA needs to be defined in the agent settings instead.
+		corev1.EnvVar{Name: "GODEBUG", Value: "x509usefallbackroots=1"},
 	)
 	if password != "" {
 		env = append(env, corev1.EnvVar{Name: k8sagent.EnvWorkerDBPassword, Value: password})

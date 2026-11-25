@@ -21,6 +21,9 @@ import (
 	"github.com/osshield/fallbck/pkg/inventory"
 	"github.com/osshield/fallbck/pkg/temporal/activities"
 	"go.temporal.io/sdk/worker"
+	// Worker pods run this binary inside the engine's tools image, which may ship no CA
+	// bundle (postgres:16 has none): the embedded roots apply only when the system has none
+	_ "golang.org/x/crypto/x509roots/fallback"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 

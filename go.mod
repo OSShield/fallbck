@@ -27,6 +27,7 @@ require (
 	go.temporal.io/sdk v1.49.0
 	go.temporal.io/server v1.32.1
 	golang.org/x/crypto v0.58.0
+	golang.org/x/crypto/x509roots/fallback v0.0.0-20261123192653-4dc4fb521066
 	golang.org/x/net v0.61.0
 	golang.org/x/oauth2 v0.37.0
 	golang.org/x/sys v0.49.0
